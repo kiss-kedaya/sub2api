@@ -53,10 +53,13 @@
                 :row="row"
                 :user-rate-multiplier="getUserRateMultiplier(row.group_id)"
                 :signals="groupSignals[row.group_id ?? 0] ?? null"
+                :subscribed="isGroupSubscribed(row.group_id)"
+                :watch-pending="isGroupWatchPending(row.group_id)"
                 :countdown-seconds="countdownSeconds"
                 :timeline-length="timelineLength"
                 :anchor-bucket-start="timelineAnchorBucketStart"
                 :bucket-seconds="matrix?.coverage.bucket_seconds"
+                @toggle-watch="toggleGroupWatch"
               />
             </div>
           </template>
@@ -74,10 +77,13 @@
                 :row="item.row"
                 :user-rate-multiplier="getUserRateMultiplier(item.row.group_id)"
                 :signals="groupSignals[item.row.group_id ?? 0] ?? null"
+                :subscribed="isGroupSubscribed(item.row.group_id)"
+                :watch-pending="isGroupWatchPending(item.row.group_id)"
                 :countdown-seconds="countdownSeconds"
                 :timeline-length="timelineLength"
                 :anchor-bucket-start="timelineAnchorBucketStart"
                 :bucket-seconds="matrix?.coverage.bucket_seconds"
+                @toggle-watch="toggleGroupWatch"
               />
             </div>
           </div>
@@ -97,6 +103,7 @@ import EmptyState from '@/components/common/EmptyState.vue'
 import { useAppStore } from '@/stores/app'
 import { extractApiErrorMessage } from '@/utils/apiError'
 import * as api from '@/api/channelMonitorV2'
+import { groupWatchAPI } from '@/api/groupWatch'
 import userGroupsAPI from '@/api/groups'
 import type { MonitorFilter, MonitorMatrixResponse, MonitorRange, MonitorSnapshot } from '@/api/channelMonitorV2'
 import type { Group } from '@/types'
@@ -123,6 +130,8 @@ const refreshing = ref(false)
 const userGroupRates = ref<Record<number, number>>({})
 // Backend-computed display hints per group (recent base rate change, new group).
 const groupSignals = ref<Record<number, GroupSignalSource>>({})
+const subscribedGroupIds = ref<Set<number>>(new Set())
+const watchPendingIds = ref<Set<number>>(new Set())
 const countdownSeconds = ref(0)
 let controller: AbortController | null = null
 let refreshTimer: number | null = null
@@ -173,6 +182,64 @@ function getUserRateMultiplier(groupId?: number) {
   if (!groupId) return null
   const value = userGroupRates.value[groupId]
   return typeof value === 'number' && Number.isFinite(value) ? value : null
+}
+
+function isGroupSubscribed(groupId?: number): boolean {
+  return typeof groupId === 'number' && groupId > 0 && subscribedGroupIds.value.has(groupId)
+}
+
+function isGroupWatchPending(groupId?: number): boolean {
+  return typeof groupId === 'number' && groupId > 0 && watchPendingIds.value.has(groupId)
+}
+
+function resolveGroupName(groupId: number): string {
+  const row = rows.value.find(item => item.group_id === groupId)
+  return row?.group_name || t('channelMonitorV3.unknownGroup')
+}
+
+async function loadWatchSubscriptions() {
+  try {
+    const ids = await groupWatchAPI.listSubscriptions()
+    subscribedGroupIds.value = new Set(ids)
+  } catch (error) {
+    console.warn('Failed to load group watch subscriptions', error)
+  }
+}
+
+async function toggleGroupWatch(groupId: number) {
+  if (!groupId || watchPendingIds.value.has(groupId)) return
+  const wasSubscribed = subscribedGroupIds.value.has(groupId)
+  const nextSubscribed = !wasSubscribed
+
+  const nextPending = new Set(watchPendingIds.value)
+  nextPending.add(groupId)
+  watchPendingIds.value = nextPending
+
+  // Optimistic toggle so the bell animation and brand tint respond on frame 1.
+  const optimistic = new Set(subscribedGroupIds.value)
+  if (nextSubscribed) optimistic.add(groupId)
+  else optimistic.delete(groupId)
+  subscribedGroupIds.value = optimistic
+
+  try {
+    if (nextSubscribed) {
+      await groupWatchAPI.subscribe(groupId)
+      appStore.showSuccess(t('channelMonitorV3.watchSubscribedToast', { name: resolveGroupName(groupId) }))
+    } else {
+      await groupWatchAPI.unsubscribe(groupId)
+      appStore.showSuccess(t('channelMonitorV3.watchUnsubscribedToast', { name: resolveGroupName(groupId) }))
+    }
+  } catch (error) {
+    const reverted = new Set(subscribedGroupIds.value)
+    if (wasSubscribed) reverted.add(groupId)
+    else reverted.delete(groupId)
+    subscribedGroupIds.value = reverted
+    appStore.showError(extractApiErrorMessage(error, t('channelMonitorV3.watchToggleFailed')))
+  } finally {
+    const cleared = new Set(watchPendingIds.value)
+    cleared.delete(groupId)
+    watchPendingIds.value = cleared
+  }
 }
 
 async function loadUserGroupRates() {
@@ -230,7 +297,7 @@ function scheduleRefresh(seconds: number) {
 }
 
 watch(() => filter.value.range, () => void reload(false))
-onMounted(() => { void loadUserGroupRates(); void reload(false) })
+onMounted(() => { void loadUserGroupRates(); void loadWatchSubscriptions(); void reload(false) })
 onBeforeUnmount(() => {
   controller?.abort()
   if (refreshTimer) window.clearInterval(refreshTimer)

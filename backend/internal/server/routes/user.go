@@ -202,6 +202,20 @@ func RegisterUserRoutes(
 			announcements.POST("/:id/read", h.Announcement.MarkRead)
 		}
 
+		// 分组订阅与变更通知（改价 / 变黑不可用 / 恢复绿色）
+		if h.GroupWatch != nil {
+			groupWatch := authenticated.Group("/group-watch")
+			{
+				groupWatch.GET("/subscriptions", h.GroupWatch.ListSubscriptions)
+				groupWatch.PUT("/subscriptions/:group_id", h.GroupWatch.Subscribe)
+				groupWatch.DELETE("/subscriptions/:group_id", h.GroupWatch.Unsubscribe)
+				groupWatch.GET("/notifications/summary", h.GroupWatch.NotificationSummary)
+				groupWatch.GET("/notifications", h.GroupWatch.ListNotifications)
+				groupWatch.POST("/notifications/:id/read", h.GroupWatch.MarkNotificationRead)
+				groupWatch.POST("/notifications/read-all", h.GroupWatch.MarkAllNotificationsRead)
+			}
+		}
+
 		// 卡密兑换
 		// 密钥轮换门禁：未完成「更换 Key / 设置 IP 白名单」的用户禁止兑换，
 		// 兑换历史查询同样拦截，避免绕过前端直接读兑换面数据。

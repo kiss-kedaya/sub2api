@@ -39,6 +39,9 @@ const (
 	// 2FA」后发给目标用户的必发通知（不可退订）：用户的双因素认证被管理员
 	// 清空，必须被告知重置原因、操作时间与仍需自己做的事。
 	NotificationEmailEventAdminSecurityTwoFactorReset = "admin.security.two_factor_reset"
+	NotificationEmailEventGroupWatchPriceChanged      = "group.watch_price_changed"
+	NotificationEmailEventGroupWatchStatusBlack       = "group.watch_status_black"
+	NotificationEmailEventGroupWatchStatusGreen       = "group.watch_status_green"
 
 	notificationEmailTemplateKeyPrefix    = "notification_email_template:"
 	notificationEmailPreferenceKeyPrefix  = "notification_email_preference:"
@@ -581,6 +584,16 @@ func (s *NotificationEmailService) runtimeVariables(ctx context.Context, event, 
 		variables["passkey_retained"] = "no"
 		variables["target_is_admin"] = "no"
 	}
+	if event == NotificationEmailEventGroupWatchPriceChanged ||
+		event == NotificationEmailEventGroupWatchStatusBlack ||
+		event == NotificationEmailEventGroupWatchStatusGreen {
+		for _, key := range []string{
+			"group_name", "platform", "price_change_summary", "status_reason",
+			"cache_rate", "availability_rate", "changed_at", "channel_status_url",
+		} {
+			variables[key] = "-"
+		}
+	}
 
 	for key, value := range input.Variables {
 		variables[key] = value
@@ -1002,6 +1015,7 @@ func notificationEmailSampleVariables(locale string) map[string]string {
 			"report_html":         "<h2>日报</h2><p>请求量：2,374</p>",
 		}
 		addNotificationEmailAdminSecurityResetSampleVariables(variables, notificationEmailLocaleChinese)
+		addNotificationEmailGroupWatchSampleVariables(variables, notificationEmailLocaleChinese)
 		addNotificationEmailOpsSummarySampleVariables(variables)
 		return variables
 	}
@@ -1052,6 +1066,7 @@ func notificationEmailSampleVariables(locale string) map[string]string {
 		"report_html":         "<h2>Daily summary</h2><p>Requests: 2,374</p>",
 	}
 	addNotificationEmailAdminSecurityResetSampleVariables(variables, notificationEmailDefaultLocale)
+	addNotificationEmailGroupWatchSampleVariables(variables, notificationEmailDefaultLocale)
 	addNotificationEmailOpsSummarySampleVariables(variables)
 	return variables
 }
@@ -1090,6 +1105,23 @@ func addNotificationEmailAdminSecurityResetSampleVariables(variables map[string]
 	variables["remaining_factors"] = "passkey"
 	variables["rebind_url"] = "https://example.com/profile"
 	variables["rebind_link_display"] = "https://example.com/profile"
+}
+
+func addNotificationEmailGroupWatchSampleVariables(variables map[string]string, locale string) {
+	variables["group_name"] = "Claude 混合号池"
+	variables["platform"] = "Anthropic"
+	variables["channel_status_url"] = "https://example.com/monitor"
+	variables["changed_at"] = "2026-11-28 17:00:00"
+	variables["cache_rate"] = "36.0%"
+	variables["availability_rate"] = "96.5%"
+	if normalizeNotificationLocale(locale) == notificationEmailLocaleChinese {
+		variables["price_change_summary"] = "基础倍率 0.80x → 0.90x（上涨 +0.10x）"
+		variables["status_reason"] = "最近 5 分钟缓存率低于 30% 或可用率低于 30%"
+		return
+	}
+	variables["group_name"] = "Claude Mixed Pool"
+	variables["price_change_summary"] = "Base rate 0.80x -> 0.90x (+0.10x)"
+	variables["status_reason"] = "Cache rate dropped below 30% or availability dropped below 30% in the latest 5m window"
 }
 
 func addNotificationEmailOpsSummarySampleVariables(variables map[string]string) {
@@ -1131,6 +1163,9 @@ var notificationEmailEventOrder = []string{
 	NotificationEmailEventSubscriptionExpiryReminder,
 	NotificationEmailEventBalanceLow,
 	NotificationEmailEventBalanceRechargeSuccess,
+	NotificationEmailEventGroupWatchPriceChanged,
+	NotificationEmailEventGroupWatchStatusBlack,
+	NotificationEmailEventGroupWatchStatusGreen,
 	NotificationEmailEventAccountQuotaAlert,
 	NotificationEmailEventContentModerationViolation,
 	NotificationEmailEventContentModerationDisabled,
@@ -1219,6 +1254,30 @@ var notificationEmailEventDefinitions = map[string]NotificationEmailEventInfo{
 		Category:     "billing",
 		Optional:     false,
 		Placeholders: append(append([]string{}, notificationEmailCommonPlaceholders...), "recharge_amount", "current_balance", "order_id"),
+	},
+	NotificationEmailEventGroupWatchPriceChanged: {
+		Event:        NotificationEmailEventGroupWatchPriceChanged,
+		Label:        "订阅分组改价通知",
+		Description:  "用户订阅的渠道分组发生倍率或计费价格变动时发送。",
+		Category:     "subscription",
+		Optional:     true,
+		Placeholders: append(append([]string{}, notificationEmailCommonPlaceholders...), "group_name", "platform", "price_change_summary", "changed_at", "channel_status_url", "unsubscribe_url"),
+	},
+	NotificationEmailEventGroupWatchStatusBlack: {
+		Event:        NotificationEmailEventGroupWatchStatusBlack,
+		Label:        "订阅分组不可用告警",
+		Description:  "用户订阅的渠道分组状态变为黑色不可用（缓存率 < 30% 或可用率 < 30%）时发送。",
+		Category:     "subscription",
+		Optional:     true,
+		Placeholders: append(append([]string{}, notificationEmailCommonPlaceholders...), "group_name", "platform", "cache_rate", "availability_rate", "status_reason", "changed_at", "channel_status_url", "unsubscribe_url"),
+	},
+	NotificationEmailEventGroupWatchStatusGreen: {
+		Event:        NotificationEmailEventGroupWatchStatusGreen,
+		Label:        "订阅分组恢复可用通知",
+		Description:  "用户订阅的渠道分组从黑色不可用状态恢复为绿色可用（缓存率 >= 30% 且可用率 >= 80%）时发送。",
+		Category:     "subscription",
+		Optional:     true,
+		Placeholders: append(append([]string{}, notificationEmailCommonPlaceholders...), "group_name", "platform", "cache_rate", "availability_rate", "changed_at", "channel_status_url", "unsubscribe_url"),
 	},
 	NotificationEmailEventAccountQuotaAlert: {
 		Event:       NotificationEmailEventAccountQuotaAlert,
@@ -1455,6 +1514,86 @@ var notificationEmailOfficialTemplates = map[string]map[string]notificationEmail
 <p>您的余额充值 <strong>${{recharge_amount}}</strong> 已完成。</p>
 <p>当前余额：<strong>${{current_balance}}</strong></p>
 			<p>订单号：{{order_id}}</p>`),
+		},
+	},
+	NotificationEmailEventGroupWatchPriceChanged: {
+		notificationEmailDefaultLocale: {
+			Subject: "[{{site_name}}] Pricing updated for {{group_name}}",
+			HTML: notificationEmailCard("#d97706", "Group pricing updated", `
+<p>Hello {{recipient_name}},</p>
+<p>Pricing for your subscribed group <strong>{{group_name}}</strong> ({{platform}}) has changed:</p>
+<p><strong>{{price_change_summary}}</strong></p>
+<p>Time: {{changed_at}}</p>
+<p><a class="button" href="{{channel_status_url}}">View channel status</a></p>
+<p class="muted"><a href="{{unsubscribe_url}}">Unsubscribe from group price alerts</a></p>`),
+		},
+		notificationEmailLocaleChinese: {
+			Subject: "[{{site_name}}] 分组调价通知 - {{group_name}}",
+			HTML: notificationEmailCard("#d97706", "分组价格变动通知", `
+<p>{{recipient_name}}，您好：</p>
+<p>您订阅的分组 <strong>{{group_name}}</strong>（{{platform}}）发生价格调整：</p>
+<p><strong>{{price_change_summary}}</strong></p>
+<p>变更时间：{{changed_at}}</p>
+<p><a class="button" href="{{channel_status_url}}">查看渠道状态</a></p>
+<p class="muted"><a href="{{unsubscribe_url}}">退订分组改价邮件通知</a></p>`),
+		},
+	},
+	NotificationEmailEventGroupWatchStatusBlack: {
+		notificationEmailDefaultLocale: {
+			Subject: "[{{site_name}}] Group unavailable - {{group_name}}",
+			HTML: notificationEmailCard("#18181b", "Group unavailable", `
+<p>Hello {{recipient_name}},</p>
+<p>Your subscribed group <strong>{{group_name}}</strong> ({{platform}}) has turned <strong>unavailable (black)</strong>.</p>
+<table style="width:100%;border-collapse:collapse;">
+  <tr><td>Availability</td><td>{{availability_rate}}</td></tr>
+  <tr><td>Cache rate</td><td>{{cache_rate}}</td></tr>
+  <tr><td>Reason</td><td>{{status_reason}}</td></tr>
+  <tr><td>Time</td><td>{{changed_at}}</td></tr>
+</table>
+<p><a class="button" href="{{channel_status_url}}">View channel status</a></p>
+<p class="muted"><a href="{{unsubscribe_url}}">Unsubscribe from group outage alerts</a></p>`),
+		},
+		notificationEmailLocaleChinese: {
+			Subject: "[{{site_name}}] 分组不可用告警 - {{group_name}}",
+			HTML: notificationEmailCard("#18181b", "分组不可用告警", `
+<p>{{recipient_name}}，您好：</p>
+<p>您订阅的分组 <strong>{{group_name}}</strong>（{{platform}}）状态已变为<strong>黑色不可用</strong>。</p>
+<table style="width:100%;border-collapse:collapse;">
+  <tr><td>可用率</td><td>{{availability_rate}}</td></tr>
+  <tr><td>缓存率</td><td>{{cache_rate}}</td></tr>
+  <tr><td>触发原因</td><td>{{status_reason}}</td></tr>
+  <tr><td>检测时间</td><td>{{changed_at}}</td></tr>
+</table>
+<p><a class="button" href="{{channel_status_url}}">查看渠道状态</a></p>
+<p class="muted"><a href="{{unsubscribe_url}}">退订分组不可用邮件通知</a></p>`),
+		},
+	},
+	NotificationEmailEventGroupWatchStatusGreen: {
+		notificationEmailDefaultLocale: {
+			Subject: "[{{site_name}}] Group recovered - {{group_name}}",
+			HTML: notificationEmailCard("#16a34a", "Group recovered", `
+<p>Hello {{recipient_name}},</p>
+<p>Your subscribed group <strong>{{group_name}}</strong> ({{platform}}) has recovered to <strong>available (green)</strong>.</p>
+<table style="width:100%;border-collapse:collapse;">
+  <tr><td>Availability</td><td>{{availability_rate}}</td></tr>
+  <tr><td>Cache rate</td><td>{{cache_rate}}</td></tr>
+  <tr><td>Time</td><td>{{changed_at}}</td></tr>
+</table>
+<p><a class="button" href="{{channel_status_url}}">View channel status</a></p>
+<p class="muted"><a href="{{unsubscribe_url}}">Unsubscribe from group recovery alerts</a></p>`),
+		},
+		notificationEmailLocaleChinese: {
+			Subject: "[{{site_name}}] 分组已恢复可用 - {{group_name}}",
+			HTML: notificationEmailCard("#16a34a", "分组恢复可用通知", `
+<p>{{recipient_name}}，您好：</p>
+<p>您订阅的分组 <strong>{{group_name}}</strong>（{{platform}}）状态已恢复为<strong>绿色可用</strong>。</p>
+<table style="width:100%;border-collapse:collapse;">
+  <tr><td>可用率</td><td>{{availability_rate}}</td></tr>
+  <tr><td>缓存率</td><td>{{cache_rate}}</td></tr>
+  <tr><td>恢复时间</td><td>{{changed_at}}</td></tr>
+</table>
+<p><a class="button" href="{{channel_status_url}}">查看渠道状态</a></p>
+<p class="muted"><a href="{{unsubscribe_url}}">退订分组恢复邮件通知</a></p>`),
 		},
 	},
 	NotificationEmailEventAccountQuotaAlert: {

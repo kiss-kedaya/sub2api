@@ -12,6 +12,15 @@
           <GroupRateSignals :signals="signals" />
         </div>
       </div>
+      <GroupWatchBellButton
+        v-if="showWatchBell && row.group_id != null && row.group_id > 0"
+        class="ml-auto shrink-0"
+        :platform="row.platform"
+        :subscribed="subscribed"
+        :pending="watchPending"
+        :group-name="groupLabel"
+        @toggle="emit('toggle-watch', row.group_id)"
+      />
     </header>
 
     <div class="channel-signal-card__metrics mt-5 grid grid-cols-3 gap-2">
@@ -54,6 +63,7 @@ import type { GroupSignalSource } from '@/utils/groupRateSignals'
 import { providerGradient, useChannelMonitorFormat } from '@/composables/useChannelMonitorFormat'
 import GroupRateSignals from '@/components/common/GroupRateSignals.vue'
 import ProviderIcon from './ProviderIcon.vue'
+import GroupWatchBellButton from './GroupWatchBellButton.vue'
 import ChannelMonitorV3Timeline from './ChannelMonitorV3Timeline.vue'
 import ChannelMonitorV3QualityHistory from './ChannelMonitorV3QualityHistory.vue'
 
@@ -67,10 +77,20 @@ const props = withDefaults(defineProps<{
   showPlatformBadge?: boolean
   /** Display hints of the group (recent rate change, new group) from GET /groups/available. */
   signals?: GroupSignalSource | null
+  showWatchBell?: boolean
+  subscribed?: boolean
+  watchPending?: boolean
 }>(), {
   showPlatformBadge: true,
   signals: null,
+  showWatchBell: true,
+  subscribed: false,
+  watchPending: false,
 })
+
+const emit = defineEmits<{
+  'toggle-watch': [groupId: number]
+}>()
 const { t } = useI18n()
 const { providerLabel, providerBadgeClass } = useChannelMonitorFormat()
 

@@ -762,6 +762,16 @@ type adminServiceImpl struct {
 	compositeResolver    *CompositeRouteResolver
 	// 分组平台变更后用来失效渠道缓存；可为 nil（缓存会在 TTL 到期后自然重建）
 	channelCacheInvalidator ChannelCacheInvalidator
+	// 分组改价后异步通知订阅该分组的用户；可为 nil
+	groupPriceChangeNotifier GroupPriceChangeNotifier
+}
+
+// SetGroupPriceChangeNotifier wires optional group price-change watch notifications.
+func (s *adminServiceImpl) SetGroupPriceChangeNotifier(n GroupPriceChangeNotifier) {
+	if s == nil {
+		return
+	}
+	s.groupPriceChangeNotifier = n
 }
 
 // ChannelCacheInvalidator 失效渠道缓存。

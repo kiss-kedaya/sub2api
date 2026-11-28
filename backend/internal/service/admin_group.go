@@ -918,6 +918,8 @@ func (s *adminServiceImpl) UpdateGroup(ctx context.Context, id int64, input *Upd
 
 	// 渠道缓存里存了 groupID → platform 的映射，改了平台要让它失效（见函数末尾）
 	previousPlatform := group.Platform
+	// 在就地修改字段前保留改价对比快照，供落库成功后通知分组订阅用户。
+	beforePricing := SnapshotGroupPricing(group)
 
 	if group.Platform == PlatformDeepseek || NormalizeGroupPlatform(input.Platform) == PlatformDeepseek {
 		if err := validateDeepSeekAudioPrices(input.AudioTTSPricePerMillionChars, input.AudioSTTPricePerHour); err != nil {
@@ -1287,6 +1289,10 @@ func (s *adminServiceImpl) UpdateGroup(ctx context.Context, id int64, input *Upd
 	// 期间定价查不到会静默回落到 LiteLLM 价格表、映射与白名单也不生效。
 	if group.Platform != previousPlatform && s.channelCacheInvalidator != nil {
 		s.channelCacheInvalidator.InvalidateCache()
+	}
+
+	if s.groupPriceChangeNotifier != nil {
+		s.groupPriceChangeNotifier.NotifyGroupPriceChanged(ctx, beforePricing, SnapshotGroupPricing(group))
 	}
 
 	// 如果指定了复制账号的源分组，同步绑定（替换当前分组的账号）

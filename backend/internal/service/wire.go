@@ -1195,6 +1195,7 @@ var ProviderSet = wire.NewSet(
 	ProvideChannelMonitorRunner,
 	NewChannelMonitorQuotaFetcher,
 	ProvideChannelMonitorV2Service,
+	ProvideGroupWatchService,
 	ProvideChannelMonitorV2Aggregator,
 	NewChannelMonitorRequestTemplateService,
 	ProvideUserPlatformQuotaUsageFlusher,
@@ -1303,13 +1304,33 @@ func ProvideChannelMonitorV2Service(repo ChannelMonitorV2Repository, settingServ
 	return svc
 }
 
+// ProvideGroupWatchService wires group-watch subscriptions, status transition
+// notifications, and admin group price-change callbacks.
+func ProvideGroupWatchService(
+	repo GroupWatchRepository,
+	monitorRepo ChannelMonitorV2Repository,
+	apiKeyService *APIKeyService,
+	settingRepo SettingRepository,
+	notificationEmailService *NotificationEmailService,
+	adminService AdminService,
+) *GroupWatchService {
+	svc := NewGroupWatchService(repo, monitorRepo, apiKeyService, settingRepo, notificationEmailService)
+	if setter, ok := adminService.(interface {
+		SetGroupPriceChangeNotifier(GroupPriceChangeNotifier)
+	}); ok {
+		setter.SetGroupPriceChangeNotifier(svc)
+	}
+	return svc
+}
+
 // ProvideChannelMonitorV2Aggregator starts the passive minute-rollup worker.
 // Aggregation only runs when channel_monitor_enabled=true and mode=v2 (and V2 config enabled).
 // Set CHANNEL_MONITOR_V2_DISABLE_AGGREGATOR=1 to skip this worker independently
 // of SUB2API_DISABLE_BACKGROUND_JOBS.
-func ProvideChannelMonitorV2Aggregator(repo ChannelMonitorV2Repository, db *sql.DB, settingService *SettingService, lockCache LeaderLockCache) *ChannelMonitorV2Aggregator {
+func ProvideChannelMonitorV2Aggregator(repo ChannelMonitorV2Repository, db *sql.DB, settingService *SettingService, lockCache LeaderLockCache, groupWatch *GroupWatchService) *ChannelMonitorV2Aggregator {
 	aggregator := NewChannelMonitorV2Aggregator(repo, db, settingService)
 	aggregator.SetLeaderLock(lockCache, db)
+	aggregator.SetGroupWatchEvaluator(groupWatch)
 	if os.Getenv("CHANNEL_MONITOR_V2_DISABLE_AGGREGATOR") == "1" {
 		return aggregator
 	}
