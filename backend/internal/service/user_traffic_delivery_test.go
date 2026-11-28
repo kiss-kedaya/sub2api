@@ -175,7 +175,8 @@ func TestTrafficDeliveryReplayIsBounded(t *testing.T) {
 func TestTrafficDeliveryDoesNotWaitForBlockedStorageAndDropsOverflow(t *testing.T) {
 	entered, releaseCh := make(chan struct{}), make(chan struct{})
 	release := sync.OnceFunc(func() { close(releaseCh) })
-	d, err := newTrafficDelivery(func() string { return t.TempDir() }, func(context.Context, TrafficEvent) error { t.Error("unexpected database call"); return nil }, trafficDeliveryOptions{queueCapacity: 2, stopBudget: 25 * time.Millisecond, stage: func(TrafficEvent) error { close(entered); <-releaseCh; return nil }})
+	// Trigger fallback spooling by failing the primary database write, then block inside stage.
+	d, err := newTrafficDelivery(func() string { return t.TempDir() }, func(context.Context, TrafficEvent) error { return errors.New("db offline") }, trafficDeliveryOptions{queueCapacity: 2, stopBudget: 25 * time.Millisecond, stage: func(TrafficEvent) error { close(entered); <-releaseCh; return nil }})
 	require.NoError(t, err)
 	t.Cleanup(func() { release(); d.Stop() })
 	d.RecordTraffic(trafficDeliveryFixture())
@@ -312,24 +313,42 @@ func TestTrafficDeliveryFailureAndQuotaDropsAreObservable(t *testing.T) {
 }
 
 func TestTrafficDeliveryWorkerPanicCannotCrashBusinessProcess(t *testing.T) {
-	d, err := newTrafficDelivery(func() string { return t.TempDir() }, func(context.Context, TrafficEvent) error { return nil }, trafficDeliveryOptions{queueCapacity: 2, stopBudget: time.Second, stage: func(TrafficEvent) error { panic("simulated auxiliary failure") }})
-	require.NoError(t, err)
-	defer d.Stop()
-	d.RecordTraffic(trafficDeliveryFixture())
-	select {
-	case <-d.done:
-	case <-time.After(time.Second):
-		t.Fatal("panicking worker did not exit")
+	for _, tc := range []struct {
+		name  string
+		write func(context.Context, TrafficEvent) error
+		stage func(TrafficEvent) error
+	}{
+		{
+			name:  "primary_write_panic",
+			write: func(context.Context, TrafficEvent) error { panic("simulated primary write failure") },
+		},
+		{
+			name:  "fallback_stage_panic",
+			write: func(context.Context, TrafficEvent) error { return errors.New("db offline") },
+			stage: func(TrafficEvent) error { panic("simulated auxiliary failure") },
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			d, err := newTrafficDelivery(func() string { return t.TempDir() }, tc.write, trafficDeliveryOptions{queueCapacity: 2, stopBudget: time.Second, stage: tc.stage})
+			require.NoError(t, err)
+			defer d.Stop()
+			d.RecordTraffic(trafficDeliveryFixture())
+			select {
+			case <-d.done:
+			case <-time.After(time.Second):
+				t.Fatal("panicking worker did not exit")
+			}
+			h, err := d.Health(context.Background())
+			require.NoError(t, err)
+			require.EqualValues(t, 1, h.WorkerPanics)
+			require.EqualValues(t, 1, h.DroppedEvents)
+			require.False(t, h.WorkerRunning)
+			d.RecordTraffic(trafficDeliveryFixture())
+			h, err = d.Health(context.Background())
+			require.NoError(t, err)
+			require.EqualValues(t, 2, h.DroppedEvents)
+		})
 	}
-	h, err := d.Health(context.Background())
-	require.NoError(t, err)
-	require.EqualValues(t, 1, h.WorkerPanics)
-	require.EqualValues(t, 1, h.DroppedEvents)
-	require.False(t, h.WorkerRunning)
-	d.RecordTraffic(trafficDeliveryFixture())
-	h, err = d.Health(context.Background())
-	require.NoError(t, err)
-	require.EqualValues(t, 2, h.DroppedEvents)
 }
 
 func TestTrafficDeliveryAssignsIndependentIDsAfterHandoff(t *testing.T) {
@@ -468,4 +487,511 @@ func TestTrafficDeliveryWakesWithoutPollingAndRecoversBacklog(t *testing.T) {
 	require.NoError(t, err)
 	require.Zero(t, h.DroppedEvents)
 	require.Eventually(t, func() bool { h, _ := d.Health(context.Background()); return h.PendingEvents == 0 }, time.Second, time.Millisecond)
+}
+
+func TestTrafficDeliverySteadyStateBatchesInMemoryWithZeroDiskWrites(t *testing.T) {
+	dir := t.TempDir()
+	var (
+		mu         sync.Mutex
+		batchSizes []int
+		delivered  int64
+		stageCalls atomic.Int64
+	)
+	d, err := newTrafficDelivery(
+		func() string { return dir },
+		func(context.Context, TrafficEvent) error {
+			t.Error("unexpected single write in healthy batched steady state")
+			return nil
+		},
+		trafficDeliveryOptions{
+			queueCapacity: trafficQueueCapacity,
+			stopBudget:    time.Second,
+			stage: func(TrafficEvent) error {
+				stageCalls.Add(1)
+				return errors.New("unexpected disk spool during healthy steady state")
+			},
+			writeBatch: func(_ context.Context, events []TrafficEvent) error {
+				mu.Lock()
+				batchSizes = append(batchSizes, len(events))
+				delivered += int64(len(events))
+				mu.Unlock()
+				return nil
+			},
+		},
+	)
+	require.NoError(t, err)
+	defer d.Stop()
+
+	// Send 300 events: must split into <=128-row batches and flush the tail via 50ms window.
+	const total = 300
+	for range total {
+		d.RecordTraffic(trafficDeliveryFixture())
+	}
+	require.Eventually(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return delivered == total
+	}, 3*time.Second, 10*time.Millisecond)
+
+	d.Stop()
+
+	require.Zero(t, stageCalls.Load(), "steady-state path must not touch disk spool")
+	entries, err := os.ReadDir(dir)
+	require.NoError(t, err)
+	require.Empty(t, entries, "spool directory must remain completely empty in steady state")
+
+	mu.Lock()
+	require.LessOrEqual(t, len(batchSizes), 20, "events must be batched rather than written one by one")
+	for _, size := range batchSizes {
+		require.LessOrEqual(t, size, trafficMemoryBatchMax, "each batch must respect RecordTrafficBatch's 128-row cap")
+	}
+	mu.Unlock()
+
+	h, err := d.Health(context.Background())
+	require.NoError(t, err)
+	require.EqualValues(t, total, h.DeliveredEvents)
+	require.Zero(t, h.PendingEvents)
+	require.Zero(t, h.DroppedEvents)
+	require.Zero(t, h.DeliveryFailures)
+}
+
+func TestTrafficDeliveryFallsBackToSpoolOnOutageAndRecovers(t *testing.T) {
+	dir := t.TempDir()
+	var (
+		outage    atomic.Bool
+		mu        sync.Mutex
+		delivered = map[string]int{}
+	)
+	d, err := NewTrafficDeliveryBatchedResolved(
+		func() string { return dir },
+		func(context.Context, TrafficEvent) error {
+			t.Error("unexpected single write")
+			return nil
+		},
+		func(_ context.Context, events []TrafficEvent) error {
+			if outage.Load() {
+				return errors.New("postgres unavailable")
+			}
+			mu.Lock()
+			for _, e := range events {
+				delivered[e.EventID]++
+			}
+			mu.Unlock()
+			return nil
+		},
+	)
+	require.NoError(t, err)
+	defer d.Stop()
+
+	// 1. Healthy steady state: delivered directly with zero spool files.
+	healthy := trafficDeliveryFixture()
+	d.RecordTraffic(healthy)
+	require.Eventually(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return delivered[healthy.EventID] == 1
+	}, 2*time.Second, 10*time.Millisecond)
+	entries, err := os.ReadDir(dir)
+	require.NoError(t, err)
+	require.Empty(t, entries)
+
+	// 2. Database outage: events spill to local spool files.
+	outage.Store(true)
+	var failedIDs []string
+	for range 5 {
+		e := trafficDeliveryFixture()
+		failedIDs = append(failedIDs, e.EventID)
+		d.RecordTraffic(e)
+	}
+	require.Eventually(t, func() bool {
+		h, err := d.Health(context.Background())
+		return err == nil && h.PendingEvents == 5
+	}, 2*time.Second, 10*time.Millisecond)
+	for _, id := range failedIDs {
+		require.FileExists(t, filepath.Join(dir, id+".json"))
+	}
+
+	// 3. Database recovers: spooled backlog replays and spool empties; new events skip disk again.
+	outage.Store(false)
+	require.Eventually(t, func() bool {
+		h, err := d.Health(context.Background())
+		if err != nil || h.PendingEvents != 0 {
+			return false
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		for _, id := range failedIDs {
+			if delivered[id] != 1 {
+				return false
+			}
+		}
+		return true
+	}, 5*time.Second, 25*time.Millisecond)
+
+	entries, err = os.ReadDir(dir)
+	require.NoError(t, err)
+	require.Empty(t, entries)
+
+	after := trafficDeliveryFixture()
+	d.RecordTraffic(after)
+	require.Eventually(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return delivered[after.EventID] == 1
+	}, 2*time.Second, 10*time.Millisecond)
+	entries, err = os.ReadDir(dir)
+	require.NoError(t, err)
+	require.Empty(t, entries)
+}
+
+func TestTrafficDeliveryShutdownSpoolsUnpersistedEventsAndReplaysOnRestart(t *testing.T) {
+	dir := t.TempDir()
+	entered, releaseGate := make(chan struct{}), make(chan struct{})
+	var (
+		attemptMu        sync.Mutex
+		shutdownAttempts []string
+	)
+	d, err := NewTrafficDeliveryBatchedResolved(
+		func() string {
+			close(entered)
+			<-releaseGate
+			return dir
+		},
+		func(context.Context, TrafficEvent) error { return errors.New("offline") },
+		func(_ context.Context, batch []TrafficEvent) error {
+			attemptMu.Lock()
+			for _, e := range batch {
+				shutdownAttempts = append(shutdownAttempts, e.EventID)
+			}
+			attemptMu.Unlock()
+			return errors.New("offline")
+		},
+	)
+	require.NoError(t, err)
+	<-entered
+
+	events := []TrafficEvent{trafficDeliveryFixture(), trafficDeliveryFixture(), trafficDeliveryFixture()}
+	wantIDs := make([]string, len(events))
+	for i, e := range events {
+		wantIDs[i] = e.EventID
+		d.RecordTraffic(e)
+	}
+	// Hold the worker until Stop has signaled so drain deterministically handles all events.
+	stopped := make(chan struct{})
+	go func() {
+		d.Stop()
+		close(stopped)
+	}()
+	require.Eventually(t, func() bool { return d.stopping.Load() }, time.Second, time.Millisecond)
+	close(releaseGate)
+	select {
+	case <-stopped:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Stop did not return promptly")
+	}
+
+	attemptMu.Lock()
+	require.ElementsMatch(t, wantIDs, shutdownAttempts, "drain must attempt PostgreSQL delivery before spooling")
+	attemptMu.Unlock()
+	for _, e := range events {
+		require.FileExists(t, filepath.Join(dir, e.EventID+".json"))
+	}
+
+	var (
+		mu       sync.Mutex
+		replayed []string
+	)
+	restarted, err := NewTrafficDeliveryBatchedResolved(
+		func() string { return dir },
+		func(context.Context, TrafficEvent) error { t.Error("unexpected single write"); return nil },
+		func(_ context.Context, batch []TrafficEvent) error {
+			mu.Lock()
+			for _, e := range batch {
+				replayed = append(replayed, e.EventID)
+			}
+			mu.Unlock()
+			return nil
+		},
+	)
+	require.NoError(t, err)
+	defer restarted.Stop()
+
+	require.Eventually(t, func() bool {
+		h, err := restarted.Health(context.Background())
+		return err == nil && h.PendingEvents == 0 && h.DeliveredEvents == int64(len(events))
+	}, 3*time.Second, 10*time.Millisecond)
+
+	restarted.Stop()
+
+	mu.Lock()
+	require.ElementsMatch(t, wantIDs, replayed)
+	mu.Unlock()
+	jsonFiles, err := filepath.Glob(filepath.Join(dir, "*.json"))
+	require.NoError(t, err)
+	require.Empty(t, jsonFiles)
+}
+
+func TestTrafficDeliveryIsolatesPermanentBatchErrorInMemoryWithoutDisk(t *testing.T) {
+	dir := t.TempDir()
+	good1, bad, good2 := trafficDeliveryFixture(), trafficDeliveryFixture(), trafficDeliveryFixture()
+	var (
+		mu        sync.Mutex
+		delivered []string
+	)
+	d, err := NewTrafficDeliveryBatchedResolved(
+		func() string { return dir },
+		func(_ context.Context, e TrafficEvent) error {
+			if e.EventID == bad.EventID {
+				return &pq.Error{Code: "23514"}
+			}
+			mu.Lock()
+			delivered = append(delivered, e.EventID)
+			mu.Unlock()
+			return nil
+		},
+		func(context.Context, []TrafficEvent) error {
+			return &pq.Error{Code: "23514"}
+		},
+	)
+	require.NoError(t, err)
+	defer d.Stop()
+
+	d.RecordTraffic(good1)
+	d.RecordTraffic(bad)
+	d.RecordTraffic(good2)
+	require.Eventually(t, func() bool {
+		h, err := d.Health(context.Background())
+		return err == nil && h.DeliveredEvents == 2 && h.InvalidDroppedEvents == 1
+	}, 2*time.Second, 10*time.Millisecond)
+
+	mu.Lock()
+	require.ElementsMatch(t, []string{good1.EventID, good2.EventID}, delivered)
+	mu.Unlock()
+	entries, err := os.ReadDir(dir)
+	require.NoError(t, err)
+	require.Empty(t, entries)
+}
+
+func TestTrafficDeliveryReconcilesStalePendingCountWithoutSpinning(t *testing.T) {
+	dir := t.TempDir()
+	var (
+		outage    atomic.Bool
+		delivered atomic.Int64
+	)
+	outage.Store(true)
+	d, err := NewTrafficDeliveryBatchedResolved(
+		func() string { return dir },
+		func(context.Context, TrafficEvent) error { return errors.New("unexpected single write") },
+		func(_ context.Context, events []TrafficEvent) error {
+			if outage.Load() {
+				return errors.New("postgres unavailable")
+			}
+			delivered.Add(int64(len(events)))
+			return nil
+		},
+	)
+	require.NoError(t, err)
+	defer d.Stop()
+
+	// Enqueue the exact same EventID twice while PostgreSQL is offline: both stage
+	// to <eventID>.json, overwriting the single spool file while pendingFiles becomes 2.
+	dup := trafficDeliveryFixture()
+	d.RecordTraffic(dup)
+	d.RecordTraffic(dup)
+
+	require.Eventually(t, func() bool {
+		_, statErr := os.Stat(filepath.Join(dir, dup.EventID+".json"))
+		h, healthErr := d.Health(context.Background())
+		return statErr == nil && healthErr == nil && h.PendingEvents >= 1
+	}, 2*time.Second, 10*time.Millisecond)
+
+	outage.Store(false)
+	require.Eventually(t, func() bool {
+		h, err := d.Health(context.Background())
+		return err == nil && h.PendingEvents == 0 && delivered.Load() >= 1
+	}, 4*time.Second, 20*time.Millisecond, "stale pendingFiles after duplicate EventID overwrite must reconcile to 0")
+}
+
+func TestTrafficDeliveryShutdownSpoolsBeforeStopBudgetExpiresOnHangingDB(t *testing.T) {
+	for _, tc := range []struct {
+		name            string
+		stopBudget      time.Duration
+		expectDBAttempt bool
+	}{
+		{name: "tight_budget_skips_hanging_db", stopBudget: 180 * time.Millisecond, expectDBAttempt: false},
+		{name: "bounded_db_attempt_then_spools", stopBudget: 600 * time.Millisecond, expectDBAttempt: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			gate := make(chan struct{})
+			entered := make(chan struct{})
+			var writeCalls atomic.Int64
+			d, err := newTrafficDelivery(
+				func() string {
+					close(entered)
+					<-gate
+					return dir
+				},
+				func(ctx context.Context, _ TrafficEvent) error {
+					writeCalls.Add(1)
+					<-ctx.Done()
+					return ctx.Err()
+				},
+				trafficDeliveryOptions{
+					queueCapacity: trafficQueueCapacity,
+					stopBudget:    tc.stopBudget,
+					writeBatch: func(ctx context.Context, _ []TrafficEvent) error {
+						writeCalls.Add(1)
+						<-ctx.Done()
+						return ctx.Err()
+					},
+				},
+			)
+			require.NoError(t, err)
+			<-entered
+
+			events := []TrafficEvent{trafficDeliveryFixture(), trafficDeliveryFixture(), trafficDeliveryFixture()}
+			for _, e := range events {
+				d.RecordTraffic(e)
+			}
+
+			stopped := make(chan struct{})
+			go func() {
+				d.Stop()
+				close(stopped)
+			}()
+			require.Eventually(t, func() bool { return d.stopping.Load() }, time.Second, time.Millisecond)
+			close(gate)
+
+			select {
+			case <-stopped:
+			case <-time.After(2 * time.Second):
+				t.Fatal("Stop did not return within bound")
+			}
+
+			if tc.expectDBAttempt {
+				require.EqualValues(t, 1, writeCalls.Load())
+			} else {
+				require.Zero(t, writeCalls.Load())
+			}
+			for _, e := range events {
+				require.FileExists(t, filepath.Join(dir, e.EventID+".json"), "hanging DB during shutdown must still spool unpersisted events")
+			}
+			h, err := d.Health(context.Background())
+			require.NoError(t, err)
+			require.Zero(t, h.ShutdownDroppedEvents)
+		})
+	}
+}
+
+func TestTrafficDeliveryReconcilesSpoolCapacityAfterManualCleanup(t *testing.T) {
+	d := stoppedTrafficDelivery(t)
+	d.maxSpoolFiles = 1
+
+	bad := trafficDeliveryFixture()
+	require.NoError(t, d.stage(bad))
+	require.NoError(t, d.quarantine(filepath.Join(d.dir, bad.EventID+".json")))
+
+	// Spool is full due to the quarantined file; fallback persistence hits quota.
+	d.persist(context.Background(), trafficDeliveryFixture())
+	require.EqualValues(t, 1, d.spoolDrops.Load())
+	require.True(t, d.spoolNeedsReconcile)
+
+	// Operator manually removes the quarantined file.
+	require.NoError(t, os.Remove(filepath.Join(d.dir, bad.EventID+".json.invalid")))
+
+	// Bounded health reconciliation detects the freed quota and clears quarantined count.
+	d.reconcileHealth(context.Background())
+	require.False(t, d.spoolNeedsReconcile)
+	require.Zero(t, d.spoolFiles)
+	require.Zero(t, d.spoolBytes)
+	h, err := d.Health(context.Background())
+	require.NoError(t, err)
+	require.Zero(t, h.QuarantinedEvents)
+
+	// Subsequent fallback spooling succeeds again.
+	next := trafficDeliveryFixture()
+	d.persist(context.Background(), next)
+	require.EqualValues(t, 1, d.spoolDrops.Load())
+	require.FileExists(t, filepath.Join(d.dir, next.EventID+".json"))
+
+	// Healthy empty steady state skips disk reconciliation completely.
+	require.NoError(t, os.Remove(filepath.Join(d.dir, next.EventID+".json")))
+	require.NoError(t, d.scanDisk(context.Background()))
+	checkedBefore := d.disk.Load().CheckedAt
+	d.dir = filepath.Join(d.dir, "missing-must-not-be-scanned")
+	d.reconcileHealth(context.Background())
+	require.True(t, d.disk.Load().Available, "healthy empty steady state must not scan disk")
+	require.Equal(t, checkedBefore, d.disk.Load().CheckedAt)
+}
+
+func TestTrafficDeliveryReplayFilesystemErrorDoesNotPoisonHealthyDBDelivery(t *testing.T) {
+	t.Run("acknowledge_remove_failure_after_db_commit", func(t *testing.T) {
+		d := stoppedTrafficDelivery(t)
+		var delivered []string
+		d.writeBatch = func(_ context.Context, events []TrafficEvent) error {
+			for _, e := range events {
+				delivered = append(delivered, e.EventID)
+			}
+			return nil
+		}
+		d.removeFile = func(string) error {
+			return os.ErrPermission
+		}
+
+		spooled := trafficDeliveryFixture()
+		require.NoError(t, d.stage(spooled))
+
+		// Simulate an expired previous DB backoff; replay commits to PG, then fails os.Remove.
+		nextDBRetry := time.Now().Add(-time.Second)
+		var nextReplayRetry time.Time
+		d.replayPendingCycle(context.Background(), &nextDBRetry, &nextReplayRetry)
+
+		require.True(t, nextDBRetry.IsZero(), "successful PG commit must clear DB backoff even when spool unlink fails")
+		require.True(t, nextReplayRetry.After(time.Now()), "spool unlink failure must use replay backoff")
+		require.False(t, d.disk.Load().Available, "spool unlink failure must mark storage unavailable")
+
+		// Fresh incoming traffic must still deliver directly to healthy PG without dropping.
+		fresh := trafficDeliveryFixture()
+		d.processing.Store(1)
+		d.flushMemoryBatch(context.Background(), []TrafficEvent{fresh}, &nextDBRetry, trafficDirectWriteBudget)
+
+		require.Contains(t, delivered, spooled.EventID)
+		require.Contains(t, delivered, fresh.EventID)
+		require.Zero(t, d.persistenceFailures.Load())
+		require.Zero(t, d.droppedEvents())
+	})
+
+	t.Run("unreadable_spool_dir_before_db_write", func(t *testing.T) {
+		d := stoppedTrafficDelivery(t)
+		var delivered []string
+		d.writeBatch = func(_ context.Context, events []TrafficEvent) error {
+			for _, e := range events {
+				delivered = append(delivered, e.EventID)
+			}
+			return nil
+		}
+
+		spooled := trafficDeliveryFixture()
+		require.NoError(t, d.stage(spooled))
+		// Point dir to a non-existent path inside a regular file so os.Open/MkdirAll fails.
+		blocker := filepath.Join(t.TempDir(), "file")
+		require.NoError(t, os.WriteFile(blocker, []byte("x"), 0600))
+		d.dir = filepath.Join(blocker, "spool")
+
+		var nextDBRetry, nextReplayRetry time.Time
+		d.replayPendingCycle(context.Background(), &nextDBRetry, &nextReplayRetry)
+
+		require.True(t, nextDBRetry.IsZero(), "spool open error must not trigger DB backoff")
+		require.True(t, nextReplayRetry.After(time.Now()))
+		require.False(t, d.disk.Load().Available)
+
+		fresh := trafficDeliveryFixture()
+		d.processing.Store(1)
+		d.flushMemoryBatch(context.Background(), []TrafficEvent{fresh}, &nextDBRetry, trafficDirectWriteBudget)
+
+		require.Equal(t, []string{fresh.EventID}, delivered)
+		require.Zero(t, d.persistenceFailures.Load())
+		require.Zero(t, d.droppedEvents())
+	})
 }

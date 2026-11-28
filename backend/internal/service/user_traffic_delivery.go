@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -19,16 +20,30 @@ import (
 )
 
 const (
-	trafficQueueCapacity = 1024
-	trafficBatchSize     = 32
-	trafficMaxSpoolFiles = 10000
-	trafficMaxSpoolBytes = 64 << 20
-	trafficStopBudget    = time.Second
-	trafficWriteBudget   = 250 * time.Millisecond
+	trafficQueueCapacity       = 1024
+	trafficBatchSize           = 32  // bounded disk-spool replay batch size
+	trafficMemoryBatchMax      = 128 // matches RecordTrafficBatch's 128-row SQL cap
+	trafficFlushWindow         = 50 * time.Millisecond
+	trafficRetryBackoff        = 2 * time.Second
+	trafficHealthInterval      = 30 * time.Second
+	trafficMaxSpoolFiles       = 10000
+	trafficMaxSpoolBytes       = 64 << 20
+	trafficStopBudget          = time.Second
+	trafficWriteBudget         = 250 * time.Millisecond
+	trafficDirectWriteBudget   = 500 * time.Millisecond
+	trafficShutdownMinDBBudget = 200 * time.Millisecond
 )
 
 var errTrafficSpoolFull = errors.New("traffic spool capacity reached")
 var errTrafficStorageUnavailable = errors.New("traffic storage unavailable")
+
+type trafficSpoolError struct {
+	err         error
+	dbSucceeded bool
+}
+
+func (e trafficSpoolError) Error() string { return e.err.Error() }
+func (e trafficSpoolError) Unwrap() error { return e.err }
 
 // TrafficDelivery is best-effort auxiliary metering. Request goroutines only
 // attempt a bounded, nonblocking enqueue; all filesystem/SQL/logging is here.
@@ -47,7 +62,9 @@ type TrafficDelivery struct {
 	done                chan struct{}
 	once                sync.Once
 	stopBudget          time.Duration
+	stopDeadline        atomic.Int64
 	stageEvent          func(TrafficEvent) error
+	removeFile          func(string) error
 	disk                atomic.Pointer[trafficDiskHealth]
 	processing          atomic.Int64
 	queueDrops          atomic.Int64
@@ -60,12 +77,13 @@ type TrafficDelivery struct {
 	stagingFailures     atomic.Int64
 	persistenceFailures atomic.Int64
 	lastDelivery        atomic.Int64
-	// Worker-owned accounting; periodically reconciled with the directory.
-	spoolFiles    int64
-	spoolBytes    int64
-	pendingFiles  int64
-	maxSpoolFiles int64
-	maxSpoolBytes int64
+	// Worker-owned accounting; reconciled on demand when spool state diverges.
+	spoolFiles          int64
+	spoolBytes          int64
+	pendingFiles        int64
+	maxSpoolFiles       int64
+	maxSpoolBytes       int64
+	spoolNeedsReconcile bool
 }
 
 type trafficDiskHealth struct {
@@ -123,7 +141,11 @@ func newTrafficDelivery(resolveDir func() string, write func(context.Context, Tr
 }
 
 func (d *TrafficDelivery) Stop() {
-	d.once.Do(func() { d.stopping.Store(true); close(d.stop) })
+	d.once.Do(func() {
+		d.stopping.Store(true)
+		d.stopDeadline.Store(time.Now().Add(d.stopBudget).UnixNano())
+		close(d.stop)
+	})
 	timer := time.NewTimer(d.stopBudget)
 	defer timer.Stop()
 	select {
@@ -146,7 +168,6 @@ func (d *TrafficDelivery) RecordTraffic(e TrafficEvent) {
 	}
 	select {
 	case d.queue <- e:
-		d.signal()
 	default:
 		d.queueDrops.Add(1)
 	}
@@ -159,7 +180,9 @@ func (d *TrafficDelivery) signal() {
 	}
 }
 
-func (d *TrafficDelivery) persist(ctx context.Context, e TrafficEvent) {
+// persist spools an event to local disk as fallback when direct PostgreSQL
+// delivery fails (or during shutdown when the database cannot accept it).
+func (d *TrafficDelivery) persist(_ context.Context, e TrafficEvent) {
 	if e.EventID == "" {
 		e.EventID = uuid.NewString()
 	}
@@ -168,6 +191,7 @@ func (d *TrafficDelivery) persist(ctx context.Context, e TrafficEvent) {
 		return
 	}
 	if errors.Is(err, errTrafficSpoolFull) {
+		d.spoolNeedsReconcile = true
 		d.spoolDrops.Add(1)
 		return
 	}
@@ -177,39 +201,173 @@ func (d *TrafficDelivery) persist(ctx context.Context, e TrafficEvent) {
 	}
 	d.stagingFailures.Add(1)
 	d.markStorageUnavailable()
-	// This fallback is strictly worker-only, bounded and shutdown-cancellable.
-	writeCtx, cancel := context.WithTimeout(ctx, trafficWriteBudget)
-	defer cancel()
-	if err := d.write(writeCtx, e); err != nil {
-		d.deliveryFailures.Add(1)
-		d.persistenceFailures.Add(1)
-	} else {
-		d.noteDelivery()
+	d.persistenceFailures.Add(1)
+}
+
+func (d *TrafficDelivery) collectMemoryBatch(batch []TrafficEvent) []TrafficEvent {
+	for len(batch) < trafficMemoryBatchMax {
+		select {
+		case event := <-d.queue:
+			batch = append(batch, event)
+		default:
+			return batch
+		}
+	}
+	return batch
+}
+
+func (d *TrafficDelivery) spoolBatch(ctx context.Context, events []TrafficEvent) {
+	for i, e := range events {
+		if ctx.Err() != nil {
+			remaining := int64(len(events) - i)
+			d.shutdownDrops.Add(remaining)
+			d.processing.Add(-remaining)
+			return
+		}
+		d.persist(ctx, e)
+		d.processing.Add(-1)
 	}
 }
 
-func (d *TrafficDelivery) consume(ctx context.Context) {
-	var batch [trafficBatchSize]TrafficEvent
-	count := 0
-collect:
-	for count < len(batch) {
-		select {
-		case event := <-d.queue:
-			batch[count] = event
-			count++
-		default:
-			break collect
-		}
+// flushMemoryBatch delivers an in-memory batch directly to PostgreSQL without
+// touching disk in steady state. Only retryable PostgreSQL failures (or tight
+// shutdown headroom where writeBudget <= 0) spill unpersisted events to spool.
+func (d *TrafficDelivery) flushMemoryBatch(ctx context.Context, batch []TrafficEvent, nextDBRetry *time.Time, writeBudget time.Duration) {
+	if len(batch) == 0 {
+		return
 	}
-	d.processing.Store(int64(count))
-	for i := 0; i < count; i++ {
+	valid := make([]TrafficEvent, 0, len(batch))
+	for _, e := range batch {
+		if e.EventID == "" {
+			e.EventID = uuid.NewString()
+		}
+		if ValidateTrafficEvent(e) != nil {
+			d.invalidDrops.Add(1)
+			d.processing.Add(-1)
+			continue
+		}
+		valid = append(valid, e)
+	}
+	if len(valid) == 0 {
+		return
+	}
+
+	// While backing off after a retryable DB failure (or when shutdown headroom
+	// is too tight to risk a hanging DB write), spill directly to a healthy spool.
+	if d.disk.Load().Available && (writeBudget <= 0 || (!nextDBRetry.IsZero() && time.Now().Before(*nextDBRetry))) {
+		d.spoolBatch(ctx, valid)
+		return
+	}
+
+	if d.writeBatch != nil {
 		if ctx.Err() != nil {
-			d.shutdownDrops.Add(int64(count - i))
-			d.processing.Store(0)
+			remaining := int64(len(valid))
+			d.shutdownDrops.Add(remaining)
+			d.processing.Add(-remaining)
 			return
 		}
-		d.persist(ctx, batch[i])
-		d.processing.Add(-1)
+		writeCtx, cancel := context.WithTimeout(ctx, writeBudget)
+		err := d.writeBatch(writeCtx, valid)
+		cancel()
+		if err == nil {
+			d.noteDeliveryCount(len(valid))
+			d.processing.Add(-int64(len(valid)))
+			*nextDBRetry = time.Time{}
+			return
+		}
+		if ctx.Err() != nil {
+			remaining := int64(len(valid))
+			d.shutdownDrops.Add(remaining)
+			d.processing.Add(-remaining)
+			return
+		}
+		d.deliveryFailures.Add(1)
+		if !permanentTrafficError(err) {
+			*nextDBRetry = time.Now().Add(trafficRetryBackoff)
+			d.spoolBatch(ctx, valid)
+			return
+		}
+		// A permanent error may belong to just one event; isolate row-by-row.
+	}
+
+	for i, e := range valid {
+		if ctx.Err() != nil {
+			remaining := int64(len(valid) - i)
+			d.shutdownDrops.Add(remaining)
+			d.processing.Add(-remaining)
+			return
+		}
+		writeCtx, cancel := context.WithTimeout(ctx, writeBudget)
+		err := d.write(writeCtx, e)
+		cancel()
+		if err == nil {
+			d.noteDelivery()
+			d.processing.Add(-1)
+			*nextDBRetry = time.Time{}
+			continue
+		}
+		if ctx.Err() != nil {
+			remaining := int64(len(valid) - i)
+			d.shutdownDrops.Add(remaining)
+			d.processing.Add(-remaining)
+			return
+		}
+		d.deliveryFailures.Add(1)
+		if permanentTrafficError(err) {
+			d.invalidDrops.Add(1)
+			d.processing.Add(-1)
+			continue
+		}
+		*nextDBRetry = time.Now().Add(trafficRetryBackoff)
+		d.spoolBatch(ctx, valid[i:])
+		return
+	}
+}
+
+func (d *TrafficDelivery) replayPendingCycle(ctx context.Context, nextDBRetry, nextReplayRetry *time.Time) {
+	if d.pendingFiles <= 0 {
+		return
+	}
+	now := time.Now()
+	if (!nextDBRetry.IsZero() && now.Before(*nextDBRetry)) || (!nextReplayRetry.IsZero() && now.Before(*nextReplayRetry)) {
+		return
+	}
+	cycle, cancel := context.WithTimeout(ctx, time.Second)
+	defer cancel()
+	if !d.disk.Load().Available {
+		d.refreshStorage(cycle)
+		if !d.disk.Load().Available {
+			if cycle.Err() == nil {
+				*nextReplayRetry = time.Now().Add(trafficRetryBackoff)
+			}
+			return
+		}
+	}
+	// Up to four replay batches per cycle provide recovery headroom.
+	// Budget exhaustion alone is not a database failure.
+	deadline, _ := cycle.Deadline()
+	for i := 0; i < 4 && d.pendingFiles > 0; i++ {
+		if time.Until(deadline) < trafficWriteBudget {
+			break
+		}
+		if err := d.replay(cycle); err != nil {
+			var spoolErr trafficSpoolError
+			if errors.As(err, &spoolErr) {
+				// Filesystem errors must not poison healthy PostgreSQL delivery.
+				if spoolErr.dbSucceeded {
+					*nextDBRetry = time.Time{}
+				}
+				d.markStorageUnavailable()
+				if cycle.Err() == nil {
+					*nextReplayRetry = time.Now().Add(trafficRetryBackoff)
+				}
+			} else if cycle.Err() == nil {
+				*nextDBRetry = time.Now().Add(trafficRetryBackoff)
+			}
+			break
+		}
+		*nextDBRetry = time.Time{}
+		*nextReplayRetry = time.Time{}
 	}
 }
 
@@ -225,15 +383,59 @@ func (d *TrafficDelivery) abandonQueue() {
 	}
 }
 
-func (d *TrafficDelivery) drain(ctx context.Context) {
+func (d *TrafficDelivery) shutdownWriteBudget() time.Duration {
+	deadlineNS := d.stopDeadline.Load()
+	if deadlineNS == 0 {
+		return trafficWriteBudget
+	}
+	rem := time.Until(time.Unix(0, deadlineNS))
+	if d.disk.Load().Available {
+		// Reserve at least 3/4 of remaining stopBudget for fallback spooling so an
+		// unresponsive database cannot exhaust stopBudget and drop buffered rows.
+		if rem < trafficShutdownMinDBBudget {
+			return 0
+		}
+		return min(rem/4, trafficWriteBudget)
+	}
+	if rem <= 0 {
+		return 0
+	}
+	return min(rem, trafficWriteBudget)
+}
+
+func (d *TrafficDelivery) drain(ctx context.Context, memBatch []TrafficEvent, nextDBRetry *time.Time) {
 	// Wait only in this worker for producers already past the stopping check.
 	// New requests use TryRLock and never wait on this lock or any I/O.
 	d.gate.Lock()
 	defer d.gate.Unlock()
-	for len(d.queue) > 0 && ctx.Err() == nil {
-		d.consume(ctx)
+	for ctx.Err() == nil {
+		memBatch = d.collectMemoryBatch(memBatch)
+		if len(memBatch) == 0 {
+			break
+		}
+		d.processing.Store(int64(len(memBatch)))
+		d.flushMemoryBatch(ctx, memBatch, nextDBRetry, d.shutdownWriteBudget())
+		clear(memBatch)
+		memBatch = memBatch[:0]
+	}
+	if len(memBatch) > 0 {
+		d.shutdownDrops.Add(int64(len(memBatch)))
+		d.processing.Store(0)
+		clear(memBatch)
 	}
 	d.abandonQueue()
+}
+
+func (d *TrafficDelivery) reconcileHealth(ctx context.Context) {
+	disk := d.disk.Load()
+	// Stay zero-I/O in healthy empty steady state; reconcile only when storage
+	// was unavailable, hit its spool quota, or holds quarantined files awaiting cleanup.
+	if !disk.Available || d.spoolNeedsReconcile || disk.QuarantinedEvents > 0 {
+		d.refreshStorage(ctx)
+		if d.disk.Load().Available {
+			d.spoolNeedsReconcile = false
+		}
+	}
 }
 
 func (d *TrafficDelivery) run(ctx context.Context) {
@@ -251,54 +453,135 @@ func (d *TrafficDelivery) run(ctx context.Context) {
 		}
 	}()
 	d.dir = d.resolveDir()
+	// Scan disk once at startup to discover any spooled/quarantined backlog from
+	// a previous run; steady-state operation avoids periodic directory Stat scans.
 	d.refreshStorage(ctx)
-	ticker := time.NewTicker(100 * time.Millisecond)
-	defer ticker.Stop()
-	nextScan, nextReplay, nextAlert := time.Now().Add(2*time.Second), time.Time{}, time.Time{}
+
+	memBatch := make([]TrafficEvent, 0, trafficMemoryBatchMax)
+	var nextDBRetry, nextReplayRetry time.Time
+
+	flushTimer := time.NewTimer(trafficFlushWindow)
+	if !flushTimer.Stop() {
+		select {
+		case <-flushTimer.C:
+		default:
+		}
+	}
+	defer flushTimer.Stop()
+	var flushCh <-chan time.Time
+
+	replayTimer := time.NewTimer(trafficRetryBackoff)
+	if !replayTimer.Stop() {
+		select {
+		case <-replayTimer.C:
+		default:
+		}
+	}
+	defer replayTimer.Stop()
+	var replayCh <-chan time.Time
+
+	healthTicker := time.NewTicker(trafficHealthInterval)
+	defer healthTicker.Stop()
+
+	armFlush := func() {
+		if flushCh != nil {
+			return
+		}
+		flushTimer.Reset(trafficFlushWindow)
+		flushCh = flushTimer.C
+	}
+	stopFlush := func() {
+		if flushCh == nil {
+			return
+		}
+		if !flushTimer.Stop() {
+			select {
+			case <-flushTimer.C:
+			default:
+			}
+		}
+		flushCh = nil
+	}
+	syncReplayTimer := func() {
+		if replayCh != nil {
+			if !replayTimer.Stop() {
+				select {
+				case <-replayTimer.C:
+				default:
+				}
+			}
+			replayCh = nil
+		}
+		if d.pendingFiles <= 0 {
+			return
+		}
+		retryAt := nextDBRetry
+		if nextReplayRetry.After(retryAt) {
+			retryAt = nextReplayRetry
+		}
+		delay := time.Until(retryAt)
+		if delay <= 0 {
+			d.signal()
+			return
+		}
+		replayTimer.Reset(delay)
+		replayCh = replayTimer.C
+	}
+
+	if d.pendingFiles > 0 {
+		d.signal()
+	}
+
 	for {
 		select {
 		case <-ctx.Done():
 			d.stopping.Store(true)
-			d.drain(ctx)
+			d.drain(ctx, memBatch, &nextDBRetry)
 			return
 		case <-d.stop:
-			d.drain(ctx)
+			d.drain(ctx, memBatch, &nextDBRetry)
 			return
-		case <-ticker.C:
-		case <-d.wake:
+		default:
 		}
-		now := time.Now()
-		if !now.Before(nextScan) {
-			d.refreshStorage(ctx)
-			nextScan = time.Now().Add(2 * time.Second)
-		}
-		// A fixed worker and batch cap bound concurrent work and memory use.
-		d.consume(ctx)
-		if d.pendingFiles > 0 && !time.Now().Before(nextReplay) {
-			cycle, cancel := context.WithTimeout(ctx, time.Second)
-			// Up to four replay batches for each newly staged batch provide
-			// recovery headroom. Budget exhaustion alone is not a database failure.
-			deadline, _ := cycle.Deadline()
-			for i := 0; i < 4 && d.pendingFiles > 0; i++ {
-				if time.Until(deadline) < trafficWriteBudget {
-					break
-				}
-				if err := d.replay(cycle); err != nil {
-					if cycle.Err() == nil {
-						nextReplay = time.Now().Add(2 * time.Second)
-					}
-					break
-				}
+
+		select {
+		case <-ctx.Done():
+			d.stopping.Store(true)
+			d.drain(ctx, memBatch, &nextDBRetry)
+			return
+		case <-d.stop:
+			d.drain(ctx, memBatch, &nextDBRetry)
+			return
+		case event := <-d.queue:
+			memBatch = d.collectMemoryBatch(append(memBatch, event))
+			d.processing.Store(int64(len(memBatch)))
+			if len(memBatch) >= trafficMemoryBatchMax {
+				stopFlush()
+				d.flushMemoryBatch(ctx, memBatch, &nextDBRetry, trafficDirectWriteBudget)
+				clear(memBatch)
+				memBatch = memBatch[:0]
+			} else {
+				armFlush()
 			}
-			cancel()
-		}
-		if len(d.queue) > 0 || (d.pendingFiles > 0 && !time.Now().Before(nextReplay)) {
-			d.signal()
-		}
-		if !time.Now().Before(nextAlert) {
+		case <-flushCh:
+			flushCh = nil
+			if len(memBatch) > 0 {
+				memBatch = d.collectMemoryBatch(memBatch)
+				d.processing.Store(int64(len(memBatch)))
+				d.flushMemoryBatch(ctx, memBatch, &nextDBRetry, trafficDirectWriteBudget)
+				clear(memBatch)
+				memBatch = memBatch[:0]
+			}
+		case <-replayCh:
+			replayCh = nil
+			d.replayPendingCycle(ctx, &nextDBRetry, &nextReplayRetry)
+		case <-d.wake:
+			d.replayPendingCycle(ctx, &nextDBRetry, &nextReplayRetry)
+		case <-healthTicker.C:
+			d.reconcileHealth(ctx)
 			d.logHealth()
-			nextAlert = time.Now().Add(30 * time.Second)
 		}
+		syncReplayTimer()
 	}
 }
 
@@ -371,7 +654,15 @@ func (d *TrafficDelivery) stage(e TrafficEvent) error {
 	d.spoolBytes += int64(len(raw))
 	d.pendingFiles++
 	d.updatePendingSnapshot()
-	dir, err := os.Open(d.dir)
+	return syncTrafficDir(d.dir)
+}
+
+func syncTrafficDir(dirPath string) error {
+	// Windows rejects FlushFileBuffers on directory handles with ERROR_ACCESS_DENIED.
+	if runtime.GOOS == "windows" {
+		return nil
+	}
+	dir, err := os.Open(dirPath)
 	if err != nil {
 		return err
 	}
@@ -380,20 +671,27 @@ func (d *TrafficDelivery) stage(e TrafficEvent) error {
 }
 
 func (d *TrafficDelivery) replay(ctx context.Context) error {
-	dir, err := os.Open(d.dir)
-	if err != nil {
+	if err := ctx.Err(); err != nil {
 		return err
 	}
-	defer func() { _ = dir.Close() }()
+	dir, err := os.Open(d.dir)
+	if err != nil {
+		return trafficSpoolError{err: err}
+	}
 	var pending []trafficPendingFile
+	processed := 0
+	reachedEOF := false
 	// Scan in bounded batches without loading an outage's entire backlog.
-	for processed := 0; processed < trafficBatchSize && ctx.Err() == nil; {
+	for processed < trafficBatchSize && ctx.Err() == nil {
 		entries, readErr := dir.ReadDir(64)
 		if readErr != nil && !errors.Is(readErr, io.EOF) {
-			return readErr
+			_ = dir.Close()
+			return trafficSpoolError{err: readErr}
 		}
+		hitLimit := false
 		for _, entry := range entries {
 			if processed >= trafficBatchSize || ctx.Err() != nil {
+				hitLimit = true
 				break
 			}
 			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
@@ -406,17 +704,20 @@ func (d *TrafficDelivery) replay(ctx context.Context) error {
 				continue
 			}
 			if err != nil {
-				return err
+				_ = dir.Close()
+				return trafficSpoolError{err: err}
 			}
 			raw, err := io.ReadAll(io.LimitReader(f, 8193))
 			_ = f.Close()
 			if err != nil {
-				return err
+				_ = dir.Close()
+				return trafficSpoolError{err: err}
 			}
 			var e TrafficEvent
 			if len(raw) > 8192 || json.Unmarshal(raw, &e) != nil || e.EventID+".json" != entry.Name() || ValidateTrafficEvent(e) != nil {
 				if err := d.quarantine(path); err != nil {
-					return err
+					_ = dir.Close()
+					return trafficSpoolError{err: err}
 				}
 				continue
 			}
@@ -424,13 +725,30 @@ func (d *TrafficDelivery) replay(ctx context.Context) error {
 		}
 
 		if errors.Is(readErr, io.EOF) {
+			if !hitLimit {
+				reachedEOF = true
+			}
 			break
 		}
 	}
+	_ = dir.Close()
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	return d.deliverPending(ctx, pending)
+	if err := d.deliverPending(ctx, pending); err != nil {
+		return err
+	}
+	if (d.pendingFiles != 0 && reachedEOF) || (d.pendingFiles > 0 && processed == 0) {
+		// Reconcile drifted accounting (e.g. duplicate EventID overwrite or external
+		// file removal) once the directory scan reaches EOF so replay never spins.
+		if err := d.scanDisk(ctx); err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			return trafficSpoolError{err: err, dbSucceeded: len(pending) > 0}
+		}
+	}
+	return nil
 }
 
 type trafficPendingFile struct {
@@ -441,12 +759,23 @@ type trafficPendingFile struct {
 
 func (d *TrafficDelivery) acknowledge(file trafficPendingFile) error {
 	d.noteDelivery()
-	if err := os.Remove(file.path); err != nil && !errors.Is(err, os.ErrNotExist) {
+	remove := d.removeFile
+	if remove == nil {
+		remove = os.Remove
+	}
+	if err := remove(file.path); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
-	d.pendingFiles--
-	d.spoolFiles--
+	if d.pendingFiles > 0 {
+		d.pendingFiles--
+	}
+	if d.spoolFiles > 0 {
+		d.spoolFiles--
+	}
 	d.spoolBytes -= file.size
+	if d.spoolBytes < 0 {
+		d.spoolBytes = 0
+	}
 	d.updatePendingSnapshot()
 	return nil
 }
@@ -466,18 +795,22 @@ func (d *TrafficDelivery) deliverPending(ctx context.Context, files []trafficPen
 		if err == nil {
 			for _, file := range files {
 				if err := d.acknowledge(file); err != nil {
-					return err
+					return trafficSpoolError{err: err, dbSucceeded: true}
 				}
 			}
 			return nil
 		}
 		d.deliveryFailures.Add(1)
 		if !permanentTrafficError(err) {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
 			return err
 		}
 		// A permanent error may concern just one event. Isolate it with bounded
 		// single writes; committed batches are safe to retry by their event IDs.
 	}
+	dbSucceeded := false
 	for _, file := range files {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -488,15 +821,19 @@ func (d *TrafficDelivery) deliverPending(ctx context.Context, files []trafficPen
 		if err != nil {
 			d.deliveryFailures.Add(1)
 			if !permanentTrafficError(err) {
+				if ctx.Err() != nil {
+					return ctx.Err()
+				}
 				return err
 			}
 			if err := d.quarantine(file.path); err != nil {
-				return err
+				return trafficSpoolError{err: err, dbSucceeded: dbSucceeded}
 			}
 			continue
 		}
+		dbSucceeded = true
 		if err := d.acknowledge(file); err != nil {
-			return err
+			return trafficSpoolError{err: err, dbSucceeded: true}
 		}
 	}
 	return nil
@@ -506,7 +843,9 @@ func (d *TrafficDelivery) quarantine(path string) error {
 	if err := os.Rename(path, path+".invalid"); err != nil {
 		return fmt.Errorf("quarantine traffic event: %w", err)
 	}
-	d.pendingFiles--
+	if d.pendingFiles > 0 {
+		d.pendingFiles--
+	}
 	snapshot := *d.disk.Load()
 	snapshot.QuarantinedEvents++
 	d.disk.Store(&snapshot)
@@ -529,7 +868,14 @@ func permanentTrafficError(err error) bool {
 }
 
 func (d *TrafficDelivery) noteDelivery() {
-	d.delivered.Add(1)
+	d.noteDeliveryCount(1)
+}
+
+func (d *TrafficDelivery) noteDeliveryCount(n int) {
+	if n <= 0 {
+		return
+	}
+	d.delivered.Add(int64(n))
 	d.lastDelivery.Store(time.Now().Unix())
 }
 

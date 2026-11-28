@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"regexp"
 	"strconv"
@@ -49,10 +50,12 @@ type connTraceStmt struct {
 }
 
 type connTraceFake struct {
-	mu     sync.Mutex
-	stmts  []connTraceStmt
-	nextTx int64
-	hook   func(query string, args []driver.Value) error // runs after an Exec is recorded
+	mu          sync.Mutex
+	stmts       []connTraceStmt
+	nextTx      int64
+	hook        func(query string, args []driver.Value) error // runs after an Exec is recorded
+	execCtxHook func(ctx context.Context, query string, args []driver.Value) error
+	queryHook   func(ctx context.Context, query string, args []driver.Value) ([][]driver.Value, error)
 }
 
 func newConnTraceDB(t *testing.T) (*sql.DB, *connTraceFake) {
@@ -77,6 +80,18 @@ func (f *connTraceFake) setHook(h func(query string, args []driver.Value) error)
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.hook = h
+}
+
+func (f *connTraceFake) setExecCtxHook(h func(ctx context.Context, query string, args []driver.Value) error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.execCtxHook = h
+}
+
+func (f *connTraceFake) setQueryHook(h func(ctx context.Context, query string, args []driver.Value) ([][]driver.Value, error)) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.queryHook = h
 }
 
 func (f *connTraceFake) statements() []connTraceStmt {
@@ -190,13 +205,66 @@ func (c *connTraceFakeConn) ExecContext(ctx context.Context, query string, named
 	c.fake.record(connTraceStmt{Kind: "exec", Query: query, Args: args, Tx: c.tx})
 	c.fake.mu.Lock()
 	hook := c.fake.hook
+	execCtxHook := c.fake.execCtxHook
 	c.fake.mu.Unlock()
 	if hook != nil {
 		if err := hook(query, args); err != nil {
 			return nil, err
 		}
 	}
+	if execCtxHook != nil {
+		if err := execCtxHook(ctx, query, args); err != nil {
+			return nil, err
+		}
+	}
 	return driver.RowsAffected(1), nil
+}
+
+func (c *connTraceFakeConn) QueryContext(ctx context.Context, query string, named []driver.NamedValue) (driver.Rows, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	args := make([]driver.Value, len(named))
+	for i, n := range named {
+		args[i] = n.Value
+	}
+	c.fake.mu.Lock()
+	queryHook := c.fake.queryHook
+	c.fake.mu.Unlock()
+	var rows [][]driver.Value
+	if queryHook != nil {
+		var err error
+		rows, err = queryHook(ctx, query, args)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return &connTraceFakeRows{rows: rows}, nil
+}
+
+type connTraceFakeRows struct {
+	rows [][]driver.Value
+	idx  int
+}
+
+func (r *connTraceFakeRows) Columns() []string {
+	if len(r.rows) > 0 {
+		cols := make([]string, len(r.rows[0]))
+		for i := range cols {
+			cols[i] = fmt.Sprintf("col%d", i)
+		}
+		return cols
+	}
+	return []string{"col0"}
+}
+func (r *connTraceFakeRows) Close() error { return nil }
+func (r *connTraceFakeRows) Next(dest []driver.Value) error {
+	if r.idx >= len(r.rows) {
+		return io.EOF
+	}
+	copy(dest, r.rows[r.idx])
+	r.idx++
+	return nil
 }
 
 type connTraceFakeTx struct {
@@ -689,6 +757,70 @@ func TestConnectionTraceWriter_RepositoryWithoutPoolIgnoresTraces(t *testing.T) 
 	repo.RecordConnectionTrace(connTraceFixture(1))
 	require.Nil(t, repo.connectionQueue, "no writer is started")
 	require.Empty(t, fake.statements())
+}
+
+func TestConnectionTraceWriter_RetentionRunsConcurrentlyWithoutBlockingTraceWrites(t *testing.T) {
+	prevInterval := connectionRetentionInterval
+	connectionRetentionInterval = 10 * time.Millisecond
+	t.Cleanup(func() { connectionRetentionInterval = prevInterval })
+
+	entered := make(chan struct{})
+	canceled := make(chan struct{})
+	var enterOnce, cancelOnce sync.Once
+
+	db, fake := newConnTraceDB(t)
+	fake.setQueryHook(func(_ context.Context, query string, _ []driver.Value) ([][]driver.Value, error) {
+		if strings.Contains(query, "pg_try_advisory_lock") {
+			return [][]driver.Value{{true}}, nil
+		}
+		return nil, nil
+	})
+	fake.setExecCtxHook(func(ctx context.Context, query string, _ []driver.Value) error {
+		if strings.HasPrefix(query, "DELETE FROM request_connection_traces") {
+			enterOnce.Do(func() { close(entered) })
+			<-ctx.Done()
+			cancelOnce.Do(func() { close(canceled) })
+			return ctx.Err()
+		}
+		return nil
+	})
+
+	repo := newUsageLogRepositoryWithSQL(nil, db)
+	t.Cleanup(repo.StopConnectionDiagnostics)
+
+	first := connTraceFixture(0)
+	repo.RecordConnectionTrace(first)
+	select {
+	case <-entered:
+	case <-time.After(3 * time.Second):
+		t.Fatal("retention goroutine never started")
+	}
+
+	extra := connTraceFixtures(64)
+	for _, rec := range extra {
+		repo.RecordConnectionTrace(rec)
+	}
+	wantTotal := 1 + len(extra)
+	require.Eventually(t, func() bool {
+		return len(fake.committedTraceIDs()) == wantTotal
+	}, 3*time.Second, 5*time.Millisecond, "trace writer must keep flushing while retention is slow")
+	require.Zero(t, repo.connectionQueueDrops.total.Load()+repo.connectionWriteDrops.total.Load())
+
+	stopped := make(chan struct{})
+	go func() {
+		repo.StopConnectionDiagnostics()
+		close(stopped)
+	}()
+	select {
+	case <-canceled:
+	case <-time.After(3 * time.Second):
+		t.Fatal("in-flight retention query was not canceled on stop")
+	}
+	select {
+	case <-stopped:
+	case <-time.After(3 * time.Second):
+		t.Fatal("StopConnectionDiagnostics did not return promptly")
+	}
 }
 
 // ---- other write paths stay synchronous --------------------------------------
