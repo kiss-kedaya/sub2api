@@ -103,6 +103,7 @@ func createGroupRecord(ctx context.Context, client *dbent.Client, groupIn *servi
 		SetIsExclusive(groupIn.IsExclusive).
 		SetStatus(groupIn.Status).
 		SetSubscriptionType(groupIn.SubscriptionType).
+		SetDailyResetMode(service.NormalizeDailyResetMode(groupIn.DailyResetMode)).
 		SetNillableDailyLimitUsd(groupIn.DailyLimitUSD).
 		SetNillableWeeklyLimitUsd(groupIn.WeeklyLimitUSD).
 		SetNillableMonthlyLimitUsd(groupIn.MonthlyLimitUSD).
@@ -303,6 +304,7 @@ func (r *groupRepository) Update(ctx context.Context, groupIn *service.Group) er
 		SetIsExclusive(groupIn.IsExclusive).
 		SetStatus(groupIn.Status).
 		SetSubscriptionType(groupIn.SubscriptionType).
+		SetDailyResetMode(service.NormalizeDailyResetMode(groupIn.DailyResetMode)).
 		SetNillableDailyLimitUsd(groupIn.DailyLimitUSD).
 		SetNillableWeeklyLimitUsd(groupIn.WeeklyLimitUSD).
 		SetNillableMonthlyLimitUsd(groupIn.MonthlyLimitUSD).

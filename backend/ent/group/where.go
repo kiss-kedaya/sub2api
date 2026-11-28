@@ -130,6 +130,11 @@ func SubscriptionType(v string) predicate.Group {
 	return predicate.Group(sql.FieldEQ(FieldSubscriptionType, v))
 }
 
+// DailyResetMode applies equality check predicate on the "daily_reset_mode" field. It's identical to DailyResetModeEQ.
+func DailyResetMode(v string) predicate.Group {
+	return predicate.Group(sql.FieldEQ(FieldDailyResetMode, v))
+}
+
 // DailyLimitUsd applies equality check predicate on the "daily_limit_usd" field. It's identical to DailyLimitUsdEQ.
 func DailyLimitUsd(v float64) predicate.Group {
 	return predicate.Group(sql.FieldEQ(FieldDailyLimitUsd, v))
@@ -1173,6 +1178,71 @@ func SubscriptionTypeEqualFold(v string) predicate.Group {
 // SubscriptionTypeContainsFold applies the ContainsFold predicate on the "subscription_type" field.
 func SubscriptionTypeContainsFold(v string) predicate.Group {
 	return predicate.Group(sql.FieldContainsFold(FieldSubscriptionType, v))
+}
+
+// DailyResetModeEQ applies the EQ predicate on the "daily_reset_mode" field.
+func DailyResetModeEQ(v string) predicate.Group {
+	return predicate.Group(sql.FieldEQ(FieldDailyResetMode, v))
+}
+
+// DailyResetModeNEQ applies the NEQ predicate on the "daily_reset_mode" field.
+func DailyResetModeNEQ(v string) predicate.Group {
+	return predicate.Group(sql.FieldNEQ(FieldDailyResetMode, v))
+}
+
+// DailyResetModeIn applies the In predicate on the "daily_reset_mode" field.
+func DailyResetModeIn(vs ...string) predicate.Group {
+	return predicate.Group(sql.FieldIn(FieldDailyResetMode, vs...))
+}
+
+// DailyResetModeNotIn applies the NotIn predicate on the "daily_reset_mode" field.
+func DailyResetModeNotIn(vs ...string) predicate.Group {
+	return predicate.Group(sql.FieldNotIn(FieldDailyResetMode, vs...))
+}
+
+// DailyResetModeGT applies the GT predicate on the "daily_reset_mode" field.
+func DailyResetModeGT(v string) predicate.Group {
+	return predicate.Group(sql.FieldGT(FieldDailyResetMode, v))
+}
+
+// DailyResetModeGTE applies the GTE predicate on the "daily_reset_mode" field.
+func DailyResetModeGTE(v string) predicate.Group {
+	return predicate.Group(sql.FieldGTE(FieldDailyResetMode, v))
+}
+
+// DailyResetModeLT applies the LT predicate on the "daily_reset_mode" field.
+func DailyResetModeLT(v string) predicate.Group {
+	return predicate.Group(sql.FieldLT(FieldDailyResetMode, v))
+}
+
+// DailyResetModeLTE applies the LTE predicate on the "daily_reset_mode" field.
+func DailyResetModeLTE(v string) predicate.Group {
+	return predicate.Group(sql.FieldLTE(FieldDailyResetMode, v))
+}
+
+// DailyResetModeContains applies the Contains predicate on the "daily_reset_mode" field.
+func DailyResetModeContains(v string) predicate.Group {
+	return predicate.Group(sql.FieldContains(FieldDailyResetMode, v))
+}
+
+// DailyResetModeHasPrefix applies the HasPrefix predicate on the "daily_reset_mode" field.
+func DailyResetModeHasPrefix(v string) predicate.Group {
+	return predicate.Group(sql.FieldHasPrefix(FieldDailyResetMode, v))
+}
+
+// DailyResetModeHasSuffix applies the HasSuffix predicate on the "daily_reset_mode" field.
+func DailyResetModeHasSuffix(v string) predicate.Group {
+	return predicate.Group(sql.FieldHasSuffix(FieldDailyResetMode, v))
+}
+
+// DailyResetModeEqualFold applies the EqualFold predicate on the "daily_reset_mode" field.
+func DailyResetModeEqualFold(v string) predicate.Group {
+	return predicate.Group(sql.FieldEqualFold(FieldDailyResetMode, v))
+}
+
+// DailyResetModeContainsFold applies the ContainsFold predicate on the "daily_reset_mode" field.
+func DailyResetModeContainsFold(v string) predicate.Group {
+	return predicate.Group(sql.FieldContainsFold(FieldDailyResetMode, v))
 }
 
 // DailyLimitUsdEQ applies the EQ predicate on the "daily_limit_usd" field.

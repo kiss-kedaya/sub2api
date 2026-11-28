@@ -4,7 +4,7 @@ import "time"
 
 // APIKeyAuthCacheSchemaVersion namespaces L2 entries as well as validating
 // payloads. Different rolling-release writers must not replace each other.
-const APIKeyAuthCacheSchemaVersion = 27
+const APIKeyAuthCacheSchemaVersion = 28
 
 // APIKeyAuthSnapshot API Key 认证缓存快照（仅包含认证所需字段）
 type APIKeyAuthSnapshot struct {
@@ -79,6 +79,7 @@ type APIKeyAuthGroupSnapshot struct {
 	IsExclusive               bool                          `json:"is_exclusive"`
 	Status                    string                        `json:"status"`
 	SubscriptionType          string                        `json:"subscription_type"`
+	DailyResetMode            string                        `json:"daily_reset_mode,omitempty"`
 	RateMultiplier            float64                       `json:"rate_multiplier"`
 	DailyLimitUSD             *float64                      `json:"daily_limit_usd,omitempty"`
 	WeeklyLimitUSD            *float64                      `json:"weekly_limit_usd,omitempty"`

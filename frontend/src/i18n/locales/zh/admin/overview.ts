@@ -1106,6 +1106,10 @@ export default {
         dailyLimit: '每日限额（USD）',
         weeklyLimit: '每周限额（USD）',
         monthlyLimit: '每月限额（USD）',
+        dailyResetMode: '日额度重置方式',
+        dailyResetModeHint: '自然日模式每天按系统时区 00:00 刷新；按开通时间 24 小时模式固定从订阅开通时刻每 24 小时刷新，有效日与日额度窗口一一对应，到期时不再额外赠送窗口。',
+        dailyResetCalendar: '自然日 00:00（默认）',
+        dailyResetAnchored24h: '按开通时间每 24 小时',
         defaultValidityDays: '默认有效期（天）',
         validityHint: '分配给用户时订阅的有效天数',
         noLimit: '无限制'

@@ -14,6 +14,10 @@ export interface RemainingDurationParts {
   minutes: number
 }
 
+export type DailyQuotaWindowDisplay =
+  | { kind: 'reset'; targetAt: Date }
+  | { kind: 'quotaEnds'; targetAt: Date }
+
 export function isOneTimeDailyQuota(
   subscription: Pick<UserSubscription, 'starts_at' | 'expires_at'>
 ): boolean {
@@ -25,6 +29,54 @@ export function isOneTimeDailyQuota(
   if (!Number.isFinite(startsAt) || !Number.isFinite(expiresAt)) return false
 
   return expiresAt <= startsAt + ONE_DAY_MS
+}
+
+export function resolveDailyQuotaWindowDisplay(
+  subscription: Pick<
+    UserSubscription,
+    'starts_at' | 'expires_at' | 'daily_window_start' | 'next_daily_reset_at' | 'group'
+  >
+): DailyQuotaWindowDisplay | null {
+  if (!subscription.daily_window_start) return null
+
+  const expiresMs = subscription.expires_at ? new Date(subscription.expires_at).getTime() : NaN
+  const hasValidExpiry = Number.isFinite(expiresMs)
+
+  // Prefer server-computed next_daily_reset_at when present (handles server timezone & anchored 24h mode).
+  if (subscription.next_daily_reset_at) {
+    const nextResetMs = new Date(subscription.next_daily_reset_at).getTime()
+    if (Number.isFinite(nextResetMs)) {
+      if (hasValidExpiry && nextResetMs >= expiresMs) {
+        return { kind: 'quotaEnds', targetAt: new Date(expiresMs) }
+      }
+      return { kind: 'reset', targetAt: new Date(nextResetMs) }
+    }
+  }
+
+  if (isOneTimeDailyQuota(subscription) && hasValidExpiry) {
+    return { kind: 'quotaEnds', targetAt: new Date(expiresMs) }
+  }
+
+  const windowStartMs = new Date(subscription.daily_window_start).getTime()
+  if (!Number.isFinite(windowStartMs)) return null
+
+  let nextResetMs: number
+  if (subscription.group?.daily_reset_mode === 'anchored_24h' && subscription.starts_at) {
+    const startsMs = new Date(subscription.starts_at).getTime()
+    if (!Number.isFinite(startsMs)) return null
+    const windowIndex = windowStartMs < startsMs
+      ? 0
+      : Math.floor((windowStartMs - startsMs) / ONE_DAY_MS)
+    nextResetMs = startsMs + (windowIndex + 1) * ONE_DAY_MS
+  } else {
+    nextResetMs = windowStartMs + ONE_DAY_MS
+  }
+
+  if (hasValidExpiry && nextResetMs >= expiresMs) {
+    return { kind: 'quotaEnds', targetAt: new Date(expiresMs) }
+  }
+
+  return { kind: 'reset', targetAt: new Date(nextResetMs) }
 }
 
 export function getRemainingDurationParts(

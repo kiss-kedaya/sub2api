@@ -266,7 +266,7 @@ import { platformBorderClass, platformBadgeClass, platformButtonClass, platformL
 import {
   getExpirationDateRelation,
   getRemainingDurationParts,
-  isOneTimeDailyQuota,
+  resolveDailyQuotaWindowDisplay,
   type RemainingDurationParts
 } from '@/utils/subscriptionQuota'
 
@@ -371,14 +371,18 @@ function formatDurationParts(parts: RemainingDurationParts): string {
 }
 
 function formatDailyUsageWindow(subscription: UserSubscription): string {
-  if (isOneTimeDailyQuota(subscription) && subscription.expires_at) {
-    const parts = getRemainingDurationParts(subscription.expires_at)
-    if (!parts) return t('userSubscriptions.windowNotActive')
+  const display = resolveDailyQuotaWindowDisplay(subscription)
+  if (!display) return t('userSubscriptions.windowNotActive')
+
+  const parts = getRemainingDurationParts(display.targetAt)
+  if (!parts) return t('userSubscriptions.windowNotActive')
+
+  if (display.kind === 'quotaEnds') {
     return t('userSubscriptions.quotaEndsIn', { time: formatDurationParts(parts) })
   }
 
   return t('userSubscriptions.resetIn', {
-    time: formatResetTime(subscription.daily_window_start, 24)
+    time: formatDurationParts(parts)
   })
 }
 

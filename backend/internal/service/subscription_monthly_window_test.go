@@ -62,7 +62,7 @@ func TestDelayedFirstUseAnchorsMonthlyWindowAtActivation(t *testing.T) {
 func TestThirtyDaySubscriptionDoesNotResetMonthlyQuotaBeforeExpiry(t *testing.T) {
 	startsAt := time.Date(2026, 7, 1, 23, 30, 0, 0, time.UTC)
 	expiresAt := startsAt.Add(30 * 24 * time.Hour)
-	renewed := renewedSubscriptionTerm(&UserSubscription{}, "", startsAt, expiresAt)
+	renewed := renewedSubscriptionTerm(&UserSubscription{}, nil, "", startsAt, expiresAt)
 
 	require.Equal(t, startsAt, *renewed.MonthlyWindowStart)
 	require.False(t, renewed.NeedsMonthlyResetAt(expiresAt.Add(-time.Second)))

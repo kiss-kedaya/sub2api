@@ -463,6 +463,18 @@ func TestKeyAccountSubscriptionRemainingIsTheTightestLimitAndForgetsRolledOverWi
 			sub(&service.Group{ID: 4, Name: "Rolled daily", DailyLimitUSD: limit(10)}, func(s *service.UserSubscription) {
 				s.DailyUsageUSD, s.DailyWindowStart = 10, timePtr(midnight.AddDate(0, 0, -1))
 			}), limit(10)},
+		{"anchored 24h mode stays in window 1 before 24h elapses",
+			sub(&service.Group{ID: 41, Name: "Anchored active", SubscriptionType: service.SubscriptionTypeSubscription, DailyResetMode: service.DailyResetModeAnchored24h, DailyLimitUSD: limit(10)}, func(s *service.UserSubscription) {
+				start := now.Add(-14 * time.Hour)
+				s.StartsAt, s.ExpiresAt = start, start.Add(48*time.Hour)
+				s.DailyUsageUSD, s.DailyWindowStart = 10, &start
+			}), limit(0)},
+		{"anchored 24h mode rolls over once 24h elapses before expiry",
+			sub(&service.Group{ID: 42, Name: "Anchored rolled", SubscriptionType: service.SubscriptionTypeSubscription, DailyResetMode: service.DailyResetModeAnchored24h, DailyLimitUSD: limit(10)}, func(s *service.UserSubscription) {
+				start := now.Add(-25 * time.Hour)
+				s.StartsAt, s.ExpiresAt = start, start.Add(48*time.Hour)
+				s.DailyUsageUSD, s.DailyWindowStart = 10, &start
+			}), limit(10)},
 		{"a weekly window that rolled over",
 			sub(&service.Group{ID: 5, Name: "Rolled weekly", WeeklyLimitUSD: limit(20)}, func(s *service.UserSubscription) {
 				s.WeeklyUsageUSD, s.WeeklyWindowStart = 20, timePtr(now.Add(-8*24*time.Hour))

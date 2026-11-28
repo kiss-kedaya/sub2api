@@ -22991,6 +22991,7 @@ type GroupMutation struct {
 	duplicate_operation_id                  *string
 	platform                                *string
 	subscription_type                       *string
+	daily_reset_mode                        *string
 	daily_limit_usd                         *float64
 	adddaily_limit_usd                      *float64
 	weekly_limit_usd                        *float64
@@ -23827,6 +23828,42 @@ func (m *GroupMutation) OldSubscriptionType(ctx context.Context) (v string, err 
 // ResetSubscriptionType resets all changes to the "subscription_type" field.
 func (m *GroupMutation) ResetSubscriptionType() {
 	m.subscription_type = nil
+}
+
+// SetDailyResetMode sets the "daily_reset_mode" field.
+func (m *GroupMutation) SetDailyResetMode(s string) {
+	m.daily_reset_mode = &s
+}
+
+// DailyResetMode returns the value of the "daily_reset_mode" field in the mutation.
+func (m *GroupMutation) DailyResetMode() (r string, exists bool) {
+	v := m.daily_reset_mode
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldDailyResetMode returns the old "daily_reset_mode" field's value of the Group entity.
+// If the Group object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *GroupMutation) OldDailyResetMode(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldDailyResetMode is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldDailyResetMode requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldDailyResetMode: %w", err)
+	}
+	return oldValue.DailyResetMode, nil
+}
+
+// ResetDailyResetMode resets all changes to the "daily_reset_mode" field.
+func (m *GroupMutation) ResetDailyResetMode() {
+	m.daily_reset_mode = nil
 }
 
 // SetDailyLimitUsd sets the "daily_limit_usd" field.
@@ -27480,7 +27517,7 @@ func (m *GroupMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *GroupMutation) Fields() []string {
-	fields := make([]string, 0, 78)
+	fields := make([]string, 0, 79)
 	if m.created_at != nil {
 		fields = append(fields, group.FieldCreatedAt)
 	}
@@ -27525,6 +27562,9 @@ func (m *GroupMutation) Fields() []string {
 	}
 	if m.subscription_type != nil {
 		fields = append(fields, group.FieldSubscriptionType)
+	}
+	if m.daily_reset_mode != nil {
+		fields = append(fields, group.FieldDailyResetMode)
 	}
 	if m.daily_limit_usd != nil {
 		fields = append(fields, group.FieldDailyLimitUsd)
@@ -27753,6 +27793,8 @@ func (m *GroupMutation) Field(name string) (ent.Value, bool) {
 		return m.Platform()
 	case group.FieldSubscriptionType:
 		return m.SubscriptionType()
+	case group.FieldDailyResetMode:
+		return m.DailyResetMode()
 	case group.FieldDailyLimitUsd:
 		return m.DailyLimitUsd()
 	case group.FieldWeeklyLimitUsd:
@@ -27918,6 +27960,8 @@ func (m *GroupMutation) OldField(ctx context.Context, name string) (ent.Value, e
 		return m.OldPlatform(ctx)
 	case group.FieldSubscriptionType:
 		return m.OldSubscriptionType(ctx)
+	case group.FieldDailyResetMode:
+		return m.OldDailyResetMode(ctx)
 	case group.FieldDailyLimitUsd:
 		return m.OldDailyLimitUsd(ctx)
 	case group.FieldWeeklyLimitUsd:
@@ -28157,6 +28201,13 @@ func (m *GroupMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetSubscriptionType(v)
+		return nil
+	case group.FieldDailyResetMode:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetDailyResetMode(v)
 		return nil
 	case group.FieldDailyLimitUsd:
 		v, ok := value.(float64)
@@ -29268,6 +29319,9 @@ func (m *GroupMutation) ResetField(name string) error {
 		return nil
 	case group.FieldSubscriptionType:
 		m.ResetSubscriptionType()
+		return nil
+	case group.FieldDailyResetMode:
+		m.ResetDailyResetMode()
 		return nil
 	case group.FieldDailyLimitUsd:
 		m.ResetDailyLimitUsd()

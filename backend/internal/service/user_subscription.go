@@ -74,12 +74,56 @@ func (s *UserSubscription) HasOneTimeDailyQuota() bool {
 	return !s.ExpiresAt.After(s.StartsAt.AddDate(0, 0, 1))
 }
 
+func (s *UserSubscription) effectiveDailyResetMode(group *Group) string {
+	if group != nil {
+		return group.EffectiveDailyResetMode()
+	}
+	if s != nil && s.Group != nil {
+		return s.Group.EffectiveDailyResetMode()
+	}
+	return DailyResetModeCalendar
+}
+
+// anchoredDailyWindowAt returns the 0-based 24-hour window index k and boundary
+// starts_at + k*24h containing now.
+func (s *UserSubscription) anchoredDailyWindowAt(now time.Time) (int64, time.Time, bool) {
+	if s == nil || s.StartsAt.IsZero() {
+		return 0, time.Time{}, false
+	}
+	if now.Before(s.StartsAt) {
+		return 0, s.StartsAt, false
+	}
+	k := int64(now.Sub(s.StartsAt) / subscriptionDayDuration)
+	return k, s.StartsAt.Add(time.Duration(k) * subscriptionDayDuration), true
+}
+
+// currentDailyWindowStartAtForGroup returns the canonical daily_window_start
+// anchor for now under the group's reset mode:
+//   - calendar: configured-timezone start of day (00:00)
+//   - anchored_24h: starts_at + k*24h for the 24h window containing now
+func (s *UserSubscription) currentDailyWindowStartAtForGroup(group *Group, now time.Time) time.Time {
+	if s.effectiveDailyResetMode(group) == DailyResetModeAnchored24h {
+		if _, windowStart, ok := s.anchoredDailyWindowAt(now); ok {
+			return windowStart
+		}
+		if s != nil && !s.StartsAt.IsZero() {
+			return s.StartsAt
+		}
+		return now
+	}
+	return timezone.StartOfDay(now)
+}
+
 func (s *UserSubscription) NeedsDailyReset() bool {
 	return s.NeedsDailyResetAt(time.Now())
 }
 
 func (s *UserSubscription) NeedsDailyResetAt(now time.Time) bool {
-	_, ok := s.automaticDailyWindowStartAt(now)
+	return s.NeedsDailyResetAtForGroup(nil, now)
+}
+
+func (s *UserSubscription) NeedsDailyResetAtForGroup(group *Group, now time.Time) bool {
+	_, ok := s.automaticDailyWindowStartAtForGroup(group, now)
 	return ok
 }
 
@@ -106,26 +150,58 @@ func (s *UserSubscription) NeedsMonthlyResetAt(now time.Time) bool {
 }
 
 func (s *UserSubscription) canAutomaticallyResetDailyAt(now time.Time) bool {
-	_, ok := s.automaticDailyWindowStartAt(now)
+	return s.canAutomaticallyResetDailyAtForGroup(nil, now)
+}
+
+func (s *UserSubscription) canAutomaticallyResetDailyAtForGroup(group *Group, now time.Time) bool {
+	_, ok := s.automaticDailyWindowStartAtForGroup(group, now)
 	return ok
 }
 
-// automaticDailyWindowStartAt 计算日窗口按“配置时区日历日”对齐后的当前窗口起点。
-// 日额度固定在每天 0 点刷新（与周/月的期限对齐滚动窗口语义不同），因此只要持久化
-// 的窗口起点落在更早的日历日，就允许推进到今天 0 点。手动重置、激活等写入的任何
-// 非 0 点锚点都会在下一个 0 点被拉回日历日边界，不会永久漂移刷新时刻。
+// automaticDailyWindowStartAt 计算日窗口的当前有效起点：
+//   - calendar 模式（默认）：按配置时区日历日 0 点对齐；只要持久化起点落在更早的
+//     日历日，就推进到今天 0 点，非 0 点锚点在下一个 0 点自动拉回。
+//   - anchored_24h 模式：以 StartsAt 为固定锚点按整 24 小时步进（StartsAt + k*24h），
+//     永不越过或落于 ExpiresAt 上；达到 ExpiresAt 时直接到期，不再授予新窗口。
 func (s *UserSubscription) automaticDailyWindowStartAt(now time.Time) (time.Time, bool) {
-	if s.DailyWindowStart == nil {
+	return s.automaticDailyWindowStartAtForGroup(nil, now)
+}
+
+func (s *UserSubscription) automaticDailyWindowStartAtForGroup(group *Group, now time.Time) (time.Time, bool) {
+	if s == nil || s.DailyWindowStart == nil {
 		return time.Time{}, false
 	}
 	if s.HasOneTimeDailyQuota() {
 		return time.Time{}, false
+	}
+	if s.effectiveDailyResetMode(group) == DailyResetModeAnchored24h {
+		return s.automaticAnchoredDailyWindowStartAt(now)
 	}
 	today := timezone.StartOfDay(now)
 	if !today.After(timezone.StartOfDay(*s.DailyWindowStart)) {
 		return time.Time{}, false
 	}
 	return today, true
+}
+
+func (s *UserSubscription) automaticAnchoredDailyWindowStartAt(now time.Time) (time.Time, bool) {
+	if s == nil || s.DailyWindowStart == nil || s.StartsAt.IsZero() {
+		return time.Time{}, false
+	}
+	if !s.ExpiresAt.IsZero() && !now.Before(s.ExpiresAt) {
+		return time.Time{}, false
+	}
+	k, windowStart, ok := s.anchoredDailyWindowAt(now)
+	if !ok || k <= 0 {
+		return time.Time{}, false
+	}
+	if !s.ExpiresAt.IsZero() && !windowStart.Before(s.ExpiresAt) {
+		return time.Time{}, false
+	}
+	if !s.DailyWindowStart.Before(windowStart) {
+		return time.Time{}, false
+	}
+	return windowStart, true
 }
 
 func (s *UserSubscription) canAutomaticallyResetWeeklyAt(now time.Time) bool {
@@ -175,17 +251,81 @@ func (s *UserSubscription) automaticWindowStartAt(previous *time.Time, period ti
 	return anchor.Add(periods * period), true
 }
 
-func (s *UserSubscription) DailyResetTime() *time.Time {
-	if s.DailyWindowStart == nil {
+// NextDailyResetAt 返回到期前下一次自动刷新日额度的时刻；若无后续自动刷新
+// （窗口未激活、订阅已过期/撤销、一次性日卡或下一次刷新边界 >= ExpiresAt），返回 nil。
+func (s *UserSubscription) NextDailyResetAt() *time.Time {
+	return s.NextDailyResetAtForGroupAt(nil, time.Time{})
+}
+
+// NextDailyResetAtAt 在指定评估时刻 now 下计算下一次自动刷新日额度时刻；
+// 若 now >= ExpiresAt（已过期），返回 nil。
+func (s *UserSubscription) NextDailyResetAtAt(now time.Time) *time.Time {
+	return s.NextDailyResetAtForGroupAt(nil, now)
+}
+
+func (s *UserSubscription) NextDailyResetAtForGroup(group *Group) *time.Time {
+	return s.NextDailyResetAtForGroupAt(group, time.Time{})
+}
+
+func (s *UserSubscription) NextDailyResetAtForGroupAt(group *Group, now time.Time) *time.Time {
+	if s == nil || s.DailyWindowStart == nil {
+		return nil
+	}
+	if s.Status == SubscriptionStatusExpired || s.Status == SubscriptionStatusRevoked || s.DeletedAt != nil {
+		return nil
+	}
+	if !now.IsZero() && !s.ExpiresAt.IsZero() && !now.Before(s.ExpiresAt) {
 		return nil
 	}
 	if s.HasOneTimeDailyQuota() {
+		return nil
+	}
+
+	var next time.Time
+	if s.effectiveDailyResetMode(group) == DailyResetModeAnchored24h {
+		if s.StartsAt.IsZero() {
+			return nil
+		}
+		var k int64
+		if !s.DailyWindowStart.Before(s.StartsAt) {
+			k = int64(s.DailyWindowStart.Sub(s.StartsAt) / subscriptionDayDuration)
+		}
+		next = s.StartsAt.Add(time.Duration(k+1) * subscriptionDayDuration)
+	} else {
+		// 日窗口按日历日对齐：下次刷新固定在窗口起点所在日的次日 0 点。
+		next = timezone.StartOfDay(*s.DailyWindowStart).AddDate(0, 0, 1)
+	}
+
+	if !s.ExpiresAt.IsZero() && !next.Before(s.ExpiresAt) {
+		return nil
+	}
+	return &next
+}
+
+func (s *UserSubscription) DailyResetTime() *time.Time {
+	return s.DailyResetTimeForGroupAt(nil, time.Time{})
+}
+
+func (s *UserSubscription) DailyResetTimeAt(now time.Time) *time.Time {
+	return s.DailyResetTimeForGroupAt(nil, now)
+}
+
+func (s *UserSubscription) DailyResetTimeForGroup(group *Group) *time.Time {
+	return s.DailyResetTimeForGroupAt(group, time.Time{})
+}
+
+func (s *UserSubscription) DailyResetTimeForGroupAt(group *Group, now time.Time) *time.Time {
+	if s == nil || s.DailyWindowStart == nil {
+		return nil
+	}
+	if next := s.NextDailyResetAtForGroupAt(group, now); next != nil {
+		return next
+	}
+	if !s.ExpiresAt.IsZero() {
 		t := s.ExpiresAt
 		return &t
 	}
-	// 日窗口按日历日对齐：下次刷新固定在窗口起点所在日的次日 0 点。
-	t := timezone.StartOfDay(*s.DailyWindowStart).AddDate(0, 0, 1)
-	return &t
+	return nil
 }
 
 func (s *UserSubscription) WeeklyResetTime() *time.Time {

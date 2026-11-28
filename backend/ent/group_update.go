@@ -237,6 +237,20 @@ func (_u *GroupUpdate) SetNillableSubscriptionType(v *string) *GroupUpdate {
 	return _u
 }
 
+// SetDailyResetMode sets the "daily_reset_mode" field.
+func (_u *GroupUpdate) SetDailyResetMode(v string) *GroupUpdate {
+	_u.mutation.SetDailyResetMode(v)
+	return _u
+}
+
+// SetNillableDailyResetMode sets the "daily_reset_mode" field if the given value is not nil.
+func (_u *GroupUpdate) SetNillableDailyResetMode(v *string) *GroupUpdate {
+	if v != nil {
+		_u.SetDailyResetMode(*v)
+	}
+	return _u
+}
+
 // SetDailyLimitUsd sets the "daily_limit_usd" field.
 func (_u *GroupUpdate) SetDailyLimitUsd(v float64) *GroupUpdate {
 	_u.mutation.ResetDailyLimitUsd()
@@ -1765,6 +1779,11 @@ func (_u *GroupUpdate) check() error {
 			return &ValidationError{Name: "subscription_type", err: fmt.Errorf(`ent: validator failed for field "Group.subscription_type": %w`, err)}
 		}
 	}
+	if v, ok := _u.mutation.DailyResetMode(); ok {
+		if err := group.DailyResetModeValidator(v); err != nil {
+			return &ValidationError{Name: "daily_reset_mode", err: fmt.Errorf(`ent: validator failed for field "Group.daily_reset_mode": %w`, err)}
+		}
+	}
 	if v, ok := _u.mutation.SearchPricePer1k(); ok {
 		if err := group.SearchPricePer1kValidator(v); err != nil {
 			return &ValidationError{Name: "search_price_per_1k", err: fmt.Errorf(`ent: validator failed for field "Group.search_price_per_1k": %w`, err)}
@@ -1883,6 +1902,9 @@ func (_u *GroupUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	}
 	if value, ok := _u.mutation.SubscriptionType(); ok {
 		_spec.SetField(group.FieldSubscriptionType, field.TypeString, value)
+	}
+	if value, ok := _u.mutation.DailyResetMode(); ok {
+		_spec.SetField(group.FieldDailyResetMode, field.TypeString, value)
 	}
 	if value, ok := _u.mutation.DailyLimitUsd(); ok {
 		_spec.SetField(group.FieldDailyLimitUsd, field.TypeFloat64, value)
@@ -2769,6 +2791,20 @@ func (_u *GroupUpdateOne) SetSubscriptionType(v string) *GroupUpdateOne {
 func (_u *GroupUpdateOne) SetNillableSubscriptionType(v *string) *GroupUpdateOne {
 	if v != nil {
 		_u.SetSubscriptionType(*v)
+	}
+	return _u
+}
+
+// SetDailyResetMode sets the "daily_reset_mode" field.
+func (_u *GroupUpdateOne) SetDailyResetMode(v string) *GroupUpdateOne {
+	_u.mutation.SetDailyResetMode(v)
+	return _u
+}
+
+// SetNillableDailyResetMode sets the "daily_reset_mode" field if the given value is not nil.
+func (_u *GroupUpdateOne) SetNillableDailyResetMode(v *string) *GroupUpdateOne {
+	if v != nil {
+		_u.SetDailyResetMode(*v)
 	}
 	return _u
 }
@@ -4314,6 +4350,11 @@ func (_u *GroupUpdateOne) check() error {
 			return &ValidationError{Name: "subscription_type", err: fmt.Errorf(`ent: validator failed for field "Group.subscription_type": %w`, err)}
 		}
 	}
+	if v, ok := _u.mutation.DailyResetMode(); ok {
+		if err := group.DailyResetModeValidator(v); err != nil {
+			return &ValidationError{Name: "daily_reset_mode", err: fmt.Errorf(`ent: validator failed for field "Group.daily_reset_mode": %w`, err)}
+		}
+	}
 	if v, ok := _u.mutation.SearchPricePer1k(); ok {
 		if err := group.SearchPricePer1kValidator(v); err != nil {
 			return &ValidationError{Name: "search_price_per_1k", err: fmt.Errorf(`ent: validator failed for field "Group.search_price_per_1k": %w`, err)}
@@ -4449,6 +4490,9 @@ func (_u *GroupUpdateOne) sqlSave(ctx context.Context) (_node *Group, err error)
 	}
 	if value, ok := _u.mutation.SubscriptionType(); ok {
 		_spec.SetField(group.FieldSubscriptionType, field.TypeString, value)
+	}
+	if value, ok := _u.mutation.DailyResetMode(); ok {
+		_spec.SetField(group.FieldDailyResetMode, field.TypeString, value)
 	}
 	if value, ok := _u.mutation.DailyLimitUsd(); ok {
 		_spec.SetField(group.FieldDailyLimitUsd, field.TypeFloat64, value)

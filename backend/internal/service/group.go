@@ -35,6 +35,7 @@ type Group struct {
 	DuplicateOperationID string
 
 	SubscriptionType    string
+	DailyResetMode      string
 	DailyLimitUSD       *float64
 	WeeklyLimitUSD      *float64
 	MonthlyLimitUSD     *float64
@@ -183,6 +184,40 @@ func (g *Group) IsActive() bool {
 
 func (g *Group) IsSubscriptionType() bool {
 	return g.SubscriptionType == SubscriptionTypeSubscription
+}
+
+// NormalizeDailyResetMode normalizes empty or unknown reset modes to calendar midnight.
+func NormalizeDailyResetMode(mode string) string {
+	switch strings.TrimSpace(mode) {
+	case DailyResetModeAnchored24h:
+		return DailyResetModeAnchored24h
+	default:
+		return DailyResetModeCalendar
+	}
+}
+
+// ValidateDailyResetMode validates a daily_reset_mode input value.
+func ValidateDailyResetMode(mode string) error {
+	switch strings.TrimSpace(mode) {
+	case "", DailyResetModeCalendar, DailyResetModeAnchored24h:
+		return nil
+	default:
+		return fmt.Errorf("daily_reset_mode must be %q or %q", DailyResetModeCalendar, DailyResetModeAnchored24h)
+	}
+}
+
+// EffectiveDailyResetMode returns the group's normalized daily quota reset mode.
+func (g *Group) EffectiveDailyResetMode() string {
+	if g == nil {
+		return DailyResetModeCalendar
+	}
+	return NormalizeDailyResetMode(g.DailyResetMode)
+}
+
+// IsAnchored24hDailyReset reports whether the group resets daily quota on a
+// fixed 24-hour cadence anchored at subscription starts_at.
+func (g *Group) IsAnchored24hDailyReset() bool {
+	return g.EffectiveDailyResetMode() == DailyResetModeAnchored24h
 }
 
 func (g *Group) HasDailyLimit() bool {

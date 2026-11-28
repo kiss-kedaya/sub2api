@@ -96,6 +96,12 @@ const (
 	SubscriptionTypeSubscription = "subscription" // 订阅模式（按限额控制）
 )
 
+// Subscription daily quota reset mode constants
+const (
+	DailyResetModeCalendar    = "calendar"     // 配置时区自然日 0 点刷新（默认）
+	DailyResetModeAnchored24h = "anchored_24h" // 按订阅开通时刻 starts_at 每 24 小时刷新
+)
+
 // Subscription status constants
 const (
 	SubscriptionStatusActive    = "active"
