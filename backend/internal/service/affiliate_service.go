@@ -9,6 +9,7 @@ import (
 	"time"
 
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
+	"github.com/shopspring/decimal"
 )
 
 var (
@@ -476,8 +477,12 @@ func (s *AffiliateService) AccrueInviteRebateForOrder(ctx context.Context, invit
 		if existing >= perInviteeCap {
 			return 0, nil
 		}
-		if remaining := perInviteeCap - existing; rebate > remaining {
-			rebate = roundTo(remaining, 8)
+		remaining := floorAffiliateQuotaRemaining(perInviteeCap, existing)
+		if remaining <= 0 {
+			return 0, nil
+		}
+		if rebate > remaining {
+			rebate = remaining
 		}
 	}
 
@@ -551,6 +556,21 @@ func (s *AffiliateService) listInvitees(ctx context.Context, inviterID int64) ([
 func roundTo(v float64, scale int) float64 {
 	factor := math.Pow10(scale)
 	return math.Round(v*factor) / factor
+}
+
+func floorAffiliateQuotaRemaining(capVal, existing float64) float64 {
+	if capVal <= 0 || math.IsNaN(capVal) || math.IsInf(capVal, 0) || math.IsNaN(existing) || math.IsInf(existing, 0) {
+		return 0
+	}
+	rem := decimal.NewFromFloat(capVal).Sub(decimal.NewFromFloat(existing))
+	if !rem.IsPositive() {
+		return 0
+	}
+	v, _ := rem.Truncate(8).Float64()
+	if v <= 0 {
+		return 0
+	}
+	return v
 }
 
 func maskEmail(email string) string {

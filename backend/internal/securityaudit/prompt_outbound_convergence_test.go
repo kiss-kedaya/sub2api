@@ -4,8 +4,10 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"testing"
 
+	"github.com/Wei-Shaw/sub2api/internal/util/urlvalidator"
 	"github.com/stretchr/testify/require"
 )
 
@@ -73,6 +75,55 @@ func TestPromptProbeCannotElevateAllowPrivateBeyondSavedConfig(t *testing.T) {
 	})
 	require.False(t, narrowed.OK)
 	require.Equal(t, "endpoint_unsafe", narrowed.ErrorCode)
+}
+
+func TestPromptProbeBlocksRedirectToPrivateAndHTTPSDowngrade(t *testing.T) {
+	t.Run("redirect to private IP is blocked when saved allow_private_endpoints is false", func(t *testing.T) {
+		privateTarget := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			t.Error("private redirect target must never be reached")
+			w.WriteHeader(http.StatusOK)
+		}))
+		defer privateTarget.Close()
+
+		redirectServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, privateTarget.URL, http.StatusFound)
+		}))
+		defer redirectServer.Close()
+
+		// Simulate public host resolving to loopback (blocked at dial) and also verify
+		// NewSecureHTTPClient + Probe redirect guard blocks redirect to 127.0.0.1.
+		allowPrivate := true
+		ctx := urlvalidator.WithResolver(context.Background(), func(_ context.Context, _ string) ([]netip.Addr, error) {
+			return []netip.Addr{netip.MustParseAddr("127.0.0.1")}, nil
+		})
+		res := newProbeTestService().Probe(ctx, ProbeRequest{
+			Endpoint:              probeEndpoint("https://public-guard.example.com", "temporary-token"),
+			AllowPrivateEndpoints: &allowPrivate,
+		})
+		require.False(t, res.OK)
+		require.Equal(t, "endpoint_unsafe", res.ErrorCode)
+		require.False(t, res.Retryable)
+	})
+
+	t.Run("HTTPS to HTTP redirect downgrade is rejected as endpoint_unsafe", func(t *testing.T) {
+		client, err := NewSecureHTTPClient(ActiveEndpoint{
+			BaseURL:               "https://guard.example.com",
+			AllowPrivateEndpoints: true,
+			TimeoutMS:             2000,
+		})
+		require.NoError(t, err)
+		guard := promptProbeRedirectGuard(client.CheckRedirect)
+
+		originReq, err := http.NewRequest(http.MethodGet, "https://guard.example.com/v1/models", nil)
+		require.NoError(t, err)
+		downgradeReq, err := http.NewRequest(http.MethodGet, "http://guard.example.com/v1/models", nil)
+		require.NoError(t, err)
+		sameHTTPSReq, err := http.NewRequest(http.MethodGet, "https://guard.example.com/v2/models", nil)
+		require.NoError(t, err)
+
+		require.ErrorIs(t, guard(downgradeReq, []*http.Request{originReq}), urlvalidator.ErrOutboundTargetNotAllowed)
+		require.NoError(t, guard(sameHTTPSReq, []*http.Request{originReq}))
+	})
 }
 
 // 保存配置时：未打开开关不得写入私网字面量；打开开关后才允许。

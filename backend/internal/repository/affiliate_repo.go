@@ -14,6 +14,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/ent/user"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/lib/pq"
+	"github.com/shopspring/decimal"
 )
 
 const (
@@ -39,29 +40,61 @@ JOIN users u ON u.id = ua.user_id
 LEFT JOIN (
     SELECT user_id, COUNT(DISTINCT source_user_id)::integer AS rebated_invitee_count
     FROM user_affiliate_ledger
-    WHERE action = 'accrue' AND source_user_id IS NOT NULL
+    WHERE user_id = $1 AND action = 'accrue' AND source_user_id IS NOT NULL
     GROUP BY user_id
 ) rebated ON rebated.user_id = ua.user_id
 LEFT JOIN (
-    SELECT a.user_id,
+    SELECT ua_cap.user_id,
            LEAST(
-               GREATEST(ua_cap.aff_frozen_quota, 0),
-               COALESCE(SUM(GREATEST(a.matured_amount - COALESCE(rev.reversed_amount, 0), 0)), 0)
+               GREATEST(ua_cap.aff_frozen_quota - COALESCE(locked.still_locked_net, 0), 0),
+               COALESCE(m.matured_net, 0)
            )::double precision AS matured_frozen_quota
-    FROM (
-        SELECT user_id, source_order_id, SUM(amount) AS matured_amount
-        FROM user_affiliate_ledger
-        WHERE action = 'accrue' AND frozen_until IS NOT NULL AND frozen_until <= NOW()
-        GROUP BY user_id, source_order_id
-    ) a
-    JOIN user_affiliates ua_cap ON ua_cap.user_id = a.user_id
+    FROM user_affiliates ua_cap
     LEFT JOIN (
-        SELECT user_id, source_order_id, SUM(ABS(amount)) AS reversed_amount
-        FROM user_affiliate_ledger
-        WHERE action = 'refund_reversal' AND source_order_id IS NOT NULL
-        GROUP BY user_id, source_order_id
-    ) rev ON rev.user_id = a.user_id AND rev.source_order_id = a.source_order_id
-    GROUP BY a.user_id, ua_cap.aff_frozen_quota
+        SELECT a.user_id,
+               COALESCE(SUM(
+                   CASE
+                       WHEN a.source_order_id IS NULL THEN a.matured_amount
+                       ELSE GREATEST(a.matured_amount - COALESCE(rev.reversed_amount, 0), 0)
+                   END
+               ), 0) AS matured_net
+        FROM (
+            SELECT user_id, source_order_id, SUM(amount) AS matured_amount
+            FROM user_affiliate_ledger
+            WHERE user_id = $1 AND action = 'accrue' AND frozen_until IS NOT NULL AND frozen_until <= NOW()
+            GROUP BY user_id, source_order_id
+        ) a
+        LEFT JOIN (
+            SELECT user_id, source_order_id, SUM(ABS(amount)) AS reversed_amount
+            FROM user_affiliate_ledger
+            WHERE user_id = $1 AND action = 'refund_reversal' AND source_order_id IS NOT NULL
+            GROUP BY user_id, source_order_id
+        ) rev ON rev.user_id = a.user_id AND rev.source_order_id = a.source_order_id
+        GROUP BY a.user_id
+    ) m ON m.user_id = ua_cap.user_id
+    LEFT JOIN (
+        SELECT l.user_id,
+               COALESCE(SUM(
+                   CASE
+                       WHEN l.source_order_id IS NULL THEN l.locked_amount
+                       ELSE GREATEST(l.locked_amount - COALESCE(rev.reversed_amount, 0), 0)
+                   END
+               ), 0) AS still_locked_net
+        FROM (
+            SELECT user_id, source_order_id, SUM(amount) AS locked_amount
+            FROM user_affiliate_ledger
+            WHERE user_id = $1 AND action = 'accrue' AND frozen_until IS NOT NULL AND frozen_until > NOW()
+            GROUP BY user_id, source_order_id
+        ) l
+        LEFT JOIN (
+            SELECT user_id, source_order_id, SUM(ABS(amount)) AS reversed_amount
+            FROM user_affiliate_ledger
+            WHERE user_id = $1 AND action = 'refund_reversal' AND source_order_id IS NOT NULL
+            GROUP BY user_id, source_order_id
+        ) rev ON rev.user_id = l.user_id AND rev.source_order_id = l.source_order_id
+        GROUP BY l.user_id
+    ) locked ON locked.user_id = ua_cap.user_id
+    WHERE ua_cap.user_id = $1
 ) matured ON matured.user_id = ua.user_id
 WHERE ua.user_id = $1
 LIMIT 1`
@@ -135,6 +168,24 @@ func roundAffiliateQuota(v float64) float64 {
 	return math.Round(v*scale) / scale
 }
 
+// floorAffiliateQuotaRemaining returns floor((capVal - existing), 8 decimals)
+// using exact decimal arithmetic so rounding can never push accrued quota above
+// the configured per-invitee cap.
+func floorAffiliateQuotaRemaining(capVal, existing float64) float64 {
+	if capVal <= 0 || math.IsNaN(capVal) || math.IsInf(capVal, 0) || math.IsNaN(existing) || math.IsInf(existing, 0) {
+		return 0
+	}
+	rem := decimal.NewFromFloat(capVal).Sub(decimal.NewFromFloat(existing))
+	if !rem.IsPositive() {
+		return 0
+	}
+	v, _ := rem.Truncate(8).Float64()
+	if v <= 0 {
+		return 0
+	}
+	return v
+}
+
 func (r *affiliateRepository) AccrueQuota(ctx context.Context, inviterID, inviteeUserID int64, amount float64, freezeHours int, sourceOrderID *int64) (bool, error) {
 	applied, err := r.AccrueQuotaWithCap(ctx, inviterID, inviteeUserID, amount, freezeHours, sourceOrderID, 0)
 	if err != nil {
@@ -196,7 +247,11 @@ func (r *affiliateRepository) AccrueQuotaWithCap(ctx context.Context, inviterID,
 			if existing >= perInviteeCap {
 				return nil
 			}
-			if remaining := roundAffiliateQuota(perInviteeCap - existing); accrueAmount > remaining {
+			remaining := floorAffiliateQuotaRemaining(perInviteeCap, existing)
+			if remaining <= 0 {
+				return nil
+			}
+			if accrueAmount > remaining {
 				accrueAmount = remaining
 			}
 		}

@@ -101,6 +101,80 @@ func TestOpsWSClientIPIgnoresSpoofedLeftmostXForwardedFor(t *testing.T) {
 		rUntrusted.ServeHTTP(httptest.NewRecorder(), req2)
 		require.Equal(t, "127.0.0.1", gotUntrusted)
 	})
+
+	t.Run("OPS_WS_TRUST_PROXY=false ignores XFF even from trusted proxy peer", func(t *testing.T) {
+		prev := opsWSProxyConfig
+		opsWSProxyConfig = OpsWSProxyConfig{
+			TrustProxy:   false,
+			OriginPolicy: OriginPolicyPermissive,
+		}
+		t.Cleanup(func() { opsWSProxyConfig = prev })
+
+		cfg := &config.Config{
+			Server: config.ServerConfig{
+				TrustedProxies:           []string{"127.0.0.1"},
+				TrustedProxiesConfigured: true,
+			},
+		}
+		r := gin.New()
+		require.NoError(t, r.SetTrustedProxies(cfg.Server.TrustedProxies))
+		r.Use(servermiddleware.SessionBindingContext(cfg))
+		var gotIP string
+		r.GET("/ws", func(c *gin.Context) {
+			gotIP = opsWSClientIP(c)
+			c.Status(http.StatusOK)
+		})
+
+		req := httptest.NewRequest(http.MethodGet, "/ws", nil)
+		req.RemoteAddr = "127.0.0.1:41234"
+		req.Header.Set("X-Forwarded-For", "1.2.3.4, 203.0.113.55")
+		r.ServeHTTP(httptest.NewRecorder(), req)
+		require.Equal(t, "127.0.0.1", gotIP)
+	})
+
+	t.Run("explicit OPS_WS_TRUSTED_PROXIES walks XFF right-to-left and ignores spoofed left-most IP", func(t *testing.T) {
+		prefixes, invalid := parseTrustedProxyList("10.0.0.0/8")
+		require.Empty(t, invalid)
+		prev := opsWSProxyConfig
+		opsWSProxyConfig = OpsWSProxyConfig{
+			TrustProxy:             true,
+			TrustedProxies:         prefixes,
+			TrustedProxiesExplicit: true,
+			OriginPolicy:           OriginPolicyPermissive,
+		}
+		t.Cleanup(func() { opsWSProxyConfig = prev })
+
+		// Server trusted_proxies only includes loopback, while OPS_WS_TRUSTED_PROXIES
+		// explicitly trusts 10.0.0.0/8.
+		cfg := &config.Config{
+			Server: config.ServerConfig{
+				TrustedProxies:           []string{"127.0.0.1"},
+				TrustedProxiesConfigured: true,
+			},
+		}
+		r := gin.New()
+		require.NoError(t, r.SetTrustedProxies(cfg.Server.TrustedProxies))
+		r.Use(servermiddleware.SessionBindingContext(cfg))
+		var gotIP string
+		r.GET("/ws", func(c *gin.Context) {
+			gotIP = opsWSClientIP(c)
+			c.Status(http.StatusOK)
+		})
+
+		req := httptest.NewRequest(http.MethodGet, "/ws", nil)
+		req.RemoteAddr = "10.0.0.5:41234"
+		req.Header.Add("X-Forwarded-For", "1.2.3.4, 192.0.2.5")
+		req.Header.Add("X-Forwarded-For", "203.0.113.88, 10.0.0.9")
+		r.ServeHTTP(httptest.NewRecorder(), req)
+		require.Equal(t, "203.0.113.88", gotIP)
+
+		// Direct untrusted peer still cannot spoof XFF.
+		reqUntrusted := httptest.NewRequest(http.MethodGet, "/ws", nil)
+		reqUntrusted.RemoteAddr = "198.51.100.44:41234"
+		reqUntrusted.Header.Set("X-Forwarded-For", "1.2.3.4, 203.0.113.88")
+		r.ServeHTTP(httptest.NewRecorder(), reqUntrusted)
+		require.Equal(t, "198.51.100.44", gotIP)
+	})
 }
 
 func TestOpsWSPerIPLimitCannotBeBypassedBySpoofingLeftmostXFF(t *testing.T) {

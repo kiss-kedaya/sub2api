@@ -24,9 +24,10 @@ import (
 )
 
 type OpsWSProxyConfig struct {
-	TrustProxy     bool
-	TrustedProxies []netip.Prefix
-	OriginPolicy   string
+	TrustProxy             bool
+	TrustedProxies         []netip.Prefix
+	TrustedProxiesExplicit bool
+	OriginPolicy           string
 }
 
 const (
@@ -585,14 +586,91 @@ func isAllowedOpsWSOrigin(r *http.Request) bool {
 }
 
 // opsWSClientIP resolves the authoritative client IP for WebSocket per-IP
-// connection limiting via middleware.SecurityClientIP, which enforces the
-// server's trusted proxy configuration and walks X-Forwarded-For right-to-left
-// instead of trusting client-controlled left-most entries.
+// connection limiting. By default it delegates to middleware.SecurityClientIP,
+// which enforces server.trusted_proxies and walks X-Forwarded-For right-to-left.
+// When OPS_WS_TRUST_PROXY=false is set, forwarded headers are ignored and the
+// direct TCP peer IP is returned. When OPS_WS_TRUSTED_PROXIES is explicitly
+// configured and matches the TCP peer, X-Forwarded-For is walked right-to-left
+// skipping those trusted proxies so client-spoofed left-most hops are ignored.
 func opsWSClientIP(c *gin.Context) string {
 	if c == nil {
 		return ""
 	}
+	if !opsWSProxyConfig.TrustProxy {
+		return opsWSPeerIP(c)
+	}
+	if opsWSProxyConfig.TrustedProxiesExplicit {
+		if peerIP := opsWSPeerIP(c); peerIP != "" {
+			if peerAddr, err := netip.ParseAddr(peerIP); err == nil &&
+				isAddrInTrustedProxies(peerAddr.Unmap(), opsWSProxyConfig.TrustedProxies) {
+				var xffRaw string
+				if c.Request != nil {
+					xffRaw = strings.Join(c.Request.Header.Values("X-Forwarded-For"), ",")
+				}
+				if resolved := rightmostUntrustedXFF(xffRaw, opsWSProxyConfig.TrustedProxies); resolved != "" {
+					return resolved
+				}
+				if xRealIP := parseOpsWSIP(c.GetHeader("X-Real-IP")); xRealIP != "" {
+					return xRealIP
+				}
+				return peerIP
+			}
+		}
+	}
 	return servermiddleware.SecurityClientIP(c)
+}
+
+func opsWSPeerIP(c *gin.Context) string {
+	if c == nil || c.Request == nil {
+		return ""
+	}
+	remoteAddr := strings.TrimSpace(c.Request.RemoteAddr)
+	if remoteAddr == "" {
+		return ""
+	}
+	host := remoteAddr
+	if parsedHost, _, err := net.SplitHostPort(remoteAddr); err == nil {
+		host = parsedHost
+	}
+	return parseOpsWSIP(host)
+}
+
+func parseOpsWSIP(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	if host, _, err := net.SplitHostPort(raw); err == nil {
+		raw = host
+	}
+	raw = strings.Trim(raw, "[]")
+	addr, err := netip.ParseAddr(raw)
+	if err != nil || !addr.IsValid() {
+		return ""
+	}
+	return addr.Unmap().String()
+}
+
+func rightmostUntrustedXFF(raw string, trusted []netip.Prefix) string {
+	if strings.TrimSpace(raw) == "" {
+		return ""
+	}
+	parts := strings.Split(raw, ",")
+	for i := len(parts) - 1; i >= 0; i-- {
+		candidate := parseOpsWSIP(parts[i])
+		if candidate == "" {
+			continue
+		}
+		addr, err := netip.ParseAddr(candidate)
+		if err != nil || !addr.IsValid() {
+			continue
+		}
+		if isAddrInTrustedProxies(addr.Unmap(), trusted) {
+			continue
+		}
+		return addr.Unmap().String()
+	}
+	return ""
 }
 
 func isAddrInTrustedProxies(addr netip.Addr, trusted []netip.Prefix) bool {
@@ -631,6 +709,7 @@ func loadOpsWSProxyConfigFromEnv() OpsWSProxyConfig {
 			logger.LegacyPrintf("handler.admin.ops_ws", "[OpsWS] invalid %s entries ignored: %s", envOpsWSTrustedProxies, strings.Join(invalid, ", "))
 		}
 		cfg.TrustedProxies = prefixes
+		cfg.TrustedProxiesExplicit = true
 	}
 
 	if v := strings.TrimSpace(os.Getenv(envOpsWSOriginPolicy)); v != "" {

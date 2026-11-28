@@ -12,9 +12,15 @@ import (
 const maxPublicQualityErrorRunes = 240
 
 var (
-	publicQualityIPv4Pattern       = regexp.MustCompile(`\b\d{1,3}(?:\.\d{1,3}){3}\b`)
-	publicQualityHTTPStatusPattern = regexp.MustCompile(`\bhttp[/ ]?[45]\d\d\b`)
-	publicQualityEOFPattern        = regexp.MustCompile(`\beof\b`)
+	publicQualityIPv4Pattern        = regexp.MustCompile(`\b\d{1,3}(?:\.\d{1,3}){3}\b`)
+	publicQualityIPv6Pattern        = regexp.MustCompile(`\b(?:[0-9a-f]{1,4}:){7}[0-9a-f]{1,4}\b`)
+	publicQualityBracketIPv6Pattern = regexp.MustCompile(`\[[0-9a-f:.%]+\]`)
+	publicQualityHostPortPattern    = regexp.MustCompile(`\b[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+:\d{1,5}\b`)
+	publicQualityHTTPStatusPattern  = regexp.MustCompile(`\bhttp[/ ]?[45]\d\d\b`)
+	publicQualityStatusPhraseRegex  = regexp.MustCompile(`\b(?:40[0134]|408|429|50[0234])\s+[a-z]`)
+	publicQualityJWTPattern         = regexp.MustCompile(`\beyj[a-z0-9_-]{8,}\.[a-z0-9_-]{8,}\b`)
+	publicQualityKeyPrefixPattern   = regexp.MustCompile(`\b(?:aiza|xai-|gsk_|ghp_|gho_|akia|ant-api)[a-z0-9_-]{6,}\b`)
+	publicQualityEOFPattern         = regexp.MustCompile(`\beof\b`)
 )
 
 var publicQualitySensitiveSubstrings = []string{
@@ -22,12 +28,17 @@ var publicQualitySensitiveSubstrings = []string{
 	"::",
 	"authorization",
 	"bearer ",
+	"bearer:",
 	"api_key",
+	"api key",
 	"apikey",
 	"x-api-key",
 	"access_token",
 	"refresh_token",
 	"session_token",
+	"oauth",
+	"jwt",
+	"token",
 	"password",
 	"secret",
 	"cookie",
@@ -38,14 +49,30 @@ var publicQualitySensitiveSubstrings = []string{
 	"group_id",
 	"dial tcp",
 	"dial udp",
+	"read tcp",
+	"write tcp",
 	"connection refused",
+	"connection reset",
+	"broken pipe",
+	"remote error",
 	"no such host",
 	"lookup ",
 	"tls:",
 	"x509:",
 	"context deadline",
+	"context canceled",
 	"i/o timeout",
 	"status code",
+	"rate limit",
+	"rate_limit",
+	"insufficient_quota",
+	"unauthorized",
+	"forbidden",
+	"bad gateway",
+	"gateway timeout",
+	"service unavailable",
+	"internal server error",
+	"no available accounts",
 	"upstream",
 	"sql:",
 	"postgres",
@@ -99,7 +126,13 @@ func SanitizePublicQualityErrorMessage(status, raw string) string {
 		}
 	}
 	if publicQualityIPv4Pattern.MatchString(lower) ||
+		publicQualityIPv6Pattern.MatchString(lower) ||
+		publicQualityBracketIPv6Pattern.MatchString(lower) ||
+		publicQualityHostPortPattern.MatchString(lower) ||
 		publicQualityHTTPStatusPattern.MatchString(lower) ||
+		publicQualityStatusPhraseRegex.MatchString(lower) ||
+		publicQualityJWTPattern.MatchString(lower) ||
+		publicQualityKeyPrefixPattern.MatchString(lower) ||
 		publicQualityEOFPattern.MatchString(lower) {
 		return ""
 	}

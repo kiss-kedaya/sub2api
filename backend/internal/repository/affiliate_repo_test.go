@@ -28,8 +28,9 @@ func TestAffiliateUserOverviewSQLIncludesMaturedFrozenQuota(t *testing.T) {
 
 	require.Contains(t, query, "ua.aff_quota + COALESCE(matured.matured_frozen_quota, 0)")
 	require.Contains(t, query, "frozen_until <= NOW()")
+	require.Contains(t, query, "frozen_until > NOW()")
 	require.Contains(t, query, "action = 'refund_reversal'")
-	require.Contains(t, query, "ua_cap.aff_frozen_quota")
+	require.Contains(t, query, "ua_cap.aff_frozen_quota - COALESCE(locked.still_locked_net, 0)")
 }
 
 func TestAffiliateRecordQueriesUseLedgerAuditFields(t *testing.T) {
@@ -287,5 +288,24 @@ func TestAffiliateRepository_AccrueQuotaWithCap_LocksInviterAndClampsInsideTx(t 
 	applied, err = repo.AccrueQuotaWithCap(ctx, 7, 8, 5.0, 24, &orderID, 10.0)
 	require.NoError(t, err)
 	require.Zero(t, applied)
+
+	// Sub-precision remainder (0.000000006) must round DOWN to 0, never UP above cap.
+	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT user_id FROM user_affiliates WHERE user_id = \$1 FOR UPDATE`).
+		WithArgs(int64(7)).
+		WillReturnRows(sqlmock.NewRows([]string{"user_id"}).AddRow(int64(7)))
+	mock.ExpectQuery(`(?s)SELECT COALESCE\(SUM\(amount\), 0\)::double precision FROM user_affiliate_ledger WHERE user_id = \$1 AND source_user_id = \$2 AND action = 'accrue'`).
+		WithArgs(int64(7), int64(8)).
+		WillReturnRows(sqlmock.NewRows([]string{"existing"}).AddRow(1.0))
+	mock.ExpectCommit()
+
+	applied, err = repo.AccrueQuotaWithCap(ctx, 7, 8, 1.0, 24, &orderID, 1.000000006)
+	require.NoError(t, err)
+	require.Zero(t, applied, "cap remainder must truncate downward so total never exceeds cap")
+
+	// Exact decimal subtraction (10.0 - 3.3 = 6.7) must not lose a unit to float64 representation noise.
+	require.InDelta(t, 6.7, floorAffiliateQuotaRemaining(10.0, 3.3), 1e-12)
+	require.Zero(t, floorAffiliateQuotaRemaining(1.000000006, 1.0))
+	require.InDelta(t, 0.00000001, floorAffiliateQuotaRemaining(1.000000019, 1.0), 1e-12)
 	require.NoError(t, mock.ExpectationsWereMet())
 }

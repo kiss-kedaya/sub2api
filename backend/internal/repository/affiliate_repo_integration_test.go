@@ -582,4 +582,48 @@ VALUES ($1, 100, 100, $2, NOW() + interval '1 hour') RETURNING id`,
 		"SELECT aff_quota::double precision FROM user_affiliates WHERE user_id = $1", inviter.ID), 1e-9)
 	require.InDelta(t, 0.0, querySingleFloat(t, txCtx, client,
 		"SELECT aff_frozen_quota::double precision FROM user_affiliates WHERE user_id = $1", inviter.ID), 1e-9)
+
+	// Case C: Cross-order frozen clawback while another order remains locked.
+	// Drain available quota first so aff_quota = 0, aff_frozen_quota = 0.
+	transferred, _, err := repo.TransferQuotaToBalance(txCtx, inviter.ID)
+	require.NoError(t, err)
+	require.InDelta(t, 3.0, transferred, 1e-9)
+
+	orderC := insertOrder("avail-withdrawn")
+	applied, err = repo.AccrueQuota(txCtx, inviter.ID, invitee.ID, 10.0, 0, &orderC)
+	require.NoError(t, err)
+	require.True(t, applied)
+	_, _, err = repo.TransferQuotaToBalance(txCtx, inviter.ID)
+	require.NoError(t, err)
+
+	orderD := insertOrder("frozen-matured")
+	applied, err = repo.AccrueQuota(txCtx, inviter.ID, invitee.ID, 10.0, 24, &orderD)
+	require.NoError(t, err)
+	require.True(t, applied)
+
+	orderE := insertOrder("frozen-still-locked")
+	applied, err = repo.AccrueQuota(txCtx, inviter.ID, invitee.ID, 10.0, 48, &orderE)
+	require.NoError(t, err)
+	require.True(t, applied)
+
+	// Refund Order C (10.0): available is 0, so 10.0 is clawed back from aff_frozen_quota (20 -> 10).
+	revC, err := reverser.ReverseQuotaForOrder(txCtx, orderC, 1.0)
+	require.NoError(t, err)
+	require.InDelta(t, 10.0, revC, 1e-9)
+
+	// Fast-forward only Order D past frozen_until; Order E (10.0) remains locked.
+	_, err = client.ExecContext(txCtx,
+		`UPDATE user_affiliate_ledger SET frozen_until = NOW() - interval '1 hour' WHERE source_order_id = $1 AND action = 'accrue'`,
+		orderD)
+	require.NoError(t, err)
+
+	// Overview MUST match thaw semantics: remaining aff_frozen_quota (10) is reserved
+	// for still-locked Order E (10), so AvailableQuota must be 0, not 10.
+	overview, err := repo.GetAffiliateUserOverview(txCtx, inviter.ID)
+	require.NoError(t, err)
+	require.Zero(t, overview.AvailableQuota)
+
+	thawedD, err := repo.ThawFrozenQuota(txCtx, inviter.ID)
+	require.NoError(t, err)
+	require.Zero(t, thawedD)
 }

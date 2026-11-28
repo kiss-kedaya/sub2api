@@ -816,8 +816,10 @@ func (s *ContentModerationService) TestAPIKeys(ctx context.Context, input TestCo
 	if _, err := validateAdminOutboundTarget(ctx, cfg.BaseURL); err != nil {
 		return nil, infraerrors.BadRequest("CONTENT_MODERATION_BASE_URL_NOT_ALLOWED", "内容审计 Base URL 不被允许：仅允许公网可达地址")
 	}
-	// 真正发测试请求时注入安全客户端：连接前解析 IP 校验 + 重定向到私网拒绝。
-	ctx = WithAdminOutboundHTTPClient(ctx, newAdminOutboundHTTPClient())
+	// 真正发测试请求时注入安全客户端：连接前解析 IP 校验 + 重定向守卫（禁止跳私网、禁止 HTTPS->HTTP 降级与跨源跳转）。
+	testClient := *newAdminOutboundHTTPClient()
+	testClient.CheckRedirect = contentModerationRedirectGuard(adminOutboundAllowPrivateForTest.Load())
+	ctx = WithAdminOutboundHTTPClient(ctx, &testClient)
 	testInput, imageCount, err := buildModerationTestInput(input.Prompt, input.Images)
 	if err != nil {
 		return nil, err
@@ -1898,9 +1900,41 @@ var (
 	contentModerationSafeClient     *http.Client
 )
 
+// contentModerationRedirectGuard enforces SSRF checks on every redirect hop and
+// blocks HTTPS->HTTP scheme downgrades or cross-origin redirects so credential-
+// bearing moderation requests never leak API keys over plaintext HTTP or to
+// foreign hosts.
+func contentModerationRedirectGuard(allowPrivate bool) func(req *http.Request, via []*http.Request) error {
+	baseGuard := urlvalidator.NewRedirectGuard(urlvalidator.OutboundPolicy{
+		AllowInsecureHTTP: true,
+		AllowPrivate:      allowPrivate,
+	})
+	return func(req *http.Request, via []*http.Request) error {
+		if err := baseGuard(req, via); err != nil {
+			return err
+		}
+		if req == nil || req.URL == nil {
+			return urlvalidator.ErrOutboundTargetNotAllowed
+		}
+		scheme := strings.ToLower(strings.TrimSpace(req.URL.Scheme))
+		if scheme != "http" && scheme != "https" {
+			return urlvalidator.ErrOutboundTargetNotAllowed
+		}
+		if len(via) > 0 && via[0] != nil && via[0].URL != nil {
+			if strings.EqualFold(via[0].URL.Scheme, "https") && scheme != "https" {
+				return urlvalidator.ErrOutboundTargetNotAllowed
+			}
+			if !sameURLOrigin(via[0].URL.String(), req.URL.String()) {
+				return urlvalidator.ErrOutboundTargetNotAllowed
+			}
+		}
+		return nil
+	}
+}
+
 func defaultContentModerationSafeHTTPClient() *http.Client {
 	if adminOutboundAllowPrivateForTest.Load() {
-		return servertiming.InstrumentClient(urlvalidator.NewSafeHTTPClient(urlvalidator.OutboundPolicy{
+		client := servertiming.InstrumentClient(urlvalidator.NewSafeHTTPClient(urlvalidator.OutboundPolicy{
 			AllowInsecureHTTP: true,
 			AllowPrivate:      true,
 		}, urlvalidator.HTTPClientOptions{
@@ -1908,9 +1942,11 @@ func defaultContentModerationSafeHTTPClient() *http.Client {
 			MaxIdleConns:        64,
 			MaxIdleConnsPerHost: 16,
 		}))
+		client.CheckRedirect = contentModerationRedirectGuard(true)
+		return client
 	}
 	contentModerationSafeClientOnce.Do(func() {
-		contentModerationSafeClient = servertiming.InstrumentClient(urlvalidator.NewSafeHTTPClient(urlvalidator.OutboundPolicy{
+		client := servertiming.InstrumentClient(urlvalidator.NewSafeHTTPClient(urlvalidator.OutboundPolicy{
 			AllowInsecureHTTP: true,
 			AllowPrivate:      false,
 		}, urlvalidator.HTTPClientOptions{
@@ -1918,13 +1954,16 @@ func defaultContentModerationSafeHTTPClient() *http.Client {
 			MaxIdleConns:        64,
 			MaxIdleConnsPerHost: 16,
 		}))
+		client.CheckRedirect = contentModerationRedirectGuard(false)
+		contentModerationSafeClient = client
 	})
 	return contentModerationSafeClient
 }
 
 // moderationHTTPClient 返回本次审计调用应使用的 HTTP 客户端。
 // 未配置代理时使用带拨号期 IP 校验与重定向守卫的安全客户端（防 DNS rebinding 与
-// 3xx 跳内网）；配置了代理时复用代理连接池并附加重定向守卫，代理解析失败绝不回退直连。
+// 3xx 跳内网/降级明文/跨源）；配置了代理时复用代理连接池并启用解析 IP 校验与
+// 同口径重定向守卫，代理解析失败绝不回退直连。
 func (s *ContentModerationService) moderationHTTPClient(ctx context.Context, cfg *ContentModerationConfig) (*http.Client, error) {
 	if cfg == nil || cfg.ProxyID == nil {
 		// 管理面测试入口注入的安全客户端优先：它带拨号期 IP 校验与重定向守卫。
@@ -1940,16 +1979,18 @@ func (s *ContentModerationService) moderationHTTPClient(ctx context.Context, cfg
 	if err != nil {
 		return nil, err
 	}
-	client, err := httpclient.GetClient(httpclient.Options{ProxyURL: proxyURL})
+	allowPrivate := adminOutboundAllowPrivateForTest.Load()
+	client, err := httpclient.GetClient(httpclient.Options{
+		ProxyURL:           proxyURL,
+		ValidateResolvedIP: true,
+		AllowPrivateHosts:  allowPrivate,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("build moderation proxy client: %w", err)
 	}
 	// Shallow-copy the pooled proxy client so we attach a redirect guard without mutating shared state.
 	safeProxyClient := *client
-	safeProxyClient.CheckRedirect = urlvalidator.NewRedirectGuard(urlvalidator.OutboundPolicy{
-		AllowInsecureHTTP: true,
-		AllowPrivate:      adminOutboundAllowPrivateForTest.Load(),
-	})
+	safeProxyClient.CheckRedirect = contentModerationRedirectGuard(allowPrivate)
 	return &safeProxyClient, nil
 }
 

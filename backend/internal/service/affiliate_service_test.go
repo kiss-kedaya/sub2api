@@ -269,6 +269,53 @@ func TestAccrueInviteRebateForOrderUsesAtomicCapRepositoryMethod(t *testing.T) {
 	require.Zero(t, repo.legacyAccrueCalls)
 }
 
+type legacyOnlyCapAffiliateRepo struct {
+	*paymentFulfillmentAffiliateRepoStub
+	inviterID   int64
+	existing    float64
+	accrueCalls int
+	lastAmount  float64
+}
+
+func (r *legacyOnlyCapAffiliateRepo) EnsureUserAffiliate(_ context.Context, userID int64) (*AffiliateSummary, error) {
+	if userID == r.inviterID {
+		return &AffiliateSummary{UserID: r.inviterID}, nil
+	}
+	inviterID := r.inviterID
+	return &AffiliateSummary{UserID: userID, InviterID: &inviterID}, nil
+}
+
+func (r *legacyOnlyCapAffiliateRepo) GetAccruedRebateFromInvitee(context.Context, int64, int64) (float64, error) {
+	return r.existing, nil
+}
+
+func (r *legacyOnlyCapAffiliateRepo) AccrueQuota(_ context.Context, _, _ int64, amount float64, _ int, _ *int64) (bool, error) {
+	r.accrueCalls++
+	r.lastAmount = amount
+	return true, nil
+}
+
+func TestAccrueInviteRebateFallbackRoundsCapRemainderDown(t *testing.T) {
+	settingsRepo := &stubSettingsMapRepo{values: map[string]string{
+		SettingKeyAffiliateEnabled:             "true",
+		SettingKeyAffiliateRebateRate:          "20",
+		SettingKeyAffiliateRebatePerInviteeCap: "1.000000006",
+	}}
+	settingSvc := NewSettingService(settingsRepo, nil)
+	repo := &legacyOnlyCapAffiliateRepo{
+		paymentFulfillmentAffiliateRepoStub: &paymentFulfillmentAffiliateRepoStub{},
+		inviterID:                           7,
+		existing:                            1.0,
+	}
+	svc := NewAffiliateService(repo, settingSvc, nil, nil)
+	orderID := int64(101)
+
+	rebate, err := svc.AccrueInviteRebateForOrder(context.Background(), 8, 100, &orderID)
+	require.NoError(t, err)
+	require.Zero(t, rebate, "sub-unit remainder 0.000000006 must truncate downward to 0")
+	require.Zero(t, repo.accrueCalls)
+}
+
 func TestReverseInviteRebateForOrderRunsEvenWhenAffiliateDisabled(t *testing.T) {
 	repo := &cappedAccrualRecordingAffiliateRepo{
 		paymentFulfillmentAffiliateRepoStub: &paymentFulfillmentAffiliateRepoStub{},

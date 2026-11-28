@@ -5,6 +5,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
+	"net/url"
+	"strconv"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -311,4 +314,53 @@ func TestContentModerationSafeHTTPClientBlocksPrivateTargets(t *testing.T) {
 		_ = resp.Body.Close()
 	}
 	require.ErrorIs(t, err, urlvalidator.ErrOutboundTargetNotAllowed)
+
+	// Redirect guard must block HTTPS->HTTP scheme downgrade and cross-origin redirects
+	// on both direct and proxy clients so Bearer API keys are never leaked in cleartext
+	// or sent to foreign hosts.
+	publicCtx := urlvalidator.WithResolver(context.Background(), func(_ context.Context, _ string) ([]netip.Addr, error) {
+		return []netip.Addr{netip.MustParseAddr("93.184.216.34")}, nil
+	})
+	originReq, err := http.NewRequestWithContext(publicCtx, http.MethodPost, "https://mod.example.com/v1/moderations", nil)
+	require.NoError(t, err)
+	downgradeReq, err := http.NewRequestWithContext(publicCtx, http.MethodPost, "http://mod.example.com/v1/moderations", nil)
+	require.NoError(t, err)
+	crossOriginReq, err := http.NewRequestWithContext(publicCtx, http.MethodPost, "https://evil.example.com/v1/moderations", nil)
+	require.NoError(t, err)
+	sameOriginReq, err := http.NewRequestWithContext(publicCtx, http.MethodPost, "https://mod.example.com/v2/moderations", nil)
+	require.NoError(t, err)
+
+	require.ErrorIs(t, client.CheckRedirect(downgradeReq, []*http.Request{originReq}), urlvalidator.ErrOutboundTargetNotAllowed)
+	require.ErrorIs(t, client.CheckRedirect(crossOriginReq, []*http.Request{originReq}), urlvalidator.ErrOutboundTargetNotAllowed)
+	require.NoError(t, client.CheckRedirect(sameOriginReq, []*http.Request{originReq}))
+
+	// Proxy branch must enforce resolved-IP validation (blocking private/loopback targets)
+	// and attach the same non-downgrading redirect guard.
+	proxyServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		t.Error("proxy must not be contacted for private/loopback target")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer proxyServer.Close()
+	proxyParsed, err := url.Parse(proxyServer.URL)
+	require.NoError(t, err)
+	proxyPort, err := strconv.Atoi(proxyParsed.Port())
+	require.NoError(t, err)
+	proxyID := int64(42)
+	sProxy := &ContentModerationService{
+		proxyRepo: &contentModerationTestProxyRepo{
+			proxies: map[int64]*Proxy{
+				proxyID: {ID: proxyID, Name: "test-proxy", Protocol: "http", Host: proxyParsed.Hostname(), Port: proxyPort, Status: StatusActive},
+			},
+		},
+	}
+	proxyClient, err := sProxy.moderationHTTPClient(context.Background(), &ContentModerationConfig{ProxyID: &proxyID})
+	require.NoError(t, err)
+	require.ErrorIs(t, proxyClient.CheckRedirect(downgradeReq, []*http.Request{originReq}), urlvalidator.ErrOutboundTargetNotAllowed)
+	require.ErrorIs(t, proxyClient.CheckRedirect(crossOriginReq, []*http.Request{originReq}), urlvalidator.ErrOutboundTargetNotAllowed)
+
+	resp2, err := proxyClient.Get(privateServer.URL)
+	if resp2 != nil && resp2.Body != nil {
+		_ = resp2.Body.Close()
+	}
+	require.Error(t, err, "proxy client with ValidateResolvedIP must reject loopback target before forwarding")
 }
