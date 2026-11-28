@@ -307,18 +307,12 @@ func (s *httpUpstreamService) Do(req *http.Request, proxyURL string, accountID i
 	// 执行请求
 	client := s.httpClientForUpstreamRequest(entry.client, req)
 	client = httpClientWithGrokAccessDeniedFallback(client)
-	wrappedBody, releaseWrappedPayload := wrapUpstreamRequestPayloadForRelease(req)
+	releaseWrappedPayload := wrapUpstreamRequestPayloadForRelease(req)
 	resp, err := observedUpstreamRequest(client, req)
 	captureUpstreamHeadersForOps(req, resp)
 	s.observeUpstreamAttempt(req, accountID, resp, err)
 	releaseWrappedPayload()
-	if origReq != nil && origReq != req {
-		origReq.Body = nil
-		origReq.GetBody = nil
-	}
-	if wrappedBody == nil || wrappedBody.IsClosed() {
-		releaseUpstreamRequestPayload(req, resp)
-	}
+	clearCallerRequestPayload(origReq, req)
 	if err != nil {
 		// 请求失败，立即减少计数
 		atomic.AddInt64(&entry.inFlight, -1)
@@ -351,14 +345,14 @@ func (s *httpUpstreamService) DoWithTLS(req *http.Request, proxyURL string, acco
 	}
 	if profile == nil {
 		resp, err := s.Do(req, proxyURL, accountID, accountConcurrency)
-		releaseUpstreamRequestPayload(origReq, resp)
+		clearCallerRequestPayload(origReq, req)
 		return resp, err
 	}
 	// Plain HTTP has no TLS handshake to fingerprint. Reuse the normal transport
 	// so a configured HTTP or SOCKS proxy is not bypassed.
 	if req != nil && req.URL != nil && strings.EqualFold(req.URL.Scheme, "http") {
 		resp, err := s.Do(req, proxyURL, accountID, accountConcurrency)
-		releaseUpstreamRequestPayload(origReq, resp)
+		clearCallerRequestPayload(origReq, req)
 		return resp, err
 	}
 	applyGrokCLIProxyHeaders(req)
@@ -389,18 +383,12 @@ func (s *httpUpstreamService) DoWithTLS(req *http.Request, proxyURL string, acco
 
 	client := s.httpClientForUpstreamRequest(entry.client, req)
 	client = httpClientWithGrokAccessDeniedFallback(client)
-	wrappedBody, releaseWrappedPayload := wrapUpstreamRequestPayloadForRelease(req)
+	releaseWrappedPayload := wrapUpstreamRequestPayloadForRelease(req)
 	resp, err := observedUpstreamRequest(client, req)
 	captureUpstreamHeadersForOps(req, resp)
 	s.observeUpstreamAttempt(req, accountID, resp, err)
 	releaseWrappedPayload()
-	if origReq != nil && origReq != req {
-		origReq.Body = nil
-		origReq.GetBody = nil
-	}
-	if wrappedBody == nil || wrappedBody.IsClosed() {
-		releaseUpstreamRequestPayload(req, resp)
-	}
+	clearCallerRequestPayload(origReq, req)
 	if err != nil {
 		atomic.AddInt64(&entry.inFlight, -1)
 		atomic.StoreInt64(&entry.lastUsed, time.Now().UnixNano())
@@ -1824,13 +1812,6 @@ func (b *releasableRequestBody) Close() error {
 	return err
 }
 
-func (b *releasableRequestBody) IsClosed() bool {
-	b.mu.Lock()
-	closed := b.closed
-	b.mu.Unlock()
-	return closed
-}
-
 // Release detaches the wrapped reader only if the transport has already closed
 // it. Keeping b.rc intact while an HTTP/2 upload is still streaming prevents
 // premature EOF truncation and guarantees Close runs on the underlying reader.
@@ -1869,9 +1850,9 @@ func (g *releasableRequestGetBody) release() {
 	g.mu.Unlock()
 }
 
-func wrapUpstreamRequestPayloadForRelease(req *http.Request) (*releasableRequestBody, func()) {
+func wrapUpstreamRequestPayloadForRelease(req *http.Request) func() {
 	if req == nil {
-		return nil, func() {}
+		return func() {}
 	}
 	var rb *releasableRequestBody
 	if req.Body != nil && req.Body != http.NoBody {
@@ -1883,7 +1864,7 @@ func wrapUpstreamRequestPayloadForRelease(req *http.Request) (*releasableRequest
 		gb = &releasableRequestGetBody{fn: req.GetBody}
 		req.GetBody = gb.get
 	}
-	return rb, func() {
+	return func() {
 		if rb != nil {
 			rb.Release()
 		}
@@ -1893,19 +1874,13 @@ func wrapUpstreamRequestPayloadForRelease(req *http.Request) (*releasableRequest
 	}
 }
 
-func releaseUpstreamRequestPayload(req *http.Request, resp *http.Response) {
-	if req != nil {
-		if r, ok := req.Body.(interface{ Release() }); ok {
-			r.Release()
-		}
-		req.Body = nil
-		req.GetBody = nil
-	}
-	if resp != nil && resp.Request != nil && resp.Request != req {
-		if r, ok := resp.Request.Body.(interface{ Release() }); ok {
-			r.Release()
-		}
-		resp.Request.Body = nil
-		resp.Request.GetBody = nil
+// clearCallerRequestPayload detaches Body and GetBody from the caller's request
+// object only when it is distinct from the cloned request handed to RoundTrip.
+// Transport-owned requests and resp.Request are never mutated; payload memory
+// is released via releasableRequestBody.Close and releasableRequestGetBody.release.
+func clearCallerRequestPayload(origReq, transportReq *http.Request) {
+	if origReq != nil && origReq != transportReq {
+		origReq.Body = nil
+		origReq.GetBody = nil
 	}
 }

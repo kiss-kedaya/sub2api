@@ -86,8 +86,11 @@ func TestHTTPUpstreamDo_ReleasesRequestBodyMidStream(t *testing.T) {
 
 			<-started
 			if resp.Request != nil {
-				require.Nil(t, resp.Request.Body)
-				require.Nil(t, resp.Request.GetBody)
+				if rb, ok := resp.Request.Body.(*releasableRequestBody); ok {
+					require.Eventually(t, func() bool {
+						return isReleasableBodyClosed(rb)
+					}, 3*time.Second, 5*time.Millisecond, "transport should close wrapped request body once upload completes")
+				}
 			}
 
 			require.Eventually(t, func() bool {
@@ -96,6 +99,12 @@ func TestHTTPUpstreamDo_ReleasesRequestBodyMidStream(t *testing.T) {
 			}, 3*time.Second, 5*time.Millisecond, "request body must be collectible while streaming response is still open")
 		})
 	}
+}
+
+func isReleasableBodyClosed(b *releasableRequestBody) bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.closed
 }
 
 type trackingSlowBody struct {
@@ -166,7 +175,9 @@ func TestHTTPUpstreamDo_HTTP2EarlyResponseDoesNotTruncateOrSkipClose(t *testing.
 	require.NoError(t, err)
 	req.ContentLength = int64(len(expectedFull))
 
-	wrappedBody, releaseWrapped := wrapUpstreamRequestPayloadForRelease(req)
+	releaseWrapped := wrapUpstreamRequestPayloadForRelease(req)
+	wrappedBody, ok := req.Body.(*releasableRequestBody)
+	require.True(t, ok)
 	resp, err := observedUpstreamRequest(srv.Client(), req)
 	require.NoError(t, err)
 	defer func() { _ = resp.Body.Close() }()
@@ -175,13 +186,13 @@ func TestHTTPUpstreamDo_HTTP2EarlyResponseDoesNotTruncateOrSkipClose(t *testing.
 
 	// Simulate Do returning while upload is still blocked mid-body.
 	releaseWrapped()
-	require.False(t, wrappedBody.IsClosed(), "body must stay open while HTTP/2 upload is still streaming")
+	require.False(t, isReleasableBodyClosed(wrappedBody), "body must stay open while HTTP/2 upload is still streaming")
 
 	close(slow.unblock)
 	require.Equal(t, expectedFull, <-gotBodyCh, "HTTP/2 early-200 release must not truncate the remaining upload")
 	_, err = io.ReadAll(resp.Body)
 	require.NoError(t, err)
 	require.Eventually(t, func() bool {
-		return slow.closes.Load() == 1 && wrappedBody.IsClosed()
+		return slow.closes.Load() == 1 && isReleasableBodyClosed(wrappedBody)
 	}, 3*time.Second, 5*time.Millisecond, "underlying request body Close must be called once when transport finishes")
 }
