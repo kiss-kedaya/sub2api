@@ -25,7 +25,7 @@ var opsCleanupBatchTimeout = 20 * time.Second
 // so a heavily backlogged table executing many sub-20s batches cannot exhaust
 // opsCleanupRunTimeout (30m) and starve the remaining Ops tables or channel
 // monitor daily maintenance.
-var opsCleanupTableTimeout = 5 * time.Minute
+var opsCleanupTableTimeout = 3 * time.Minute
 
 type opsCleanupTarget struct {
 	retentionDays int
