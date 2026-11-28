@@ -110,29 +110,41 @@ func (r *usageBillingRepository) claimUsageBillingKey(ctx context.Context, tx *s
 }
 
 func (r *usageBillingRepository) claimUsageBillingRequest(ctx context.Context, tx *sql.Tx, requestID string, apiKeyID int64, requestFingerprint string) (bool, error) {
-	// 单条 CTE 合并归档查重与热表认领：
+	// 单条 CTE 合并归档查重、热表查重与热表认领：
 	// 1. 先查 usage_billing_dedup_archive（含 local: 请求，严禁跳过）；
-	// 2. 仅当归档未命中时才尝试 INSERT INTO usage_billing_dedup ... ON CONFLICT DO NOTHING，
-	//    避免归档重放白写 dead tuple，同时正常新请求从 2 次串行 SQL 降为 1 次。
+	// 2. 在同一语句快照下同步查 usage_billing_dedup，彻底关闭「旧记录正被 CleanupUsageBillingDedup
+	//    原子迁入归档并删除热表行」期间的 READ COMMITTED 竞态窗口：
+	//    - 若归档事务先提交，archived 必命中；
+	//    - 若归档事务未提交，其热表 DELETE 尚未对本快照可见，existing 必命中并阻止重新 INSERT；
+	// 3. 仅当两表均未命中时才执行 INSERT INTO usage_billing_dedup ... ON CONFLICT DO NOTHING，
+	//    正常新请求、归档重放与常规热表重放均仅 1 次 SQL 往返且重放不造 dead tuple。
 	var insertedID sql.NullInt64
 	var archivedFingerprint sql.NullString
+	var existingFingerprint sql.NullString
 	err := tx.QueryRowContext(ctx, `
 		WITH archived AS (
 			SELECT request_fingerprint
 			FROM usage_billing_dedup_archive
 			WHERE request_id = $1 AND api_key_id = $2
 		),
+		existing AS (
+			SELECT request_fingerprint
+			FROM usage_billing_dedup
+			WHERE request_id = $1 AND api_key_id = $2
+		),
 		inserted AS (
 			INSERT INTO usage_billing_dedup (request_id, api_key_id, request_fingerprint)
 			SELECT $1, $2, $3
 			WHERE NOT EXISTS (SELECT 1 FROM archived)
+			  AND NOT EXISTS (SELECT 1 FROM existing)
 			ON CONFLICT (request_id, api_key_id) DO NOTHING
 			RETURNING id
 		)
 		SELECT
 			(SELECT id FROM inserted) AS inserted_id,
-			(SELECT request_fingerprint FROM archived) AS archived_fingerprint
-	`, requestID, apiKeyID, requestFingerprint).Scan(&insertedID, &archivedFingerprint)
+			(SELECT request_fingerprint FROM archived) AS archived_fingerprint,
+			(SELECT request_fingerprint FROM existing) AS existing_fingerprint
+	`, requestID, apiKeyID, requestFingerprint).Scan(&insertedID, &archivedFingerprint, &existingFingerprint)
 	if err != nil {
 		return false, err
 	}
@@ -145,26 +157,33 @@ func (r *usageBillingRepository) claimUsageBillingRequest(ctx context.Context, t
 		}
 		return false, nil
 	}
+	if existingFingerprint.Valid {
+		if strings.TrimSpace(existingFingerprint.String) != strings.TrimSpace(requestFingerprint) {
+			return false, service.ErrUsageBillingRequestConflict
+		}
+		return false, nil
+	}
 
-	// 热表唯一冲突：另发一条 SELECT 在新 READ COMMITTED 快照下读取已提交指纹（避免与并发提交竞态）。
-	var existingFingerprint string
+	// 并发新请求唯一冲突（两笔全新事务在彼此提交前同时进入 CTE）：
+	// 另发一条 SELECT 在新 READ COMMITTED 快照下读取已提交指纹。
+	var concurrentFingerprint string
 	err = tx.QueryRowContext(ctx, `
 		SELECT request_fingerprint
 		FROM usage_billing_dedup
 		WHERE request_id = $1 AND api_key_id = $2
-	`, requestID, apiKeyID).Scan(&existingFingerprint)
+	`, requestID, apiKeyID).Scan(&concurrentFingerprint)
 	if errors.Is(err, sql.ErrNoRows) {
 		// 极罕见竞态：在 CTE 冲突与此回查之间，该行刚好被归档清理任务移入归档表。
 		err = tx.QueryRowContext(ctx, `
 			SELECT request_fingerprint
 			FROM usage_billing_dedup_archive
 			WHERE request_id = $1 AND api_key_id = $2
-		`, requestID, apiKeyID).Scan(&existingFingerprint)
+		`, requestID, apiKeyID).Scan(&concurrentFingerprint)
 	}
 	if err != nil {
 		return false, err
 	}
-	if strings.TrimSpace(existingFingerprint) != strings.TrimSpace(requestFingerprint) {
+	if strings.TrimSpace(concurrentFingerprint) != strings.TrimSpace(requestFingerprint) {
 		return false, service.ErrUsageBillingRequestConflict
 	}
 	return false, nil

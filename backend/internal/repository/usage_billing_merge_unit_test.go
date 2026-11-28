@@ -16,20 +16,24 @@ import (
 )
 
 const (
-	dedupClaimCTESQL      = `(?s)WITH archived AS \(\s*SELECT request_fingerprint\s+FROM usage_billing_dedup_archive\s+WHERE request_id = \$1 AND api_key_id = \$2\s*\),\s*inserted AS \(\s*INSERT INTO usage_billing_dedup \(request_id, api_key_id, request_fingerprint\)\s+SELECT \$1, \$2, \$3\s+WHERE NOT EXISTS \(SELECT 1 FROM archived\)\s+ON CONFLICT \(request_id, api_key_id\) DO NOTHING\s+RETURNING id\s*\)\s*SELECT\s+\(SELECT id FROM inserted\) AS inserted_id,\s+\(SELECT request_fingerprint FROM archived\) AS archived_fingerprint`
+	dedupClaimCTESQL      = `(?s)WITH archived AS \(\s*SELECT request_fingerprint\s+FROM usage_billing_dedup_archive\s+WHERE request_id = \$1 AND api_key_id = \$2\s*\),\s*existing AS \(\s*SELECT request_fingerprint\s+FROM usage_billing_dedup\s+WHERE request_id = \$1 AND api_key_id = \$2\s*\),\s*inserted AS \(\s*INSERT INTO usage_billing_dedup \(request_id, api_key_id, request_fingerprint\)\s+SELECT \$1, \$2, \$3\s+WHERE NOT EXISTS \(SELECT 1 FROM archived\)\s+AND NOT EXISTS \(SELECT 1 FROM existing\)\s+ON CONFLICT \(request_id, api_key_id\) DO NOTHING\s+RETURNING id\s*\)\s*SELECT\s+\(SELECT id FROM inserted\) AS inserted_id,\s+\(SELECT request_fingerprint FROM archived\) AS archived_fingerprint,\s+\(SELECT request_fingerprint FROM existing\) AS existing_fingerprint`
 	balanceQueueInsertSQL = `(?s)INSERT INTO billing_balance_settlements \(\s*request_id,\s*api_key_id,\s*request_fingerprint,\s*user_id,\s*amount_usd,\s*status\s*\)\s+VALUES \(\$1, \$2, \$3, \$4, \$5, \$6\)\s+ON CONFLICT \(request_id, api_key_id\) DO NOTHING\s+RETURNING status`
 )
 
 func dedupClaimClaimedRows(id int64) *sqlmock.Rows {
-	return sqlmock.NewRows([]string{"inserted_id", "archived_fingerprint"}).AddRow(id, nil)
+	return sqlmock.NewRows([]string{"inserted_id", "archived_fingerprint", "existing_fingerprint"}).AddRow(id, nil, nil)
 }
 
 func dedupClaimConflictRows() *sqlmock.Rows {
-	return sqlmock.NewRows([]string{"inserted_id", "archived_fingerprint"}).AddRow(nil, nil)
+	return sqlmock.NewRows([]string{"inserted_id", "archived_fingerprint", "existing_fingerprint"}).AddRow(nil, nil, nil)
 }
 
 func dedupClaimArchivedRows(fp string) *sqlmock.Rows {
-	return sqlmock.NewRows([]string{"inserted_id", "archived_fingerprint"}).AddRow(nil, fp)
+	return sqlmock.NewRows([]string{"inserted_id", "archived_fingerprint", "existing_fingerprint"}).AddRow(nil, fp, nil)
+}
+
+func dedupClaimExistingRows(fp string) *sqlmock.Rows {
+	return sqlmock.NewRows([]string{"inserted_id", "archived_fingerprint", "existing_fingerprint"}).AddRow(nil, nil, fp)
 }
 
 type noopSettlementRepo struct{}

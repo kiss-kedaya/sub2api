@@ -91,67 +91,145 @@ func newRecordedConcurrencyCache(t *testing.T, slotTTLMinutes, waitQueueTTLSecon
 }
 
 func TestConcurrencyCache_TouchActiveIndexThrottleAndEviction(t *testing.T) {
-	mr, rdb, cache, hook := newRecordedConcurrencyCache(t, 15, 900)
+	// 使用真实生产参数（slotTTL=15m=900s，waitQueueTTL=120s），确认较短的 waitQueueTTL
+	// 不会把槽位活跃索引的 7 分钟节流窗口误压缩为 60s。
+	mr, rdb, cache, hook := newRecordedConcurrencyCache(t, 15, 120)
 	ctx := context.Background()
 
 	base := time.Unix(1750000000, 0).UTC()
 	mr.SetTime(base)
 
-	// 首次占槽会写入活跃索引。
+	// 预热脚本（避免首次 NOSCRIPT->EVAL 回退计入稳态 RTT）。
+	_, err := cache.AcquireAccountSlot(ctx, 9998, 2, "warmup-a")
+	require.NoError(t, err)
+	require.NoError(t, cache.ReleaseAccountSlot(ctx, 9998, "warmup-a"))
+
+	// 首次占槽：严格 1 RTT，单脚本原子写入活跃索引。
+	hook.reset()
 	ok, err := cache.AcquireAccountSlot(ctx, 100, 10, "req-1")
 	require.NoError(t, err)
 	require.True(t, ok)
-	require.Equal(t, 1, hook.countCommand("zadd"))
+	rtts, cmds, _ := hook.snapshot()
+	require.Equal(t, 1, rtts, "cold AcquireAccountSlot must take 1 RTT, cmds=%v", cmds)
+	require.Equal(t, []string{"evalsha"}, cmds)
 
 	score1, err := rdb.ZScore(ctx, accountActiveIndexKey, "100").Result()
 	require.NoError(t, err)
 	require.Equal(t, float64(base.Unix()+900), score1)
 
-	// 7 分钟内重复占槽应被 sync.Map 节流，不再产生 ZADD RTT。
+	// 6m59s 内重复占槽（即便已远超 waitQueueTTL/2 = 60s）：活跃索引 score 保持不变（跳过冗余 ZADD），且严格 1 RTT。
 	mr.SetTime(base.Add(6*time.Minute + 59*time.Second))
 	for _, reqID := range []string{"req-2", "req-3", "req-4"} {
+		hook.reset()
 		ok, err = cache.AcquireAccountSlot(ctx, 100, 10, reqID)
 		require.NoError(t, err)
 		require.True(t, ok)
+		rtts, cmds, _ = hook.snapshot()
+		require.Equal(t, 1, rtts, "throttled AcquireAccountSlot must take 1 RTT, cmds=%v", cmds)
+		require.Equal(t, []string{"evalsha"}, cmds)
 	}
-	require.Equal(t, 1, hook.countCommand("zadd"), "repeated acquires within 7m must skip redundant ZADD")
+	scoreThrottled, err := rdb.ZScore(ctx, accountActiveIndexKey, "100").Result()
+	require.NoError(t, err)
+	require.Equal(t, score1, scoreThrottled, "slot active index score must remain unchanged within 7m even when waitQueueTTL=120s")
 
-	// 满 7 分钟节流窗口后，下一次占槽应重新 ZADD 续期活跃索引。
+	// 期间若等待队列递增（120s TTL），不能把已有更晚的槽位 score（base+900）往回降级。
+	ok, err = cache.IncrementAccountWaitCount(ctx, 100, 5)
+	require.NoError(t, err)
+	require.True(t, ok)
+	scoreAfterWait, err := rdb.ZScore(ctx, accountActiveIndexKey, "100").Result()
+	require.NoError(t, err)
+	require.Equal(t, score1, scoreAfterWait, "shorter wait TTL must never downgrade existing slot active index score")
+	require.NoError(t, cache.DecrementAccountWaitCount(ctx, 100))
+
+	// 满 7 分钟节流窗口后，下一次占槽在同一次 1 RTT Lua 中刷新活跃索引 score。
 	t7 := base.Add(7 * time.Minute)
 	mr.SetTime(t7)
+	hook.reset()
 	ok, err = cache.AcquireAccountSlot(ctx, 100, 10, "req-5")
 	require.NoError(t, err)
 	require.True(t, ok)
-	require.Equal(t, 2, hook.countCommand("zadd"), "acquire at 7m boundary must refresh active index")
+	rtts, cmds, _ = hook.snapshot()
+	require.Equal(t, 1, rtts, "7m refresh AcquireAccountSlot must still take 1 RTT, cmds=%v", cmds)
+	require.Equal(t, []string{"evalsha"}, cmds)
 
 	score2, err := rdb.ZScore(ctx, accountActiveIndexKey, "100").Result()
 	require.NoError(t, err)
 	require.Equal(t, float64(t7.Unix()+900), score2)
 
-	// 释放部分槽位（仍有剩余槽位）：单 RTT 且不重复 ZADD，活跃索引仍保留。
+	// 释放部分槽位（仍有剩余槽位）：单 RTT，活跃索引保留且 score 不被冗余改写。
 	for _, reqID := range []string{"req-1", "req-2", "req-3", "req-4"} {
+		hook.reset()
 		require.NoError(t, cache.ReleaseAccountSlot(ctx, 100, reqID))
+		rtts, cmds, _ = hook.snapshot()
+		require.Equal(t, 1, rtts, "partial release must take 1 RTT, cmds=%v", cmds)
+		require.Equal(t, []string{"evalsha"}, cmds)
 	}
-	require.Equal(t, 2, hook.countCommand("zadd"))
-	_, err = rdb.ZScore(ctx, accountActiveIndexKey, "100").Result()
+	scorePartial, err := rdb.ZScore(ctx, accountActiveIndexKey, "100").Result()
 	require.NoError(t, err)
+	require.Equal(t, score2, scorePartial)
 
-	// 释放最后一个槽位：Lua 原子从 active_index 移除并清除本地节流缓存。
+	// 释放最后一个槽位：Lua 原子从 active_index 移除。
 	require.NoError(t, cache.ReleaseAccountSlot(ctx, 100, "req-5"))
 	_, err = rdb.ZScore(ctx, accountActiveIndexKey, "100").Result()
 	require.ErrorIs(t, err, redis.Nil, "active index member must be removed when last slot releases")
 
-	// 立刻再次占槽：因本地节流缓存已清除，必须立刻重新 ZADD 写回 active_index。
+	// 串行单并发场景立刻再次占槽：单 RTT 原子重新写回 active_index（无额外 ZADD RTT）。
+	hook.reset()
 	ok, err = cache.AcquireAccountSlot(ctx, 100, 10, "req-6")
 	require.NoError(t, err)
 	require.True(t, ok)
-	require.Equal(t, 3, hook.countCommand("zadd"), "re-acquiring after empty release must re-register active index immediately")
-	_, err = rdb.ZScore(ctx, accountActiveIndexKey, "100").Result()
+	rtts, cmds, _ = hook.snapshot()
+	require.Equal(t, 1, rtts, "re-acquiring after empty release must take 1 RTT, cmds=%v", cmds)
+	require.Equal(t, []string{"evalsha"}, cmds)
+	score3, err := rdb.ZScore(ctx, accountActiveIndexKey, "100").Result()
 	require.NoError(t, err)
+	require.Equal(t, float64(t7.Unix()+900), score3)
+}
+
+func TestConcurrencyCache_MultiInstanceReleaseReRegistersActiveIndex(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rdbA := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	rdbB := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() {
+		_ = rdbA.Close()
+		_ = rdbB.Close()
+	})
+
+	cacheA := NewConcurrencyCache(rdbA, 15, 120)
+	cacheB := NewConcurrencyCache(rdbB, 15, 120)
+	ctx := context.Background()
+
+	base := time.Unix(1750000500, 0).UTC()
+	mr.SetTime(base)
+
+	// 实例 A 与 B 同时占槽 -> A 先释放（B 仍持有，索引保留）-> B 释放归零（删除共享索引成员）。
+	ok, err := cacheA.AcquireAccountSlot(ctx, 77, 5, "inst-a-1")
+	require.NoError(t, err)
+	require.True(t, ok)
+	ok, err = cacheB.AcquireAccountSlot(ctx, 77, 5, "inst-b-1")
+	require.NoError(t, err)
+	require.True(t, ok)
+
+	require.NoError(t, cacheA.ReleaseAccountSlot(ctx, 77, "inst-a-1"))
+	_, err = rdbA.ZScore(ctx, accountActiveIndexKey, "77").Result()
+	require.NoError(t, err)
+
+	require.NoError(t, cacheB.ReleaseAccountSlot(ctx, 77, "inst-b-1"))
+	_, err = rdbA.ZScore(ctx, accountActiveIndexKey, "77").Result()
+	require.ErrorIs(t, err, redis.Nil)
+
+	// 10 秒后实例 A 再次占槽：必须立即重新登记到共享活跃索引，不存在跨实例节流盲窗。
+	mr.SetTime(base.Add(10 * time.Second))
+	ok, err = cacheA.AcquireAccountSlot(ctx, 77, 5, "inst-a-2")
+	require.NoError(t, err)
+	require.True(t, ok)
+	score, err := rdbA.ZScore(ctx, accountActiveIndexKey, "77").Result()
+	require.NoError(t, err, "instance A must re-register active index after instance B removed it")
+	require.Equal(t, float64(base.Add(10*time.Second).Unix()+900), score)
 }
 
 func TestConcurrencyCache_TouchActiveIndexShortTTLScalesThrottleWindow(t *testing.T) {
-	mr, _, cache, hook := newRecordedConcurrencyCache(t, 2, 120) // 120s TTL -> 60s throttle
+	mr, rdb, cache, hook := newRecordedConcurrencyCache(t, 2, 120) // 120s slot & wait TTL -> 60s throttle
 	ctx := context.Background()
 
 	base := time.Unix(1750001000, 0).UTC()
@@ -160,21 +238,91 @@ func TestConcurrencyCache_TouchActiveIndexShortTTLScalesThrottleWindow(t *testin
 	ok, err := cache.AcquireUserSlot(ctx, 55, 5, "u-1")
 	require.NoError(t, err)
 	require.True(t, ok)
-	require.Equal(t, 1, hook.countCommand("zadd"))
+	score1, err := rdb.ZScore(ctx, userActiveIndexKey, "55").Result()
+	require.NoError(t, err)
+	require.Equal(t, float64(base.Unix()+120), score1)
 
-	// 59s 内仍节流
+	// 59s 内仍节流，score 不变
 	mr.SetTime(base.Add(59 * time.Second))
+	hook.reset()
 	ok, err = cache.AcquireUserSlot(ctx, 55, 5, "u-2")
 	require.NoError(t, err)
 	require.True(t, ok)
-	require.Equal(t, 1, hook.countCommand("zadd"))
+	rtts, cmds, _ := hook.snapshot()
+	require.Equal(t, 1, rtts, "cmds=%v", cmds)
+	scoreMid, err := rdb.ZScore(ctx, userActiveIndexKey, "55").Result()
+	require.NoError(t, err)
+	require.Equal(t, score1, scoreMid)
 
-	// 60s (= minTTL/2) 触发刷新
-	mr.SetTime(base.Add(60 * time.Second))
+	// 60s (= ttl/2) 触发刷新
+	t60 := base.Add(60 * time.Second)
+	mr.SetTime(t60)
 	ok, err = cache.AcquireUserSlot(ctx, 55, 5, "u-3")
 	require.NoError(t, err)
 	require.True(t, ok)
-	require.Equal(t, 2, hook.countCommand("zadd"))
+	score2, err := rdb.ZScore(ctx, userActiveIndexKey, "55").Result()
+	require.NoError(t, err)
+	require.Equal(t, float64(t60.Unix()+120), score2)
+}
+
+func TestConcurrencyCache_WaitQueueIncrementAndDecrementSingleRTT(t *testing.T) {
+	mr, rdb, cache, hook := newRecordedConcurrencyCache(t, 15, 120)
+	ctx := context.Background()
+
+	base := time.Unix(1750001500, 0).UTC()
+	mr.SetTime(base)
+
+	// 预热等待脚本
+	_, err := cache.IncrementWaitCount(ctx, 9997, 5)
+	require.NoError(t, err)
+	require.NoError(t, cache.DecrementWaitCount(ctx, 9997))
+
+	// IncrementWaitCount 严格 1 RTT 并按 120s TTL 登记活跃索引。
+	hook.reset()
+	ok, err := cache.IncrementWaitCount(ctx, 30, 5)
+	require.NoError(t, err)
+	require.True(t, ok)
+	rtts, cmds, _ := hook.snapshot()
+	require.Equal(t, 1, rtts, "IncrementWaitCount must take 1 RTT, cmds=%v", cmds)
+	require.Equal(t, []string{"evalsha"}, cmds)
+	score, err := rdb.ZScore(ctx, userActiveIndexKey, "30").Result()
+	require.NoError(t, err)
+	require.Equal(t, float64(base.Unix()+120), score)
+
+	// 59s 内再次递增不刷新 score，60s 触发刷新。
+	mr.SetTime(base.Add(59 * time.Second))
+	ok, err = cache.IncrementWaitCount(ctx, 30, 5)
+	require.NoError(t, err)
+	require.True(t, ok)
+	scoreMid, err := rdb.ZScore(ctx, userActiveIndexKey, "30").Result()
+	require.NoError(t, err)
+	require.Equal(t, score, scoreMid)
+
+	t60 := base.Add(60 * time.Second)
+	mr.SetTime(t60)
+	ok, err = cache.IncrementWaitCount(ctx, 30, 5)
+	require.NoError(t, err)
+	require.True(t, ok)
+	scoreRefreshed, err := rdb.ZScore(ctx, userActiveIndexKey, "30").Result()
+	require.NoError(t, err)
+	require.Equal(t, float64(t60.Unix()+120), scoreRefreshed)
+
+	// DecrementWaitCount 严格 1 RTT；仍有剩余等待时保留索引，归零后移除索引。
+	hook.reset()
+	require.NoError(t, cache.DecrementWaitCount(ctx, 30))
+	rtts, cmds, _ = hook.snapshot()
+	require.Equal(t, 1, rtts, "DecrementWaitCount must take 1 RTT, cmds=%v", cmds)
+	require.Equal(t, []string{"evalsha"}, cmds)
+	_, err = rdb.ZScore(ctx, userActiveIndexKey, "30").Result()
+	require.NoError(t, err)
+
+	require.NoError(t, cache.DecrementWaitCount(ctx, 30))
+	hook.reset()
+	require.NoError(t, cache.DecrementWaitCount(ctx, 30))
+	rtts, cmds, _ = hook.snapshot()
+	require.Equal(t, 1, rtts, "final DecrementWaitCount must take 1 RTT, cmds=%v", cmds)
+	_, err = rdb.ZScore(ctx, userActiveIndexKey, "30").Result()
+	require.ErrorIs(t, err, redis.Nil, "active index must clear once wait count reaches 0 with no slots")
 }
 
 func TestConcurrencyCache_ReleaseSlotSingleRTTAndWaitQueueRetention(t *testing.T) {
@@ -272,8 +420,11 @@ func TestConcurrencyCache_BatchConcurrencyAndLoadSingleRTT(t *testing.T) {
 		redis.Z{Score: float64(base.Unix() - 61), Member: "live-expired"},
 	).Err())
 	require.NoError(t, rdb.Set(ctx, accountWaitKey(10), "2", time.Minute).Err())
-	// 非法等待值安全降级为 0
+	// 非法等待值（含 Lua tonumber 会误收的 inf / 1e2 / 0x10 / 空白）均须安全降级为 0。
 	require.NoError(t, rdb.Set(ctx, accountWaitKey(11), "corrupt", time.Minute).Err())
+	require.NoError(t, rdb.Set(ctx, accountWaitKey(12), "inf", time.Minute).Err())
+	require.NoError(t, rdb.Set(ctx, accountWaitKey(13), "1e2", time.Minute).Err())
+	require.NoError(t, rdb.Set(ctx, accountWaitKey(14), "0x10", time.Minute).Err())
 
 	// GetAccountConcurrencyBatch: 严格 1 RTT，0 次独立 TIME 命令
 	hook.reset()
@@ -289,6 +440,9 @@ func TestConcurrencyCache_BatchConcurrencyAndLoadSingleRTT(t *testing.T) {
 	loads, err := cache.GetAccountsLoadBatch(ctx, []service.AccountWithConcurrency{
 		{ID: 10, MaxConcurrency: 4},
 		{ID: 11, MaxConcurrency: 0},
+		{ID: 12, MaxConcurrency: 4},
+		{ID: 13, MaxConcurrency: 4},
+		{ID: 14, MaxConcurrency: 4},
 	})
 	require.NoError(t, err)
 	rtts, cmds, _ = hook.snapshot()
@@ -297,9 +451,11 @@ func TestConcurrencyCache_BatchConcurrencyAndLoadSingleRTT(t *testing.T) {
 	require.Equal(t, 2, loads[10].CurrentConcurrency)
 	require.Equal(t, 2, loads[10].WaitingCount)
 	require.Equal(t, 100, loads[10].LoadRate)
-	require.Equal(t, 0, loads[11].CurrentConcurrency)
-	require.Equal(t, 0, loads[11].WaitingCount)
-	require.Equal(t, 0, loads[11].LoadRate)
+	for _, malformedID := range []int64{11, 12, 13, 14} {
+		require.Equal(t, 0, loads[malformedID].CurrentConcurrency)
+		require.Equal(t, 0, loads[malformedID].WaitingCount, "malformed wait value on account %d must degrade to 0", malformedID)
+		require.Equal(t, 0, loads[malformedID].LoadRate)
+	}
 
 	// GetUsersLoadBatch: 严格 1 RTT，0 次独立 TIME 命令
 	ok, err = cache.AcquireUserSlot(ctx, 20, 5, "usr-1")

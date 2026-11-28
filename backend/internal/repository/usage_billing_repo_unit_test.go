@@ -462,7 +462,47 @@ func TestClaimUsageBillingRequest_SingleCTEAllPaths(t *testing.T) {
 		require.NoError(t, mock.ExpectationsWereMet())
 	})
 
-	t.Run("active_dedup_conflict_same_fingerprint_returns_false", func(t *testing.T) {
+	t.Run("existing_hot_dedup_same_fingerprint_returns_false_in_single_cte", func(t *testing.T) {
+		db, mock, err := sqlmock.New()
+		require.NoError(t, err)
+		defer func() { _ = db.Close() }()
+
+		mock.ExpectBegin()
+		tx, err := db.BeginTx(ctx, nil)
+		require.NoError(t, err)
+		mock.ExpectQuery(dedupClaimCTESQL).
+			WithArgs("req-hot-dup", int64(7), "fp-hot").
+			WillReturnRows(dedupClaimExistingRows(" fp-hot "))
+		mock.ExpectRollback()
+
+		applied, err := (&usageBillingRepository{}).claimUsageBillingRequest(ctx, tx, "req-hot-dup", 7, "fp-hot")
+		require.NoError(t, err)
+		require.False(t, applied)
+		require.NoError(t, tx.Rollback())
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("existing_hot_dedup_mismatched_fingerprint_returns_conflict_in_single_cte", func(t *testing.T) {
+		db, mock, err := sqlmock.New()
+		require.NoError(t, err)
+		defer func() { _ = db.Close() }()
+
+		mock.ExpectBegin()
+		tx, err := db.BeginTx(ctx, nil)
+		require.NoError(t, err)
+		mock.ExpectQuery(dedupClaimCTESQL).
+			WithArgs("req-hot-conflict", int64(7), "fp-new").
+			WillReturnRows(dedupClaimExistingRows("fp-old"))
+		mock.ExpectRollback()
+
+		applied, err := (&usageBillingRepository{}).claimUsageBillingRequest(ctx, tx, "req-hot-conflict", 7, "fp-new")
+		require.ErrorIs(t, err, service.ErrUsageBillingRequestConflict)
+		require.False(t, applied)
+		require.NoError(t, tx.Rollback())
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("concurrent_active_dedup_conflict_same_fingerprint_returns_false", func(t *testing.T) {
 		db, mock, err := sqlmock.New()
 		require.NoError(t, err)
 		defer func() { _ = db.Close() }()

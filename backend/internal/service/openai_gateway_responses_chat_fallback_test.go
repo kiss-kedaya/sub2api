@@ -432,16 +432,21 @@ type reasoningRecordingCache struct {
 	stubGatewayCache
 	mu      sync.Mutex
 	sets    map[string]string
+	ttls    map[string]time.Duration
 	getResp map[string]string
 }
 
-func (c *reasoningRecordingCache) SetReasoningContent(_ context.Context, itemID string, content string, _ time.Duration) error {
+func (c *reasoningRecordingCache) SetReasoningContent(_ context.Context, itemID string, content string, ttl time.Duration) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.sets == nil {
 		c.sets = make(map[string]string)
 	}
+	if c.ttls == nil {
+		c.ttls = make(map[string]time.Duration)
+	}
 	c.sets[itemID] = content
+	c.ttls[itemID] = ttl
 	return nil
 }
 
@@ -571,7 +576,10 @@ func TestForwardResponses_ChatFallbackRestoresReasoningFromCache(t *testing.T) {
 	require.Equal(t, "call_1", gjson.GetBytes(upstream.lastBody, "messages.2.tool_calls.0.id").String())
 	require.Equal(t, "tool", gjson.GetBytes(upstream.lastBody, "messages.3.role").String())
 
-	// 真实 reasoning_text 被回写进缓存；展示摘要不应进入缓存。
+	// 真实 reasoning_text 被回写进缓存；展示摘要不应进入缓存；TTL 必须收敛为 48 小时。
 	require.Equal(t, "plain thinking", cache.snapshotSets()["item_plain"])
 	require.NotContains(t, cache.snapshotSets()["item_plain"], "display summary")
+	cache.mu.Lock()
+	require.Equal(t, 48*time.Hour, cache.ttls["item_plain"])
+	cache.mu.Unlock()
 }
