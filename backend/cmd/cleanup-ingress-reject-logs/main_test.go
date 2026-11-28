@@ -10,6 +10,10 @@ func TestHistoricalIngressRejectReason(t *testing.T) {
 		match  bool
 	}{
 		{name: "standard invalid key", item: candidate{body: `{"code":"INVALID_API_KEY","message":"Invalid API key"}`}, reason: "invalid_key", match: true},
+		{name: "anthropic invalid key", item: candidate{body: `{"type":"error","error":{"type":"authentication_error","message":"Invalid API key"}}`}, reason: "invalid_key", match: true},
+		{name: "anthropic missing key", item: candidate{body: `{"type":"error","error":{"type":"authentication_error","message":"API key is required in Authorization header (Bearer scheme), x-api-key header, or x-goog-api-key header"}}`}, reason: "missing_key", match: true},
+		{name: "anthropic disabled key", item: candidate{body: `{"type":"error","error":{"type":"authentication_error","message":"API key is disabled"}}`}, reason: "key_disabled", match: true},
+		{name: "anthropic user inactive", item: candidate{body: `{"type":"error","error":{"type":"authentication_error","message":"User account is not active"}}`}, reason: "user_inactive", match: true},
 		{name: "google missing key", item: candidate{body: `{"error":{"code":401,"message":"API key is required","status":"UNAUTHENTICATED"}}`}, reason: "missing_key", match: true},
 		{name: "google group deleted", item: candidate{body: `{"error":{"code":403,"message":"API Key 所属分组已删除","status":"PERMISSION_DENIED"}}`}, reason: "group_deleted", match: true},
 		{name: "ip acl", item: candidate{body: `{"code":"ACCESS_DENIED","message":"Access denied. Your IP is 192.0.2.1"}`}, reason: "ip_acl_denied", match: true},

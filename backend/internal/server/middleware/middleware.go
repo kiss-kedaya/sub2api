@@ -101,10 +101,12 @@ func abortWithOpenAIQuotaError(c *gin.Context, statusCode int, message string) {
 type GatewayErrorWriter func(c *gin.Context, status int, message string)
 
 // AnthropicErrorWriter 按 Anthropic API 规范输出错误；error.type 随状态码映射
-// （404 -> not_found_error，403 -> permission_error，其余 api_error）。
+// （401 -> authentication_error，404 -> not_found_error，403 -> permission_error，其余 api_error）。
 func AnthropicErrorWriter(c *gin.Context, status int, message string) {
 	errorType := "api_error"
 	switch status {
+	case http.StatusUnauthorized:
+		errorType = "authentication_error"
 	case http.StatusNotFound:
 		errorType = "not_found_error"
 	case http.StatusForbidden:

@@ -429,6 +429,28 @@ func joinResponsesContentPartText(parts []ResponsesContentPart) string {
 // Non-streaming response: ChatCompletionsResponse → AnthropicResponse
 // ---------------------------------------------------------------------------
 
+// NormalizeAnthropicMessageID normalizes an upstream message/completion ID
+// into Anthropic's "msg_..." prefix while preserving the suffix for tracing.
+// Empty/whitespace inputs return "".
+func NormalizeAnthropicMessageID(id string) string {
+	trimmed := strings.TrimSpace(id)
+	if trimmed == "" {
+		return ""
+	}
+	if strings.HasPrefix(trimmed, "msg_") {
+		return trimmed
+	}
+	for _, prefix := range []string{"chatcmpl-", "chatcmpl_", "resp_", "resp-"} {
+		if suffix, ok := strings.CutPrefix(trimmed, prefix); ok {
+			if suffix != "" {
+				return "msg_" + suffix
+			}
+			break
+		}
+	}
+	return "msg_" + trimmed
+}
+
 // ChatCompletionsResponseToAnthropic converts a Chat Completions response
 // directly into an Anthropic Messages response, without materializing a
 // ResponsesResponse. It is semantically equivalent to composing
@@ -441,7 +463,7 @@ func ChatCompletionsResponseToAnthropic(resp *ChatCompletionsResponse, model str
 	}
 
 	if resp != nil {
-		out.ID = resp.ID
+		out.ID = NormalizeAnthropicMessageID(resp.ID)
 		if out.Model == "" {
 			out.Model = resp.Model
 		}
@@ -470,7 +492,7 @@ func ChatCompletionsResponseToAnthropic(resp *ChatCompletionsResponse, model str
 	// The double-conversion path generates a response id when the upstream
 	// omits one (ChatCompletionsResponseToResponses); clients treat it as required.
 	if out.ID == "" {
-		out.ID = generateResponsesID()
+		out.ID = NormalizeAnthropicMessageID(generateResponsesID())
 	}
 
 	return out
@@ -630,7 +652,7 @@ type ChatCompletionsToAnthropicStreamState struct {
 // NewChatCompletionsToAnthropicStreamState returns an initialized stream state.
 func NewChatCompletionsToAnthropicStreamState(model string) *ChatCompletionsToAnthropicStreamState {
 	return &ChatCompletionsToAnthropicStreamState{
-		ResponseID:        generateResponsesID(),
+		ResponseID:        NormalizeAnthropicMessageID(generateResponsesID()),
 		Model:             model,
 		Created:           time.Now().Unix(),
 		toolBlockIndex:    make(map[int]int),
@@ -650,8 +672,8 @@ func ChatCompletionsChunkToAnthropicEvents(
 	if chunk == nil || state == nil {
 		return nil
 	}
-	if chunk.ID != "" {
-		state.ResponseID = chunk.ID
+	if id := NormalizeAnthropicMessageID(chunk.ID); id != "" {
+		state.ResponseID = id
 	}
 	if state.Model == "" && chunk.Model != "" {
 		state.Model = chunk.Model
@@ -788,10 +810,15 @@ func ensureCCAnthropicMessageStart(state *ChatCompletionsToAnthropicStreamState)
 		return nil
 	}
 	state.MessageStartSent = true
+	msgID := NormalizeAnthropicMessageID(state.ResponseID)
+	if msgID == "" {
+		msgID = NormalizeAnthropicMessageID(generateResponsesID())
+	}
+	state.ResponseID = msgID
 	return []AnthropicStreamEvent{{
 		Type: "message_start",
 		Message: &AnthropicResponse{
-			ID:         state.ResponseID,
+			ID:         msgID,
 			Type:       "message",
 			Role:       "assistant",
 			Content:    []AnthropicContentBlock{},

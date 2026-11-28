@@ -2485,3 +2485,44 @@ func TestOpsCaptureWriter_FoldedTypeKeyFallback(t *testing.T) {
 		require.Contains(t, state.buf.String(), "line folded")
 	})
 }
+
+func TestOpsErrorLoggerClassifiesAnthropicAuthErrors(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	cases := []struct {
+		name string
+		body string
+	}{
+		{
+			name: "invalid key",
+			body: `{"type":"error","error":{"type":"authentication_error","message":"Invalid API key"}}`,
+		},
+		{
+			name: "missing key",
+			body: `{"type":"error","error":{"type":"authentication_error","message":"API key is required in Authorization header (Bearer scheme), x-api-key header, or x-goog-api-key header"}}`,
+		},
+		{
+			name: "disabled key",
+			body: `{"type":"error","error":{"type":"authentication_error","message":"API key is disabled"}}`,
+		},
+		{
+			name: "inactive user",
+			body: `{"type":"error","error":{"type":"authentication_error","message":"User account is not active"}}`,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			parsed := parseOpsErrorResponse([]byte(tc.body))
+			require.Equal(t, "authentication_error", parsed.ErrorType)
+			require.NotEmpty(t, parsed.Message)
+
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+			phase, businessLimited, _, _ := classifyOpsErrorLog(c, parsed.ErrorType, parsed.Message, parsed.Code, http.StatusUnauthorized)
+			require.Equal(t, "auth", phase)
+			require.True(t, businessLimited)
+			require.Equal(t, "P3", classifyOpsSeverity(parsed.ErrorType, http.StatusUnauthorized))
+		})
+	}
+}

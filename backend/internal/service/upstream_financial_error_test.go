@@ -491,7 +491,7 @@ func TestUpstreamFinancialImagesFinalEventBoundary(t *testing.T) {
 func TestUpstreamFinancialNestedNativeAdapterAndSuccess(t *testing.T) {
 	for _, bad := range []bool{false, true} {
 		c, rec := financialContext("/v1/messages")
-		stream := "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg1\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"claude\",\"content\":[],\"usage\":{\"input_tokens\":8,\"output_tokens\":0}}}\n\nevent: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":\"tool1\",\"name\":\"lookup_balance\",\"input\":{}}}\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"query\\\":\\\"余额不足\\\"}\"}}\n\nevent: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n"
+		stream := "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"claude\",\"content\":[],\"usage\":{\"input_tokens\":8,\"output_tokens\":0}}}\n\nevent: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":\"tool1\",\"name\":\"lookup_balance\",\"input\":{}}}\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"query\\\":\\\"余额不足\\\"}\"}}\n\nevent: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n"
 		if bad {
 			stream += "event: error\ndata: {\"type\":\"error\",\"error\":{\"message\":\"余额不足 sk-secret\"}}\n\n"
 		} else {
@@ -512,4 +512,42 @@ func TestUpstreamFinancialNestedNativeAdapterAndSuccess(t *testing.T) {
 			require.Equal(t, 3, result.Usage.OutputTokens)
 		}
 	}
+}
+
+func TestUpstreamFinancialCode400001ParameterVsFinancial(t *testing.T) {
+	t.Run("parameter and validation 400001 errors are not financial", func(t *testing.T) {
+		nonFinancial := []string{
+			`{"error":{"code":"400001","message":"The request parameter temperature is invalid: only 1 is allowed for this model.","param":"","type":"invalid_request_error"}}`,
+			`{"error":{"code":"400001","message":"The request is invalid: message text content must not be empty.","type":"invalid_request_error"}}`,
+			`{"error":{"code":"400001","message":"Invalid parameter max_tokens: must be positive","type":"invalid_request_error"}}`,
+			`{"error":{"code":400001,"message":"Bad request: missing required field messages"}}`,
+			`{"error":{"ref_code":400001,"message":"The request parameter top_p is invalid"}}`,
+		}
+		for _, raw := range nonFinancial {
+			body := []byte(raw)
+			require.False(t, IsUpstreamFinancialError(http.StatusBadRequest, body), raw)
+			require.False(t, upstreamFinancialFailureEnvelope(body), raw)
+			status, _, _, _ := WrapUpstreamErrorForClient(http.StatusBadRequest, body)
+			require.Equal(t, http.StatusBadRequest, status, raw)
+		}
+	})
+
+	t.Run("real financial or usage-limit 400001 and 400901 errors stay masked", func(t *testing.T) {
+		financial := []string{
+			`{"error":{"ref_code":400001,"message":"已达到使用限制或余额不足"}}`,
+			`{"error":{"code":"400001","message":"已达到使用限制或余额不足","type":"invalid_request_error"}}`,
+			`{"error":{"code":"400001","message":"已达到使用限制"}}`,
+			`{"error":{"code":"400001","message":"Insufficient balance for this request","type":"invalid_request_error"}}`,
+			`{"error":{"code":"400001","message":"Your credit balance is too low","type":"invalid_request_error"}}`,
+			`{"error":{"ref_code":400901,"message":"blocked"}}`,
+		}
+		for _, raw := range financial {
+			body := []byte(raw)
+			require.True(t, IsUpstreamFinancialError(http.StatusBadRequest, body), raw)
+			status, typ, _, msg := WrapUpstreamErrorForClient(http.StatusBadRequest, body)
+			require.Equal(t, http.StatusBadGateway, status, raw)
+			require.Equal(t, "upstream_error", typ, raw)
+			require.Equal(t, UpstreamUnavailableMessage, msg, raw)
+		}
+	})
 }

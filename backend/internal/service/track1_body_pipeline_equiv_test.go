@@ -227,32 +227,36 @@ func TestTrack1NormalizeCompatSeedEdgeCasesAndRandom(t *testing.T) {
 }
 
 func TestTrack1GroupBEquivalenceAndZeroAlloc(t *testing.T) {
-	// 1. deepSeekDuplicateCallIDRewrite ordering equivalence.
+	// 1. deepSeekDuplicateCallIDRewrite scoping equivalence.
 	accounts := []*Account{
 		nil,
 		{Platform: PlatformDeepseek, Type: AccountTypeAPIKey},
 		{Platform: PlatformOpenAI, Type: AccountTypeOAuth},
 		{Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Credentials: map[string]any{"base_url": "https://api.deepseek.com/v1"}},
 		{Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Credentials: map[string]any{"model_mapping": map[string]any{"alias": "deepseek-chat"}}},
+		{Platform: PlatformKimi, Type: AccountTypeAPIKey, Credentials: map[string]any{"base_url": "https://platform.deepseek.example/v1"}},
 	}
 	bodies := [][]byte{
 		[]byte(`{"model":"gpt-5","input":"hi"}`),
 		[]byte(`{"model":"deepseek-chat","input":"hi"}`),
 		[]byte(`{"model":"alias","input":"hi"}`),
+		[]byte(`{"model":"kimi-k3.1-pro","messages":[{"role":"assistant","tool_calls":[{"id":"dup"}]}]}`),
 		[]byte(`{"model":"gpt-5","input":[{"type":"function_call","call_id":"c1"}]}`),
 		[]byte(`{"model":"gpt-5","messages":[{"role":"assistant","tool_calls":[]}]}`),
 	}
 	for _, acc := range accounts {
 		for _, body := range bodies {
 			want := false
-			model := gjson.GetBytes(body, "model").String()
+			model := strings.TrimSpace(gjson.GetBytes(body, "model").String())
 			if acc == nil {
 				want = deepSeekCallIDScope("", model)
 			} else {
-				want = deepSeekCallIDScope(acc.Platform, model) ||
-					deepSeekCallIDScope("", acc.GetMappedModel(model)) ||
-					strings.Contains(strings.ToLower(acc.GetOpenAIBaseURL()+" "+acc.GetCNProtocolBaseURL(APIProtocolResponses)+" "+acc.GetCNProtocolBaseURL(APIProtocolChatCompletions)), "deepseek") ||
-					bodyHasToolCallIDs(body)
+				mapped := strings.TrimSpace(acc.GetMappedModel(model))
+				if deepSeekCallIDScope(acc.Platform, model) || deepSeekCallIDScope("", mapped) {
+					want = true
+				} else if isNeutralDeepSeekAliasPlatform(acc.Platform) && !isExplicitNonDeepSeekModel(model) && !isExplicitNonDeepSeekModel(mapped) {
+					want = strings.Contains(strings.ToLower(acc.GetOpenAIBaseURL()+" "+acc.GetCNProtocolBaseURL(APIProtocolResponses)+" "+acc.GetCNProtocolBaseURL(APIProtocolChatCompletions)), "deepseek")
+				}
 			}
 			require.Equal(t, want, deepSeekDuplicateCallIDRewrite(acc, body))
 		}

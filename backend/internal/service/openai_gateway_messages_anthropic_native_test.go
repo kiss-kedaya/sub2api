@@ -3,10 +3,12 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -212,4 +214,93 @@ func TestNativeAnthropicPassthroughLeavesOtherThinkingUntouched(t *testing.T) {
 			require.JSONEq(t, tt.body, string(upstream.lastBody))
 		})
 	}
+}
+
+func TestNativeAnthropicPassthroughNormalizesNonMsgIDs(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	cases := []struct {
+		name       string
+		upstreamID string
+		wantID     string
+	}{
+		{"chatcmpl dash prefix", "chatcmpl-01a220e7deadbeef", "msg_01a220e7deadbeef"},
+		{"chatcmpl underscore prefix", "chatcmpl_01a220e7deadbeef", "msg_01a220e7deadbeef"},
+		{"opaque non-msg id", "kimi-req-99", "msg_kimi-req-99"},
+		{"already msg_ prefixed", "msg_already_valid", "msg_already_valid"},
+	}
+
+	for _, tc := range cases {
+		t.Run("buffered/"+tc.name, func(t *testing.T) {
+			reqBody := []byte(`{"model":"kimi-k3.1-pro","max_tokens":32,"stream":false,"messages":[{"role":"user","content":"hi"}]}`)
+			respJSON := fmt.Sprintf(
+				`{"id":%q,"type":"message","role":"assistant","model":"kimi-k3.1-pro","content":[{"type":"text","text":"pong"}],"stop_reason":"end_turn","usage":{"input_tokens":12,"output_tokens":4}}`,
+				tc.upstreamID,
+			)
+			upstream := &httpUpstreamRecorder{resp: &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+				Body:       io.NopCloser(strings.NewReader(respJSON)),
+			}}
+			svc := &OpenAIGatewayService{cfg: rawChatCompletionsTestConfig(), httpUpstream: upstream}
+
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", bytes.NewReader(reqBody))
+			c.Request.Header.Set("Content-Type", "application/json")
+
+			result, err := svc.ForwardAsAnthropic(context.Background(), c, nativeAnthropicTestAccount(), reqBody, "", "")
+			require.NoError(t, err)
+			require.NotNil(t, result)
+			require.Equal(t, http.StatusOK, rec.Code)
+			require.Equal(t, tc.wantID, gjson.GetBytes(rec.Body.Bytes(), "id").String())
+			require.Equal(t, tc.wantID, result.ResponseMsgID)
+		})
+
+		t.Run("streaming/"+tc.name, func(t *testing.T) {
+			reqBody := []byte(`{"model":"kimi-k3.1-pro","max_tokens":32,"stream":true,"messages":[{"role":"user","content":"hi"}]}`)
+			sse := fmt.Sprintf(
+				"event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":%q,\"type\":\"message\",\"role\":\"assistant\",\"model\":\"kimi-k3.1-pro\",\"content\":[],\"stop_reason\":null,\"usage\":{\"input_tokens\":12,\"output_tokens\":1}}}\n\n"+
+					"event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n"+
+					"event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"pong\"}}\n\n"+
+					"event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n"+
+					"event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":4}}\n\n"+
+					"event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n",
+				tc.upstreamID,
+			)
+			upstream := &httpUpstreamRecorder{resp: &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+				Body:       io.NopCloser(strings.NewReader(sse)),
+			}}
+			svc := &OpenAIGatewayService{cfg: rawChatCompletionsTestConfig(), httpUpstream: upstream}
+
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", bytes.NewReader(reqBody))
+			c.Request.Header.Set("Content-Type", "application/json")
+
+			result, err := svc.ForwardAsAnthropic(context.Background(), c, nativeAnthropicTestAccount(), reqBody, "", "")
+			require.NoError(t, err)
+			require.NotNil(t, result)
+			require.Equal(t, http.StatusOK, rec.Code)
+
+			var gotStartID string
+			for _, line := range strings.Split(rec.Body.String(), "\n") {
+				if data, ok := extractAnthropicSSEDataLine(line); ok {
+					root := gjson.Parse(strings.TrimSpace(data))
+					if root.Get("type").String() == "message_start" {
+						gotStartID = root.Get("message.id").String()
+					}
+				}
+			}
+			require.Equal(t, tc.wantID, gotStartID)
+			require.Equal(t, tc.wantID, result.ResponseMsgID)
+		})
+	}
+
+	t.Run("error envelope id is untouched", func(t *testing.T) {
+		raw := []byte(`{"id":"err_1","type":"error","error":{"type":"invalid_request_error","message":"bad"}}`)
+		require.Equal(t, string(raw), string(normalizeNativeAnthropicBufferedMessageID(raw)))
+	})
 }

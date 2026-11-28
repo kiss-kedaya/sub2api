@@ -40,7 +40,7 @@ func apiKeyAuthWithSubscription(apiKeyService *service.APIKeyService, subscripti
 				return
 			}
 			MarkIngressRejected(c, IngressRejectInvalidAPIKey)
-			AbortWithError(c, http.StatusUnauthorized, "INVALID_API_KEY", "Invalid API key")
+			abortWithAPIKeyAuthError(c, http.StatusUnauthorized, "INVALID_API_KEY", "Invalid API key")
 			return
 		}
 
@@ -76,7 +76,7 @@ func apiKeyAuthWithSubscription(apiKeyService *service.APIKeyService, subscripti
 				return
 			}
 			MarkIngressRejected(c, IngressRejectInvalidAPIKey)
-			AbortWithError(c, http.StatusUnauthorized, "INVALID_API_KEY", "Invalid API key")
+			abortWithAPIKeyAuthError(c, http.StatusUnauthorized, "INVALID_API_KEY", "Invalid API key")
 			return
 		}
 
@@ -95,7 +95,7 @@ func apiKeyAuthWithSubscription(apiKeyService *service.APIKeyService, subscripti
 			} else {
 				MarkIngressRejected(c, IngressRejectAPIKeyRequired)
 			}
-			AbortWithError(c, 401, "API_KEY_REQUIRED", "API key is required in Authorization header (Bearer scheme), x-api-key header, or x-goog-api-key header")
+			abortWithAPIKeyAuthError(c, http.StatusUnauthorized, "API_KEY_REQUIRED", "API key is required in Authorization header (Bearer scheme), x-api-key header, or x-goog-api-key header")
 			return
 		}
 
@@ -108,7 +108,7 @@ func apiKeyAuthWithSubscription(apiKeyService *service.APIKeyService, subscripti
 					return
 				}
 				MarkIngressRejected(c, IngressRejectInvalidAPIKey)
-				AbortWithError(c, 401, "INVALID_API_KEY", "Invalid API key")
+				abortWithAPIKeyAuthError(c, http.StatusUnauthorized, "INVALID_API_KEY", "Invalid API key")
 				return
 			}
 			if errors.Is(err, service.ErrAPIKeyAuthOverloaded) {
@@ -134,7 +134,7 @@ func apiKeyAuthWithSubscription(apiKeyService *service.APIKeyService, subscripti
 				return
 			}
 			MarkIngressRejected(c, IngressRejectAPIKeyDisabled)
-			AbortWithError(c, 401, "API_KEY_DISABLED", "API key is disabled")
+			abortWithAPIKeyAuthError(c, http.StatusUnauthorized, "API_KEY_DISABLED", "API key is disabled")
 			return
 		}
 
@@ -158,14 +158,14 @@ func apiKeyAuthWithSubscription(apiKeyService *service.APIKeyService, subscripti
 
 		// 检查关联的用户
 		if apiKey.User == nil {
-			AbortWithError(c, 401, "USER_NOT_FOUND", "User associated with API key not found")
+			abortWithAPIKeyAuthError(c, http.StatusUnauthorized, "USER_NOT_FOUND", "User associated with API key not found")
 			return
 		}
 
 		// 检查用户状态
 		if !apiKey.User.IsActive() {
 			MarkIngressRejected(c, IngressRejectUserInactive)
-			AbortWithError(c, 401, "USER_INACTIVE", "User account is not active")
+			abortWithAPIKeyAuthError(c, http.StatusUnauthorized, "USER_INACTIVE", "User account is not active")
 			return
 		}
 		if abortIfAPIKeyGroupUnavailable(c, apiKey) {
@@ -348,6 +348,35 @@ func abortWithInsufficientBalance(c *gin.Context) {
 		return
 	}
 	AbortWithError(c, http.StatusTooManyRequests, "INSUFFICIENT_BALANCE", message)
+}
+
+func abortWithAPIKeyAuthError(c *gin.Context, statusCode int, code, message string) {
+	if statusCode == http.StatusUnauthorized && isAnthropicMessagesAPIKeyRequest(c) {
+		AnthropicErrorWriter(c, statusCode, message)
+		c.Abort()
+		return
+	}
+	AbortWithError(c, statusCode, code, message)
+}
+
+func isAnthropicMessagesAPIKeyRequest(c *gin.Context) bool {
+	if c == nil || c.Request == nil || c.Request.URL == nil {
+		return false
+	}
+	path := strings.TrimRight(c.Request.URL.Path, "/")
+	for _, root := range []string{
+		"/v1/messages",
+		"/messages",
+		"/anthropic/v1/messages",
+		"/anthropic/messages",
+		"/antigravity/v1/messages",
+		"/antigravity/messages",
+	} {
+		if path == root || strings.HasPrefix(path, root+"/") {
+			return true
+		}
+	}
+	return false
 }
 
 func isOpenAICompatibleAPIKeyRequest(c *gin.Context) bool {
