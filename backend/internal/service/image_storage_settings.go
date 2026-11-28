@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
@@ -60,11 +61,15 @@ type ImageStorageSettingService struct {
 	// 保证升级前已用配置文件开启该功能的部署不被打断。
 	fallback config.ImageStorageConfig
 
-	mu       sync.Mutex
-	resolved bool
-	uploader *ImageResultUploader
-	enabled  bool
+	mu         sync.Mutex
+	resolved   bool
+	retryAfter time.Time
+	now        func() time.Time
+	uploader   *ImageResultUploader
+	enabled    bool
 }
+
+const imageStorageResolveRetryInterval = 30 * time.Second
 
 func NewImageStorageSettingService(
 	settingRepo SettingRepository,
@@ -98,20 +103,32 @@ func (s *ImageStorageSettingService) resolve() (*ImageResultUploader, bool) {
 	if s.resolved {
 		return s.uploader, s.enabled
 	}
+	nowFn := s.now
+	if nowFn == nil {
+		nowFn = time.Now
+	}
+	now := nowFn()
+	if !s.retryAfter.IsZero() && now.Before(s.retryAfter) {
+		return nil, false
+	}
 
 	ctx := context.Background()
-	s.resolved = true
 	s.uploader, s.enabled = nil, false
 
 	cfg, err := s.effectiveConfig(ctx)
 	if err != nil {
+		s.retryAfter = now.Add(imageStorageResolveRetryInterval)
 		logger.L().Warn("image_storage.settings_load_failed; async image tasks stay disabled", zap.Error(err))
 		return nil, false
 	}
 	if !cfg.Enabled {
+		s.resolved = true
+		s.retryAfter = time.Time{}
 		return nil, false
 	}
 	if !cfg.IsConfigured() {
+		s.resolved = true
+		s.retryAfter = time.Time{}
 		logger.L().Warn("image_storage is enabled but not fully configured; async image tasks are disabled",
 			zap.Strings("missing_keys", cfg.MissingCredentialKeys()))
 		return nil, false
@@ -119,7 +136,10 @@ func (s *ImageStorageSettingService) resolve() (*ImageResultUploader, bool) {
 	if endpoint := strings.TrimSpace(cfg.Endpoint); endpoint != "" {
 		normalized, err := validateAdminOutboundTarget(ctx, endpoint)
 		if err != nil {
-			logger.L().Warn("image_storage.endpoint_rejected; async image tasks stay disabled", zap.Error(err))
+			// Do not permanently disable on transient DNS/resolver errors; retry
+			// after a bounded backoff so recovery does not require a restart.
+			s.retryAfter = now.Add(imageStorageResolveRetryInterval)
+			logger.L().Warn("image_storage.endpoint_rejected; async image tasks stay disabled until retry", zap.Error(err))
 			return nil, false
 		}
 		cfg.Endpoint = normalized
@@ -127,6 +147,8 @@ func (s *ImageStorageSettingService) resolve() (*ImageResultUploader, bool) {
 	if publicBase := strings.Trim(cfg.PublicBaseURL, " "); publicBase != "" {
 		normalized, err := validateImagePublicBaseURL(publicBase)
 		if err != nil {
+			s.resolved = true
+			s.retryAfter = time.Time{}
 			logger.L().Warn("image_storage.public_base_url_rejected; async image tasks stay disabled", zap.Error(err))
 			return nil, false
 		}
@@ -139,9 +161,12 @@ func (s *ImageStorageSettingService) resolve() (*ImageResultUploader, bool) {
 	}
 	storage, err := s.factory(factoryCtx, cfg)
 	if err != nil {
+		s.retryAfter = now.Add(imageStorageResolveRetryInterval)
 		logger.L().Error("image_storage.client_build_failed; async image tasks stay disabled", zap.Error(err))
 		return nil, false
 	}
+	s.resolved = true
+	s.retryAfter = time.Time{}
 	s.uploader = NewImageResultUploader(storage, cfg.Prefix, cfg.MaxDownloadByte, nil)
 	s.enabled = true
 	return s.uploader, true
@@ -154,6 +179,7 @@ func (s *ImageStorageSettingService) Invalidate() {
 	}
 	s.mu.Lock()
 	s.resolved = false
+	s.retryAfter = time.Time{}
 	s.uploader = nil
 	s.enabled = false
 	s.mu.Unlock()

@@ -1989,10 +1989,6 @@ func (s *BackupService) downloadSingleBackupArchive(ctx context.Context, objectS
 	return path, nil
 }
 
-func (s *BackupService) downloadBackupParts(ctx context.Context, objectStore BackupObjectStore, parts []BackupPart) (path string, err error) {
-	return s.downloadBackupPartsWithDigest(ctx, objectStore, parts, "")
-}
-
 func (s *BackupService) downloadBackupPartsWithDigest(ctx context.Context, objectStore BackupObjectStore, parts []BackupPart, expectedArchiveSHA256 string) (path string, err error) {
 	if len(parts) == 0 {
 		return "", errors.New("backup parts are empty")

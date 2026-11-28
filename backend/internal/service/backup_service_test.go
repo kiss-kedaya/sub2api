@@ -819,7 +819,7 @@ func TestBackupService_DownloadBackupPartsRejectsMismatchedMetadata(t *testing.T
 			store.objects[tt.part.S3Key] = []byte("abc")
 			svc := newTestBackupService(repo, &mockDumper{}, store)
 
-			_, err := svc.downloadBackupParts(context.Background(), store, []BackupPart{tt.part})
+			_, err := svc.downloadBackupPartsWithDigest(context.Background(), store, []BackupPart{tt.part}, "")
 			require.ErrorContains(t, err, tt.want)
 		})
 	}

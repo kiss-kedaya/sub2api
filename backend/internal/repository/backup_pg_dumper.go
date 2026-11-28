@@ -2,6 +2,7 @@ package repository
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"database/sql"
 	"database/sql/driver"
@@ -250,17 +251,54 @@ func (d *PgDumper) Restore(ctx context.Context, data io.Reader) error {
 		cmd.Env = append(cmd.Environ(), "PGSSLMODE="+d.cfg.SSLMode)
 	}
 
-	safeData, scanDone := safeRestoreSQLReaderWithCancel(data, cancelCmd)
-	cmd.Stdin = safeData
+	var output bytes.Buffer
+	cmd.Stdout = &output
+	cmd.Stderr = &output
 
-	output, err := cmd.CombinedOutput()
-	// Unblock the scanner goroutine if psql exited before draining stdin.
-	_ = safeData.Close()
-	if scanErr := <-scanDone; scanErr != nil {
-		return fmt.Errorf("unsafe backup SQL: %w", scanErr)
+	stdinPipe, err := cmd.StdinPipe()
+	if err != nil {
+		return fmt.Errorf("create psql stdin pipe: %w", err)
+	}
+	if err := cmd.Start(); err != nil {
+		_ = stdinPipe.Close()
+		return fmt.Errorf("start psql: %w", err)
+	}
+
+	type restoreStreamResult struct {
+		scanErr error
+		readErr error
+	}
+	streamDone := make(chan restoreStreamResult, 1)
+	go func() {
+		defer close(streamDone)
+		onReject := func() {
+			// Terminate psql before stdin can ever reach EOF so --single-transaction
+			// rolls back instead of committing the already-streamed prefix.
+			cancelCmd()
+			if cmd.Process != nil {
+				_ = cmd.Process.Kill()
+			}
+		}
+		scanErr, readErr := streamSafeRestoreSQL(data, stdinPipe, onReject, true)
+		if scanErr == nil && readErr == nil {
+			// Only signal EOF when the entire stream validated cleanly.
+			_ = stdinPipe.Close()
+		}
+		streamDone <- restoreStreamResult{scanErr: scanErr, readErr: readErr}
+	}()
+
+	err = cmd.Wait()
+	// Ensure the pipe is closed after psql exits (for early SQL failures or killed runs).
+	_ = stdinPipe.Close()
+	streamRes := <-streamDone
+	if streamRes.scanErr != nil {
+		return fmt.Errorf("unsafe backup SQL: %w", streamRes.scanErr)
+	}
+	if streamRes.readErr != nil {
+		return fmt.Errorf("read backup SQL: %w", streamRes.readErr)
 	}
 	if err != nil {
-		detail := pgDumpFailureDetail(output, d.cfg.Password)
+		detail := pgDumpFailureDetail(output.Bytes(), d.cfg.Password)
 		if detail != "" {
 			return fmt.Errorf("%v: %s", err, detail)
 		}
@@ -283,55 +321,64 @@ func safeRestoreSQLReaderWithCancel(data io.Reader, onReject func()) (*io.PipeRe
 	done := make(chan error, 1)
 	go func() {
 		defer close(done)
-		r := bufio.NewReader(data)
-		scanner := &restoreSQLScanner{}
-		firstLine := true
-		for {
-			line, err := r.ReadString('\n')
-			if len(line) > 0 {
-				scanLine := line
-				if firstLine {
-					firstLine = false
-					scanLine = strings.TrimPrefix(scanLine, "\xef\xbb\xbf")
-				}
-				if scanErr := scanner.scanLine(scanLine); scanErr != nil {
-					if onReject != nil {
-						onReject()
-					}
-					_ = pw.CloseWithError(scanErr)
-					done <- scanErr
-					return
-				}
-				if _, writeErr := io.WriteString(pw, scanLine); writeErr != nil {
-					if errors.Is(writeErr, io.ErrClosedPipe) {
-						done <- nil
-						return
-					}
-					done <- writeErr
-					return
-				}
-			}
-			if err != nil {
-				if err != io.EOF {
-					_ = pw.CloseWithError(err)
-					done <- err
-					return
-				}
-				if finalizeErr := scanner.finalize(); finalizeErr != nil {
-					if onReject != nil {
-						onReject()
-					}
-					_ = pw.CloseWithError(finalizeErr)
-					done <- finalizeErr
-					return
-				}
-				_ = pw.Close()
-				done <- nil
-				return
-			}
+		scanErr, readErr := streamSafeRestoreSQL(data, pw, onReject, false)
+		if scanErr != nil {
+			_ = pw.CloseWithError(scanErr)
+			done <- scanErr
+			return
 		}
+		if readErr != nil {
+			_ = pw.CloseWithError(readErr)
+			done <- readErr
+			return
+		}
+		_ = pw.Close()
+		done <- nil
 	}()
 	return pr, done
+}
+
+func streamSafeRestoreSQL(data io.Reader, dst io.Writer, onReject func(), ignoreBrokenPipe bool) (scanErr error, readErr error) {
+	r := bufio.NewReader(data)
+	scanner := &restoreSQLScanner{}
+	firstLine := true
+	for {
+		line, err := r.ReadString('\n')
+		if len(line) > 0 {
+			scanLine := line
+			if firstLine {
+				firstLine = false
+				scanLine = strings.TrimPrefix(scanLine, "\xef\xbb\xbf")
+			}
+			if sErr := scanner.scanLine(scanLine); sErr != nil {
+				if onReject != nil {
+					onReject()
+				}
+				return sErr, nil
+			}
+			if _, writeErr := io.WriteString(dst, scanLine); writeErr != nil {
+				if ignoreBrokenPipe || errors.Is(writeErr, io.ErrClosedPipe) {
+					return nil, nil
+				}
+				return nil, writeErr
+			}
+		}
+		if err != nil {
+			if err != io.EOF {
+				if onReject != nil {
+					onReject()
+				}
+				return nil, err
+			}
+			if finalizeErr := scanner.finalize(); finalizeErr != nil {
+				if onReject != nil {
+					onReject()
+				}
+				return finalizeErr, nil
+			}
+			return nil, nil
+		}
+	}
 }
 
 type restoreSQLLexState int
@@ -878,14 +925,18 @@ func (s *restoreSQLScanner) onSQLTokenWithTruncated(kind restoreTokenKind, value
 
 	// Guard top-level set_config(...) calls so standard_conforming_strings
 	// cannot be toggled off to create a lexer differential with psql.
+	// Skip relation-name detection in `COPY [schema.]set_config (col) FROM stdin;`.
+	isCopyTargetRelation := s.stmtFirstWord == "copy" && s.copyPhase == restoreCopyInit && s.parenDepth == 0
 	switch s.setConfigState {
 	case restoreSetConfigNone:
-		if (kind == restoreTokIdent || kind == restoreTokQuotedIdent) && value == "set_config" {
-			s.setConfigState = restoreSetConfigExpectOpenParen
-			s.setConfigUnicodeCall = false
-		} else if kind == restoreTokUnicodeQuotedIdent {
-			s.setConfigState = restoreSetConfigExpectOpenParen
-			s.setConfigUnicodeCall = true
+		if !isCopyTargetRelation {
+			if (kind == restoreTokIdent || kind == restoreTokQuotedIdent) && value == "set_config" {
+				s.setConfigState = restoreSetConfigExpectOpenParen
+				s.setConfigUnicodeCall = false
+			} else if kind == restoreTokUnicodeQuotedIdent {
+				s.setConfigState = restoreSetConfigExpectOpenParen
+				s.setConfigUnicodeCall = true
+			}
 		}
 	case restoreSetConfigExpectOpenParen:
 		if kind == restoreTokOther && value == "(" {

@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -185,6 +186,9 @@ func TestSafeRestoreSQLReaderAllowsLegitimatePgDump(t *testing.T) {
 		"COPY public.logs (id, msg) FROM stdin;\r",
 		"1\thello\\N\r",
 		"\\.\r",
+		"COPY public.set_config (id) FROM stdin;",
+		"1",
+		`\.`,
 		`\unrestrict AbCdEf0123456789xyz`,
 		"",
 	}, "\n")
@@ -225,6 +229,38 @@ func TestPgDumperRestoreRejectsUnsafeSQLWithoutDeadlock(t *testing.T) {
 	require.Contains(t, err.Error(), "unsafe backup SQL")
 }
 
+func TestPgDumperRestoreKillsPsqlBeforeEOFOnRejection(t *testing.T) {
+	runWithCommitMarker := func(t *testing.T, input string) (error, bool) {
+		t.Helper()
+		marker := filepath.Join(t.TempDir(), "committed.txt")
+		dumper, _ := newTestPgDumper(t, func(ctx context.Context, _ string, _ ...string) *exec.Cmd {
+			cmd := pgDumperHelperCommand(ctx, "restore-commit-on-eof")
+			cmd.Env = append(cmd.Env, "SUB2API_PG_DUMP_COMMIT_MARKER="+marker)
+			return cmd
+		})
+		err := dumper.Restore(context.Background(), strings.NewReader(input))
+		_, statErr := os.Stat(marker)
+		return err, statErr == nil
+	}
+
+	// Clean SQL reaches EOF and commits.
+	err, committed := runWithCommitMarker(t, "SELECT 1;\n")
+	require.NoError(t, err)
+	require.True(t, committed, "valid restore stream must reach EOF and commit")
+
+	// Rejected mid-stream metacommand must kill child before stdin EOF so --single-transaction never commits.
+	err, committed = runWithCommitMarker(t, "SELECT 1;\n\\! id\n")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "unsafe backup SQL")
+	require.False(t, committed, "rejected mid-stream restore must never let psql observe EOF and commit")
+
+	// Rejected EOF finalization (forbidden statement without trailing semicolon) must also kill child before stdin EOF.
+	err, committed = runWithCommitMarker(t, "SELECT 1;\nDISCARD ALL\n")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "unsafe backup SQL")
+	require.False(t, committed, "rejected EOF-finalized restore must never let psql observe EOF and commit")
+}
+
 func TestPgDumperHelperProcess(t *testing.T) {
 	mode := os.Getenv("SUB2API_PG_DUMP_TEST_HELPER")
 	if mode == "" {
@@ -237,6 +273,11 @@ func TestPgDumperHelperProcess(t *testing.T) {
 		_, _ = io.WriteString(os.Stdout, "partial-backup")
 		os.Exit(7)
 	case "empty":
+	case "restore-commit-on-eof":
+		_, _ = io.Copy(io.Discard, os.Stdin)
+		if marker := os.Getenv("SUB2API_PG_DUMP_COMMIT_MARKER"); marker != "" {
+			_ = os.WriteFile(marker, []byte("COMMITTED"), 0o600)
+		}
 	default:
 		os.Exit(2)
 	}
