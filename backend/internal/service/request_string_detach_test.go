@@ -150,8 +150,8 @@ func TestReleaseRequestBodyReferencesLetsTheBodyBeCollected(t *testing.T) {
 	runtime.KeepAlive(c)
 
 	// the cached values are only caches / diagnostics: asking again must work, just without the old data
-	got, _ := compatUpstreamRequestBodyFor(c, account)
-	require.Nil(t, got)
+	got, _ := compatUpstreamEstimatedTokensFor(c, account)
+	require.Zero(t, got)
 	require.Equal(t, "n", RequestBodyTop(c, []byte(`{"model":"n","input":"`+strings.Repeat("q", 64<<10)+`"}`)).Get("model").String())
 
 	ReleaseRequestBodyReferences(nil)            // must not panic

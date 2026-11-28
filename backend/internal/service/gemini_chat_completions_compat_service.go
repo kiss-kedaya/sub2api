@@ -129,6 +129,7 @@ func (s *GeminiMessagesCompatService) forwardClaudeBodyAsChatCompletions(
 		requestIDHeader = idHeader
 
 		resp, err = s.httpUpstream.Do(upstreamReq, proxyURL, account.ID, account.Concurrency)
+		releaseUpstreamRequestPayload(upstreamReq, resp)
 		if err != nil {
 			if geminiClientGoneCtx(ctx, c) {
 				clientErr := ctx.Err()
@@ -271,15 +272,35 @@ func (s *GeminiMessagesCompatService) forwardClaudeBodyAsChatCompletions(
 		return nil, s.writeGeminiChatCompletionsMappedError(c, account, resp.StatusCode, requestID, evBody)
 	}
 
+	imageInputSize := s.extractImageInputSize(claudeBody)
+	imageSize := normalizeOpenAIImageSizeTier(imageInputSize)
+	buildReq = nil
+	geminiReq = nil
+
 	var usage *ClaudeUsage
 	var firstTokenMs *int
 	var responseErr error
 	clientGone := false
 	balanceAborted := false
 	goneOutputTokens := 0
+	var estimatedInputTokens int
+	var hasEstimatedInputTokens bool
 	hasFinalOutput := false
 	if clientStream {
+		var popRelease func()
+		ctx, popRelease = PushServiceRequestBodyRelease(ctx, c, func(_ *Account) {
+			if len(originalChatBody) > 0 {
+				estimatedInputTokens = estimateRequestInputTokens(originalChatBody)
+				hasEstimatedInputTokens = true
+			}
+			originalChatBody = nil
+			claudeBody = nil
+			geminiReq = nil
+			buildReq = nil
+		})
+		TriggerRequestBodyRelease(ctx, c, account)
 		streamRes, err := s.handleChatCompletionsStreamingResponseFromGemini(c, resp, startTime, originalModel, account.Type == AccountTypeOAuth, includeUsage)
+		popRelease()
 		if err != nil {
 			if streamRes == nil || (!streamRes.balanceAborted && !isBalanceHoldTopUpError(err)) {
 				return nil, err
@@ -341,16 +362,13 @@ func (s *GeminiMessagesCompatService) forwardClaudeBodyAsChatCompletions(
 		if balanceAborted {
 			event = "gemini_usage.balance_abort_estimated"
 		}
-		applyIncompleteGeminiUsage(event, account, mappedModel, usage, goneOutputTokens, originalChatBody, hasFinalOutput)
+		applyIncompleteGeminiUsageWithEstimate(event, account, mappedModel, usage, goneOutputTokens, originalChatBody, estimatedInputTokens, hasEstimatedInputTokens, hasFinalOutput)
 	}
 
 	imageCount := 0
-	imageInputSize := s.extractImageInputSize(claudeBody)
-	imageSize := normalizeOpenAIImageSizeTier(imageInputSize)
 	if !clientGone && !balanceAborted && isImageGenerationModel(originalModel) {
 		imageCount = 1
 	}
-
 	return &ForwardResult{
 		RequestID:        requestID,
 		UpstreamHeaders:  resp.Header,

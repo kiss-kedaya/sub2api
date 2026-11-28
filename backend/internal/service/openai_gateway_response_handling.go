@@ -194,6 +194,9 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 	if !ok {
 		return nil, errors.New("streaming not supported")
 	}
+	if isPreOutputFailoverDisabled(ctx) && !isCompactFallbackPossible(ctx) {
+		TriggerRequestBodyRelease(ctx, c, account)
+	}
 	maxLineSize := defaultMaxLineSize
 	if s.cfg != nil && s.cfg.Gateway.MaxLineSize > 0 {
 		maxLineSize = s.cfg.Gateway.MaxLineSize
@@ -223,15 +226,15 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 		}
 		return int64(bufferedWriter.Buffered())
 	}
-	flushBuffered := func() error {
+	commitBuffered := func() error {
 		if firstOutputStage != nil && !firstOutputStage.closed {
-			if err := firstOutputStage.CommitTo(w); err != nil {
-				return err
-			}
-		} else {
-			if err := bufferedWriter.Flush(); err != nil {
-				return err
-			}
+			return firstOutputStage.CommitTo(w)
+		}
+		return bufferedWriter.Flush()
+	}
+	flushBuffered := func() error {
+		if err := commitBuffered(); err != nil {
+			return err
 		}
 		flusher.Flush()
 		return nil
@@ -387,9 +390,13 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 				applyAttemptResponseHeaders()
 			}
 			if shouldFlush {
-				if err := flushBuffered(); err != nil {
+				if err := commitBuffered(); err != nil {
 					handlePendingWriteError(err)
 				} else {
+					if !clientOutputStarted {
+						TriggerRequestBodyRelease(ctx, c, account)
+					}
+					flusher.Flush()
 					clientOutputStarted = true
 					lastDownstreamWriteAt = time.Now()
 				}
@@ -411,7 +418,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 		s.markOpenAIStreamFinalFailure(c, account, false, upstreamRequestID, false)
 		errorEventSent = true
 		payload := `{"type":"error","sequence_number":0,"error":{"type":"upstream_error","message":` + strconv.Quote(reason) + `,"code":` + strconv.Quote(reason) + `}}`
-		if err := flushBuffered(); err != nil {
+		if err := commitBuffered(); err != nil {
 			onClientDisconnect()
 			return
 		}
@@ -419,10 +426,14 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			onClientDisconnect()
 			return
 		}
-		if err := flushBuffered(); err != nil {
+		if err := commitBuffered(); err != nil {
 			onClientDisconnect()
 			return
 		}
+		if !clientOutputStarted {
+			TriggerRequestBodyRelease(ctx, c, account)
+		}
+		flusher.Flush()
 		clientOutputStarted = true
 		lastDownstreamWriteAt = time.Now()
 	}
@@ -469,11 +480,15 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 		if clientDisconnected || pendingBytes() == 0 {
 			return
 		}
-		if err := flushBuffered(); err != nil {
+		if err := commitBuffered(); err != nil {
 			onClientDisconnect()
 			logger.LegacyPrintf("service.openai_gateway", "%s", disconnectMessage)
 			return
 		}
+		if !clientOutputStarted {
+			TriggerRequestBodyRelease(ctx, c, account)
+		}
+		flusher.Flush()
 		clientOutputStarted = true
 		lastDownstreamWriteAt = time.Now()
 	}
@@ -1067,9 +1082,13 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			} else {
 				eventInProgress = line != ""
 				if shouldFlush {
-					if err := flushBuffered(); err != nil {
+					if err := commitBuffered(); err != nil {
 						handlePendingWriteError(err)
 					} else {
+						if !clientOutputStarted {
+							TriggerRequestBodyRelease(ctx, c, account)
+						}
+						flusher.Flush()
 						clientOutputStarted = true
 						lastDownstreamWriteAt = time.Now()
 					}

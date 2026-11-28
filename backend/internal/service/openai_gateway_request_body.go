@@ -926,23 +926,100 @@ func openAIRequestBodyHasTools(c *gin.Context, body []byte) bool {
 // ids, and opaque extensions). Callers scope this normalization to OpenAI
 // destinations; compatible providers may still consume their own content.
 func normalizeOpenAIResponsesReasoningContentReplay(body []byte) ([]byte, bool, error) {
-	input := parseRawJSONView(body).Get("input")
-	if !input.IsArray() {
+	return normalizeOpenAIResponsesReasoningContentReplayCtx(nil, body)
+}
+
+func normalizeOpenAIResponsesReasoningContentReplayCtx(c *gin.Context, body []byte) ([]byte, bool, error) {
+	if len(body) == 0 || ((!bytes.Contains(body, []byte("reasoning")) || !bytes.Contains(body, []byte("content"))) && !bytes.Contains(body, []byte(`\u`))) {
 		return body, false, nil
 	}
-
 	needsNormalization := false
-	input.ForEach(func(_, item gjson.Result) bool {
-		if strings.TrimSpace(item.Get("type").String()) != "reasoning" {
+	if idx := RequestBodyTop(c, body).responsesInput(); idx != nil && idx.usable {
+		if !idx.isArray || !idx.hasReasoningNonEmptyContent {
+			return body, false, nil
+		}
+		needsNormalization = true
+	} else if inputStart, inputEnd, isArray, ok := locateJSONInputArraySpan(c, body); ok {
+		if !isArray {
+			return body, false, nil
+		}
+		elemOK := jsonForEachElementSpan(body, inputStart, inputEnd, func(elemStart, elemEnd int) bool {
+			if body[elemStart] != '{' {
+				return true
+			}
+			elem := jsonView(body[elemStart:elemEnd])
+			if (!strings.Contains(elem, "reasoning") || !strings.Contains(elem, "content")) && !strings.Contains(elem, `\u`) {
+				return true
+			}
+			var typeRaw string
+			var hasType, hasContent bool
+			var contentStart, contentEnd int
+			memberOK := jsonForEachMemberSpan(body, elemStart, elemEnd, func(key string, valStart, valEnd, _, _ int) bool {
+				switch key {
+				case "type":
+					if !hasType {
+						typeRaw = jsonView(body[valStart:valEnd])
+						hasType = true
+					}
+				case "content":
+					if !hasContent {
+						contentStart, contentEnd = valStart, valEnd
+						hasContent = true
+					}
+				}
+				return !hasType || !hasContent
+			})
+			if !memberOK {
+				item := gjson.Parse(elem)
+				if strings.TrimSpace(item.Get("type").String()) != "reasoning" {
+					return true
+				}
+				content := item.Get("content")
+				if content.IsArray() && len(content.Array()) > 0 {
+					needsNormalization = true
+					return false
+				}
+				return true
+			}
+			if !hasType || strings.TrimSpace(extractJSONMemberString(typeRaw, false)) != "reasoning" {
+				return true
+			}
+			if hasContent && body[contentStart] == '[' && jsonSpanArrayNonEmpty(body, contentStart, contentEnd) {
+				needsNormalization = true
+				return false
+			}
 			return true
+		})
+		if !elemOK && !needsNormalization {
+			gjson.Parse(jsonView(body[inputStart:inputEnd])).ForEach(func(_, item gjson.Result) bool {
+				if strings.TrimSpace(item.Get("type").String()) != "reasoning" {
+					return true
+				}
+				content := item.Get("content")
+				if content.IsArray() && len(content.Array()) > 0 {
+					needsNormalization = true
+					return false
+				}
+				return true
+			})
 		}
-		content := item.Get("content")
-		if content.IsArray() && len(content.Array()) > 0 {
-			needsNormalization = true
-			return false
+	} else {
+		input := parseRawJSONView(body).Get("input")
+		if !input.IsArray() {
+			return body, false, nil
 		}
-		return true
-	})
+		input.ForEach(func(_, item gjson.Result) bool {
+			if strings.TrimSpace(item.Get("type").String()) != "reasoning" {
+				return true
+			}
+			content := item.Get("content")
+			if content.IsArray() && len(content.Array()) > 0 {
+				needsNormalization = true
+				return false
+			}
+			return true
+		})
+	}
 	if !needsNormalization {
 		return body, false, nil
 	}

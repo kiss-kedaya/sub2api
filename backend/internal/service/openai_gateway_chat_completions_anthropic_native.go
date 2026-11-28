@@ -155,6 +155,12 @@ func (s *OpenAIGatewayService) forwardChatCompletionsViaNativeAnthropic(
 
 	stashCompatUpstreamRequestBody(c, account, anthropicBody)
 	if clientStream {
+		ctx, releaseNativeCC := PushServiceRequestBodyRelease(ctx, c, func(_ *Account) {
+			body = nil
+			anthropicBody = nil
+		})
+		defer releaseNativeCC()
+		TriggerRequestBodyRelease(ctx, c, account)
 		return s.handleCCStreamingFromNativeAnthropic(resp, c, originalModel, billingModel, upstreamModel, reasoningEffort, startTime, includeUsage, account.Platform == PlatformDeepseek)
 	}
 	return s.handleCCBufferedFromNativeAnthropic(resp, c, originalModel, billingModel, upstreamModel, reasoningEffort, startTime, account.Platform == PlatformDeepseek)

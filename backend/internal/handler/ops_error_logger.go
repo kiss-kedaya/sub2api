@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"log"
@@ -17,6 +18,7 @@ import (
 	"sync/atomic"
 	"time"
 	"unicode/utf8"
+	"unsafe"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ip"
@@ -568,22 +570,25 @@ type opsCaptureWriter struct {
 }
 
 type opsCaptureWriterState struct {
-	mu             sync.RWMutex
-	inFlight       sync.WaitGroup
-	generation     uint64
-	responseWriter gin.ResponseWriter
-	limit          int
-	buf            bytes.Buffer
-	probe          []byte
-	lineProbe      []byte
-	frameLineLen   int
-	frameTruncated bool
-	lineTruncated  bool
-	skipLF         bool
-	sseCapturing   bool
-	terminalError  parsedOpsError
-	terminalFound  bool
-	ctx            *gin.Context
+	mu              sync.RWMutex
+	inFlight        sync.WaitGroup
+	generation      uint64
+	responseWriter  gin.ResponseWriter
+	limit           int
+	buf             bytes.Buffer
+	probe           []byte
+	lineProbe       []byte
+	frameLineLen    int
+	frameTruncated  bool
+	lineTruncated   bool
+	skipLF          bool
+	sseCapturing    bool
+	terminalError   parsedOpsError
+	terminalFound   bool
+	ctx             *gin.Context
+	ops             *service.OpsService
+	hasOps          bool
+	ingressRejected bool
 }
 
 const (
@@ -632,6 +637,9 @@ func acquireOpsCaptureWriterFromPool(pool opsCaptureWriterStatePool, rw gin.Resp
 	state.terminalError = parsedOpsError{}
 	state.terminalFound = false
 	state.ctx = nil
+	state.ops = nil
+	state.hasOps = false
+	state.ingressRejected = false
 	generation := state.generation
 	state.mu.Unlock()
 	return &opsCaptureWriter{state: state, generation: generation, pool: pool}
@@ -653,6 +661,9 @@ func releaseOpsCaptureWriter(w *opsCaptureWriter) {
 	state.generation++
 	state.responseWriter = nil
 	state.ctx = nil
+	state.ops = nil
+	state.hasOps = false
+	state.ingressRejected = false
 	state.mu.Unlock()
 	state.inFlight.Wait()
 	state.mu.Lock()
@@ -726,12 +737,15 @@ func finishDelegatedCall(state *opsCaptureWriterState) {
 	}
 }
 
-func (w *opsCaptureWriter) setContext(ctx *gin.Context) {
+func (w *opsCaptureWriter) setContextAndOps(ctx *gin.Context, ops *service.OpsService) {
 	state, _ := w.lockActiveWrite()
 	if state == nil {
 		return
 	}
 	state.ctx = ctx
+	state.ops = ops
+	state.hasOps = true
+	state.ingressRejected = false
 	state.mu.Unlock()
 }
 
@@ -854,8 +868,9 @@ func (w *opsCaptureWriter) Write(b []byte) (int, error) {
 	if state == nil {
 		return 0, nil
 	}
-	if state.shouldCapture() {
-		state.captureResponseChunk(b, rw.Status())
+	status := rw.Status()
+	if !state.ingressRejected && !state.monitoringDisabledFor2xx(status) {
+		state.captureResponseChunk(b, status)
 	}
 	state.mu.Unlock()
 	defer finishDelegatedCall(state)
@@ -867,8 +882,9 @@ func (w *opsCaptureWriter) WriteString(s string) (int, error) {
 	if state == nil {
 		return 0, nil
 	}
-	if state.shouldCapture() {
-		state.captureResponseChunk([]byte(s), rw.Status())
+	status := rw.Status()
+	if !state.ingressRejected && !state.monitoringDisabledFor2xx(status) {
+		state.captureResponseString(s, status)
 	}
 	state.mu.Unlock()
 	defer finishDelegatedCall(state)
@@ -949,24 +965,54 @@ func parseOpsSSEFrameEnvelope(frame []byte) ([]byte, []byte) {
 	return bytes.TrimSpace(eventType), data
 }
 
+func (state *opsCaptureWriterState) monitoringDisabledFor2xx(status int) bool {
+	return status < 400 && state.hasOps && (state.ops == nil || !state.ops.IsMonitoringEnabled(context.Background()))
+}
+
+func (state *opsCaptureWriterState) captureResponseString(s string, status int) {
+	if len(s) == 0 {
+		return
+	}
+	// captureResponseChunk never mutates or retains its input slice.
+	state.captureResponseChunk(unsafe.Slice(unsafe.StringData(s), len(s)), status)
+}
+
 func (state *opsCaptureWriterState) captureResponseChunk(chunk []byte, status int) {
-	if state == nil || state.limit <= 0 || len(chunk) == 0 {
+	if state == nil || state.limit <= 0 || len(chunk) == 0 || state.ingressRejected {
 		return
 	}
 	if status >= 400 {
+		if !state.shouldCapture() {
+			return
+		}
 		state.appendCapturedResponse(chunk)
 		return
 	}
 	if state.sseCapturing {
+		if !state.shouldCapture() {
+			return
+		}
 		state.appendTerminalProbe(chunk)
 		state.appendCapturedResponse(chunk)
 		return
 	}
-	// Most stream writes contain one or more complete successful SSE frames.
-	// Skip the byte-wise frame parser when the chunk cannot contain a terminal
-	// event and leaves no split frame to carry into the next write.
-	if len(state.probe) == 0 && len(state.lineProbe) == 0 && endsAtOpsSSEFrameBoundary(chunk) &&
-		!mayContainOpsTerminalSSE(chunk) {
+	if len(state.probe) == 0 && len(state.lineProbe) == 0 && !state.skipLF {
+		// Most stream writes contain one or more complete successful SSE frames.
+		// Skip the byte-wise frame parser when the chunk cannot contain a terminal
+		// event and leaves no split frame to carry into the next write.
+		if endsAtOpsSSEFrameBoundary(chunk) && !mayContainOpsTerminalSSE(chunk) {
+			return
+		}
+		// Line-by-line SSE writes (and large response.created/completed frames
+		// carrying "error":null) can also be skipped without buffering state.probe.
+		if pos := skipBenignCompleteSSELines(chunk); pos > 0 {
+			if pos == len(chunk) {
+				return
+			}
+			chunk = chunk[pos:]
+		}
+	}
+	if !state.shouldCapture() {
 		return
 	}
 	for i, b := range chunk {
@@ -1032,6 +1078,387 @@ func (state *opsCaptureWriterState) captureResponseChunk(chunk []byte, status in
 		state.frameTruncated = false
 		state.lineTruncated = false
 	}
+}
+
+func skipBenignCompleteSSELines(chunk []byte) int {
+	pos := 0
+	for pos < len(chunk) {
+		nl := bytes.IndexByte(chunk[pos:], '\n')
+		if nl < 0 {
+			break
+		}
+		line := chunk[pos : pos+nl]
+		if cr := bytes.IndexByte(line, '\r'); cr >= 0 {
+			if cr != len(line)-1 {
+				break
+			}
+			line = line[:len(line)-1]
+		}
+		if len(line) == 0 || line[0] == ':' ||
+			bytes.HasPrefix(line, []byte("id:")) ||
+			bytes.HasPrefix(line, []byte("retry:")) {
+			pos += nl + 1
+			continue
+		}
+		if bytes.HasPrefix(line, []byte("event:")) {
+			if isOpsTerminalSSEEventLine(line) {
+				break
+			}
+			pos += nl + 1
+			continue
+		}
+		if bytes.HasPrefix(line, []byte("data:")) {
+			payload := trimOpsASCIIWhitespace(line[len("data:"):])
+			if !isBenignCompleteSSEDataPayload(payload) {
+				break
+			}
+			pos += nl + 1
+			continue
+		}
+		break
+	}
+	return pos
+}
+
+func trimOpsASCIIWhitespace(b []byte) []byte {
+	start := 0
+	for start < len(b) && (b[start] == ' ' || b[start] == '\t' || b[start] == '\r') {
+		start++
+	}
+	end := len(b)
+	for end > start && (b[end-1] == ' ' || b[end-1] == '\t' || b[end-1] == '\r') {
+		end--
+	}
+	return b[start:end]
+}
+
+func isBenignCompleteSSEDataPayload(payload []byte) bool {
+	if bytes.Equal(payload, []byte("[DONE]")) {
+		return true
+	}
+	if len(payload) < 2 || payload[0] != '{' || payload[len(payload)-1] != '}' {
+		return false
+	}
+	hasNeedle := bytes.Contains(payload, []byte("response.failed")) || bytes.Contains(payload, []byte(`"error"`))
+	validSingleObj, hasEscapedTopKey, typeCount, typePlain, typeVal := inspectOpsSSEJSONObject(payload)
+	if !validSingleObj {
+		return false
+	}
+	if !hasNeedle {
+		return true
+	}
+	if hasEscapedTopKey || typeCount != 1 || !typePlain {
+		return false
+	}
+	return string(typeVal) != "error" && string(typeVal) != "response.failed"
+}
+
+const (
+	opsJSONMaxDepth = 10000
+	opsJSONSWARLo   = uint64(0x0101010101010101)
+	opsJSONSWARHi   = uint64(0x8080808080808080)
+)
+
+var opsJSONStringClass = func() (t [256]uint8) {
+	for i := 0; i < 0x20; i++ {
+		t[i] = 3
+	}
+	t['"'] = 1
+	t['\\'] = 2
+	return
+}()
+
+// inspectOpsSSEJSONObject validates in zero allocations that b is one complete
+// JSON object (closing only at len(b)-1) and inspects top-level "type" strings.
+func inspectOpsSSEJSONObject(b []byte) (validSingleObj, hasEscapedTopKey bool, typeCount int, typePlain bool, typeVal []byte) {
+	n := len(b)
+	if n < 2 || b[0] != '{' || b[n-1] != '}' {
+		return false, false, 0, false, nil
+	}
+	var stackBuf [64]byte
+	stack := stackBuf[:0]
+	stack = append(stack, '{')
+
+	const (
+		sValue = iota
+		sObjFirst
+		sKey
+		sColon
+		sArrFirst
+		sAfter
+	)
+	state := sObjFirst
+	i := 1
+	expectingTypeVal := false
+
+	for {
+		for i < n && (b[i] == ' ' || b[i] == '\t' || b[i] == '\n' || b[i] == '\r') {
+			i++
+		}
+		if i >= n {
+			return state == sAfter && len(stack) == 0, hasEscapedTopKey, typeCount, typePlain, typeVal
+		}
+		c := b[i]
+		switch state {
+		case sValue:
+			isTopTypeVal := expectingTypeVal && len(stack) == 1
+			expectingTypeVal = false
+			switch {
+			case c == '{':
+				if len(stack) >= opsJSONMaxDepth {
+					return false, false, 0, false, nil
+				}
+				stack = append(stack, '{')
+				i++
+				state = sObjFirst
+			case c == '[':
+				if len(stack) >= opsJSONMaxDepth {
+					return false, false, 0, false, nil
+				}
+				stack = append(stack, '[')
+				i++
+				state = sArrFirst
+			case c == '"':
+				strStart := i + 1
+				next, esc, ok := validOpsJSONString(b, strStart)
+				if !ok {
+					return false, false, 0, false, nil
+				}
+				if isTopTypeVal {
+					if !esc {
+						typePlain = true
+						typeVal = b[strStart : next-1]
+					} else {
+						typePlain = false
+					}
+				}
+				i = next
+				state = sAfter
+			case c == '-' || (c >= '0' && c <= '9'):
+				next, ok := validOpsJSONNumber(b, i)
+				if !ok {
+					return false, false, 0, false, nil
+				}
+				i = next
+				state = sAfter
+			case c == 't':
+				if n-i < 4 || string(b[i:i+4]) != "true" {
+					return false, false, 0, false, nil
+				}
+				i += 4
+				state = sAfter
+			case c == 'f':
+				if n-i < 5 || string(b[i:i+5]) != "false" {
+					return false, false, 0, false, nil
+				}
+				i += 5
+				state = sAfter
+			case c == 'n':
+				if n-i < 4 || string(b[i:i+4]) != "null" {
+					return false, false, 0, false, nil
+				}
+				i += 4
+				state = sAfter
+			default:
+				return false, false, 0, false, nil
+			}
+		case sObjFirst:
+			switch c {
+			case '}':
+				stack = stack[:len(stack)-1]
+				i++
+				if len(stack) == 0 && i != n {
+					return false, false, 0, false, nil
+				}
+				state = sAfter
+			case '"':
+				keyStart := i + 1
+				next, esc, ok := validOpsJSONString(b, keyStart)
+				if !ok {
+					return false, false, 0, false, nil
+				}
+				if len(stack) == 1 {
+					if esc {
+						hasEscapedTopKey = true
+					} else if k := b[keyStart : next-1]; string(k) == "type" {
+						typeCount++
+						expectingTypeVal = true
+					} else if len(k) == 4 &&
+						(k[0]|0x20) == 't' && (k[1]|0x20) == 'y' && (k[2]|0x20) == 'p' && (k[3]|0x20) == 'e' {
+						hasEscapedTopKey = true
+					}
+				}
+				i = next
+				state = sColon
+			default:
+				return false, false, 0, false, nil
+			}
+		case sKey:
+			if c != '"' {
+				return false, false, 0, false, nil
+			}
+			keyStart := i + 1
+			next, esc, ok := validOpsJSONString(b, keyStart)
+			if !ok {
+				return false, false, 0, false, nil
+			}
+			if len(stack) == 1 {
+				if esc {
+					hasEscapedTopKey = true
+				} else if k := b[keyStart : next-1]; string(k) == "type" {
+					typeCount++
+					expectingTypeVal = true
+				} else if len(k) == 4 &&
+					(k[0]|0x20) == 't' && (k[1]|0x20) == 'y' && (k[2]|0x20) == 'p' && (k[3]|0x20) == 'e' {
+					hasEscapedTopKey = true
+				}
+			}
+			i = next
+			state = sColon
+		case sColon:
+			if c != ':' {
+				return false, false, 0, false, nil
+			}
+			i++
+			state = sValue
+		case sArrFirst:
+			if c == ']' {
+				stack = stack[:len(stack)-1]
+				i++
+				state = sAfter
+			} else {
+				state = sValue
+			}
+		case sAfter:
+			if len(stack) == 0 {
+				return false, false, 0, false, nil
+			}
+			if stack[len(stack)-1] == '{' {
+				switch c {
+				case ',':
+					i++
+					state = sKey
+				case '}':
+					stack = stack[:len(stack)-1]
+					i++
+					if len(stack) == 0 && i != n {
+						return false, false, 0, false, nil
+					}
+				default:
+					return false, false, 0, false, nil
+				}
+			} else {
+				switch c {
+				case ',':
+					i++
+					state = sValue
+				case ']':
+					stack = stack[:len(stack)-1]
+					i++
+				default:
+					return false, false, 0, false, nil
+				}
+			}
+		}
+	}
+}
+
+func validOpsJSONString(b []byte, i int) (end int, esc, ok bool) {
+	n := len(b)
+	for i < n {
+		if opsJSONStringClass[b[i]] == 0 {
+			for i+8 <= n {
+				w := binary.LittleEndian.Uint64(b[i:])
+				ctrl := (w - 0x20*opsJSONSWARLo) &^ w & opsJSONSWARHi
+				q := w ^ (0x22 * opsJSONSWARLo)
+				quote := (q - opsJSONSWARLo) &^ q & opsJSONSWARHi
+				e := w ^ (0x5c * opsJSONSWARLo)
+				bk := (e - opsJSONSWARLo) &^ e & opsJSONSWARHi
+				if (ctrl | quote | bk) != 0 {
+					break
+				}
+				i += 8
+			}
+			for i < n && opsJSONStringClass[b[i]] == 0 {
+				i++
+			}
+		}
+		if i >= n {
+			return i, esc, false
+		}
+		switch opsJSONStringClass[b[i]] {
+		case 1:
+			return i + 1, esc, true
+		case 2:
+			esc = true
+			i++
+			if i >= n {
+				return i, esc, false
+			}
+			switch b[i] {
+			case '"', '\\', '/', 'b', 'f', 'n', 'r', 't':
+				i++
+			case 'u':
+				if n-i < 5 {
+					return i, esc, false
+				}
+				for k := 1; k <= 4; k++ {
+					h := b[i+k]
+					if (h < '0' || h > '9') && (h < 'a' || h > 'f') && (h < 'A' || h > 'F') {
+						return i, esc, false
+					}
+				}
+				i += 5
+			default:
+				return i, esc, false
+			}
+		default:
+			return i, esc, false
+		}
+	}
+	return i, esc, false
+}
+
+func validOpsJSONNumber(b []byte, i int) (int, bool) {
+	n := len(b)
+	if b[i] == '-' {
+		i++
+		if i >= n {
+			return i, false
+		}
+	}
+	switch {
+	case b[i] == '0':
+		i++
+	case b[i] >= '1' && b[i] <= '9':
+		for i < n && b[i] >= '0' && b[i] <= '9' {
+			i++
+		}
+	default:
+		return i, false
+	}
+	if i < n && b[i] == '.' {
+		i++
+		if i >= n || b[i] < '0' || b[i] > '9' {
+			return i, false
+		}
+		for i < n && b[i] >= '0' && b[i] <= '9' {
+			i++
+		}
+	}
+	if i < n && (b[i] == 'e' || b[i] == 'E') {
+		i++
+		if i < n && (b[i] == '+' || b[i] == '-') {
+			i++
+		}
+		if i >= n || b[i] < '0' || b[i] > '9' {
+			return i, false
+		}
+		for i < n && b[i] >= '0' && b[i] <= '9' {
+			i++
+		}
+	}
+	return i, true
 }
 
 func endsAtOpsSSEFrameBoundary(chunk []byte) bool {
@@ -1103,11 +1530,17 @@ func (state *opsCaptureWriterState) appendCapturedResponse(chunk []byte) {
 }
 
 func (state *opsCaptureWriterState) shouldCapture() bool {
+	if state.ingressRejected {
+		return false
+	}
 	if state.ctx == nil {
 		return true
 	}
-	_, rejected := middleware2.GetIngressRejectReason(state.ctx)
-	return !rejected
+	if _, rejected := middleware2.GetIngressRejectReason(state.ctx); rejected {
+		state.ingressRejected = true
+		return false
+	}
+	return true
 }
 
 // OpsErrorLoggerMiddleware records error responses (status >= 400) into ops_error_logs.
@@ -1119,7 +1552,7 @@ func OpsErrorLoggerMiddleware(ops *service.OpsService) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		originalWriter := c.Writer
 		w := acquireOpsCaptureWriter(originalWriter)
-		w.setContext(c)
+		w.setContextAndOps(c, ops)
 		defer func() {
 			// Restore the original writer before returning so outer middlewares
 			// don't observe a pooled wrapper that has been released.

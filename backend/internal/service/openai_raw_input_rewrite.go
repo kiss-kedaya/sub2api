@@ -2,6 +2,7 @@ package service
 
 import (
 	"fmt"
+	"unsafe"
 
 	"github.com/tidwall/gjson"
 )
@@ -21,9 +22,28 @@ func rewriteOpenAIResponsesInput(
 	transform openAIRawInputItemTransformer,
 	appendItems ...string,
 ) ([]byte, bool, error) {
-	input := parseRawJSONView(body).Get("input")
-	if !input.IsArray() {
-		return body, false, nil
+	inputStart, inputEnd, isArray, ok := locateJSONInputArraySpan(nil, body)
+	var input gjson.Result
+	if ok {
+		if !isArray {
+			return body, false, nil
+		}
+		input = gjson.Parse(jsonView(body[inputStart:inputEnd]))
+	} else {
+		input = parseRawJSONView(body).Get("input")
+		if !input.IsArray() {
+			return body, false, nil
+		}
+		inputStart = input.Index
+		if inputStart < 0 || inputStart+len(input.Raw) > len(body) ||
+			unsafe.StringData(input.Raw) != unsafe.SliceData(body[inputStart:]) {
+			// parseRawJSONView parses body directly, so a child result must retain
+			// its exact source offset. Falling back to bytes.Index is unsafe when an
+			// identical array also appears under a nested key and adds another full
+			// scan of a potentially multi-megabyte request.
+			return body, false, fmt.Errorf("locate top-level OpenAI Responses input array")
+		}
+		inputEnd = inputStart + len(input.Raw)
 	}
 
 	items := make([]openAIRawInputItemRewrite, 0, 16)
@@ -74,17 +94,7 @@ func rewriteOpenAIResponsesInput(
 		arrayLen += keptCount - 1
 	}
 
-	inputStart := input.Index
-	if inputStart < 0 || inputStart+len(input.Raw) > len(body) ||
-		string(body[inputStart:inputStart+len(input.Raw)]) != input.Raw {
-		// parseRawJSONView parses body directly, so a child result must retain
-		// its exact source offset. Falling back to bytes.Index is unsafe when an
-		// identical array also appears under a nested key and adds another full
-		// scan of a potentially multi-megabyte request.
-		return body, false, fmt.Errorf("locate top-level OpenAI Responses input array")
-	}
-	inputEnd := inputStart + len(input.Raw)
-	outputLen := len(body) - len(input.Raw) + arrayLen
+	outputLen := len(body) - (inputEnd - inputStart) + arrayLen
 	out := make([]byte, 0, outputLen)
 	out = append(out, body[:inputStart]...)
 	out = append(out, '[')

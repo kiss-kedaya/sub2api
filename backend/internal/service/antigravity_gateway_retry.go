@@ -239,6 +239,7 @@ func (s *AntigravityGatewayService) handleSmartRetry(p antigravityRetryLoopParam
 			}
 
 			retryResp, retryErr := p.httpUpstream.Do(retryReq, p.proxyURL, p.account.ID, p.account.Concurrency)
+			releaseUpstreamRequestPayload(retryReq, retryResp)
 			if retryErr != nil && geminiClientGoneCtx(p.ctx, p.c) {
 				if retryResp != nil && retryResp.Body != nil {
 					_ = retryResp.Body.Close()
@@ -425,6 +426,7 @@ func (s *AntigravityGatewayService) handleSingleAccountRetryInPlace(
 		}
 
 		retryResp, retryErr := p.httpUpstream.Do(retryReq, p.proxyURL, p.account.ID, p.account.Concurrency)
+		releaseUpstreamRequestPayload(retryReq, retryResp)
 		if retryErr != nil && geminiClientGoneCtx(p.ctx, p.c) {
 			if retryResp != nil && retryResp.Body != nil {
 				_ = retryResp.Body.Close()
@@ -574,6 +576,7 @@ urlFallbackLoop:
 			}
 
 			resp, err = p.httpUpstream.Do(upstreamReq, p.proxyURL, p.account.ID, p.account.Concurrency)
+			releaseUpstreamRequestPayload(upstreamReq, resp)
 			if err == nil && resp == nil {
 				err = errors.New("upstream returned nil response")
 			}

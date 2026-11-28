@@ -289,7 +289,7 @@ func TestGrokGlobalIPBlacklistFeeRequiresReal403(t *testing.T) {
 			var billed *service.OpenAIForwardResult
 			err := &service.UpstreamFailoverError{StatusCode: status, ResponseBody: []byte(`{"error":{"message":"blocked by global ip blacklist"}}`)}
 			body := []byte(`{"model":"grok-4.7","input":"hello"}`)
-			handled := h.handleGrokModerationRefusal(c, key, account, body, "grok-4.7", false, nil, err, func(result *service.OpenAIForwardResult) { billed = result })
+			handled := h.handleGrokModerationRefusalWithPrecomputedKeys(c, key, account, body, nil, false, "grok-4.7", false, nil, err, func(result *service.OpenAIForwardResult) { billed = result })
 			require.Equal(t, status == http.StatusForbidden, handled)
 			require.Equal(t, status == http.StatusForbidden, h.grokModerationSessionBlocked(c, key, body), "only an actual Grok 403 may persist the conversation block")
 			if status == http.StatusForbidden {

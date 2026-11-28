@@ -38,25 +38,6 @@ type anthropicPassthroughForwardInput struct {
 // Only terminal error events use this cap; ordinary output keeps its own limit.
 const anthropicPassthroughMaxErrorEventBytes = 1 << 20
 
-func (s *GatewayService) forwardAnthropicAPIKeyPassthrough(
-	ctx context.Context,
-	c *gin.Context,
-	account *Account,
-	body []byte,
-	reqModel string,
-	originalModel string,
-	reqStream bool,
-	startTime time.Time,
-) (*ForwardResult, error) {
-	return s.forwardAnthropicAPIKeyPassthroughWithInput(ctx, c, account, anthropicPassthroughForwardInput{
-		Body:          body,
-		RequestModel:  reqModel,
-		OriginalModel: originalModel,
-		RequestStream: reqStream,
-		StartTime:     startTime,
-	})
-}
-
 func (s *GatewayService) forwardAnthropicAPIKeyPassthroughWithInput(
 	ctx context.Context,
 	c *gin.Context,
@@ -117,6 +98,7 @@ func (s *GatewayService) forwardAnthropicAPIKeyPassthroughWithInput(
 		}
 
 		resp, err = s.httpUpstream.DoWithTLS(upstreamReq, proxyURL, account.ID, account.Concurrency, s.tlsFPProfileService.ResolveTLSProfile(account))
+		releaseUpstreamRequestPayload(upstreamReq, resp)
 		if err != nil {
 			if resp != nil && resp.Body != nil {
 				_ = resp.Body.Close()
@@ -285,12 +267,25 @@ func (s *GatewayService) forwardAnthropicAPIKeyPassthroughWithInput(
 		// 上游已经确认 200 + SSE，现在才允许向下游写心跳（之前保持静默，
 		// 保证上游 4xx/5xx 能按真实状态码返回）。
 		ArmOpenAIStreamSSEKeepalive(c)
+		var estimatedInputTokens int
+		var hasEstimatedInputTokens bool
+		var popRelease func()
+		ctx, popRelease = PushServiceRequestBodyRelease(ctx, c, func(_ *Account) {
+			if !IsStreamInputUsageObserved(ctx, c) && len(sentBody) > 0 {
+				estimatedInputTokens = estimateRequestInputTokens(sentBody)
+				hasEstimatedInputTokens = true
+			}
+			sentBody = nil
+			input.Body = nil
+			input.Parsed.ReleaseBody()
+		})
 		streamResult, err := s.handleStreamingResponseAnthropicAPIKeyPassthrough(ctx, resp, c, account, input.StartTime, input.RequestModel)
+		popRelease()
 		if err != nil {
 			// 流中断时保留已观测到的 usage 与错误一起返回，避免上游已计量的请求
 			// 完全漏记漏计费（issue #5148）。上游没有 usage 上报的部分按已产出内容
 			// 和请求体估算。
-			applyIncompleteAnthropicStreamUsage(account, streamResult, sentBody, input.OriginalModel, resp.Header.Get("x-request-id"), err)
+			applyIncompleteAnthropicStreamUsageWithEstimate(account, streamResult, sentBody, estimatedInputTokens, hasEstimatedInputTokens, input.OriginalModel, resp.Header.Get("x-request-id"), err)
 			if partial := partialStreamUsageResult(c, resp, streamResult, input.OriginalModel, input.RequestModel, input.StartTime, err); partial != nil {
 				return partial, err
 			}
@@ -476,6 +471,7 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthrough(
 	if !ok {
 		return nil, errors.New("streaming not supported")
 	}
+	TriggerRequestBodyRelease(ctx, c, account)
 
 	usage := &ClaudeUsage{}
 	var firstTokenMs *int

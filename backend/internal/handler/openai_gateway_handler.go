@@ -611,6 +611,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 	}
 	bootstrap := applyCodexBootstrapNormalizations(c, body)
 	body = bootstrap.Body
+	bootstrap.Body = nil
 	if bootstrap.UntrustedContext {
 		reqLog.Info("openai.codex_untrusted_context_normalized",
 			zap.String("normalization", "call_output_to_user_message"),
@@ -854,6 +855,38 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 	defer stopStreamHeaderKeepalive()
 	c.Request = c.Request.WithContext(service.WithOpenAIPreferNativeResponses(c.Request.Context()))
 
+	var attemptBody []byte
+	var precomputedCyberPlan cyberSessionBlockWritePlan
+	var precomputedCyberLastUserTurn string
+	var hasPrecomputedCyber bool
+	var precomputedGrokKeys []string
+	var hasPrecomputedGrok bool
+	var precomputedRequestPayloadHash string
+	hookCtx, releaseHook := service.WithRequestBodyReleaseHook(c.Request.Context(), c, func(acc *service.Account) {
+		if len(body) > 0 && precomputedRequestPayloadHash == "" {
+			precomputedRequestPayloadHash = service.HashUsageRequestPayload(body)
+		}
+		if h.gatewayService != nil && apiKey != nil {
+			if enabled, _ := h.gatewayService.CyberSessionBlockRuntime(c.Request.Context()); enabled {
+				precomputedCyberPlan = buildCyberSessionBlockWritePlan(apiKey.ID, c, sessionHashBody)
+				hasPrecomputedCyber = true
+			}
+		}
+		if h.contentModerationService != nil && apiKey != nil && h.contentModerationService.ShouldExtractCyberPolicyLastUserTurn(c.Request.Context(), apiKey.GroupID, reqModel) {
+			precomputedCyberLastUserTurn = service.ExtractCyberPolicyLastUserTurn(GetInboundEndpoint(c), body)
+		}
+		if acc != nil && strings.EqualFold(strings.TrimSpace(acc.Platform), service.PlatformGrok) && len(sessionHashBody) > 0 {
+			precomputedGrokKeys = service.PrecomputeGrokModerationTranscriptKeys(apiKey, sessionHashBody)
+			hasPrecomputedGrok = true
+		}
+		body = nil
+		sessionHashBody = nil
+		forwardBody = nil
+		attemptBody = nil
+	})
+	c.Request = c.Request.WithContext(hookCtx)
+	defer releaseHook.Clear(c)
+
 	for {
 		// Streaming Forward intentionally detaches the upstream request so usage can
 		// be drained after a disconnect. Re-check the client context before every
@@ -1004,9 +1037,13 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		// 跨 passthrough 边界的 failover：从 Kiro 等透传账号切到 Bedrock 等非透传账号前，
 		// 从不可变的 canonical forwardBody 派生本次尝试 body 并整块剔除上游私有的加密
 		// reasoning item（含耦合的 id/summary），避免非透传上游 400 拒绝 Kiro reasoning 形态。
-		attemptBody := h.deriveOpenAIForwardAttemptBody(reqLog, forwardBody, account, &passthroughFailoverState)
+		attemptBody = h.deriveOpenAIForwardAttemptBody(reqLog, forwardBody, account, &passthroughFailoverState)
 		if len(failedAccountIDs) > 0 {
 			attemptBody = service.RemovePreviousResponseIDFromBody(attemptBody)
+		}
+		forwardCtx := c.Request.Context()
+		if !account.IsPoolMode() && !fillSchedulingSwitchAllowed(switchCount, maxAccountSwitches) {
+			forwardCtx = service.WithPreOutputFailoverDisabled(forwardCtx)
 		}
 		result, err := func() (*service.OpenAIForwardResult, error) {
 			defer func() {
@@ -1014,13 +1051,17 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 					accountReleaseFunc()
 				}
 			}()
-			return h.gatewayService.Forward(c.Request.Context(), c, account, attemptBody)
+			return h.gatewayService.Forward(forwardCtx, c, account, attemptBody)
 		}()
 		var cyberBlockBodyHTTP []byte
 		if service.GetOpsCyberPolicy(c) != nil {
 			cyberBlockBodyHTTP = sessionHashBody
 		}
-		h.recordCyberPolicyIfMarked(c, apiKey, account, subscription, reqModel, shouldRecordStandaloneCyberUsage(err, result != nil), cyberBlockBodyHTTP, body, clientRequestedUsageFields(c, channelMapping, reqModel, ""), service.HashUsageRequestPayload(body))
+		cyberPayloadHash := precomputedRequestPayloadHash
+		if cyberPayloadHash == "" && len(body) > 0 {
+			cyberPayloadHash = service.HashUsageRequestPayload(body)
+		}
+		h.recordCyberPolicyIfMarkedWithPrecomputed(c, apiKey, account, subscription, reqModel, shouldRecordStandaloneCyberUsage(err, result != nil), cyberBlockBodyHTTP, precomputedCyberPlan, hasPrecomputedCyber, body, precomputedCyberLastUserTurn, clientRequestedUsageFields(c, channelMapping, reqModel, ""), cyberPayloadHash)
 		forwardDurationMs := time.Since(forwardStart).Milliseconds()
 		upstreamLatencyMs, _ := getContextInt64(c, service.OpsUpstreamLatencyMsKey)
 		responseLatencyMs := forwardDurationMs
@@ -1041,7 +1082,10 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 			stampOpenAIRequestedReasoningEffort(res, c)
 			userAgent := c.GetHeader("User-Agent")
 			clientIP := ip.GetClientIP(c)
-			requestPayloadHash := service.HashUsageRequestPayload(body)
+			requestPayloadHash := precomputedRequestPayloadHash
+			if requestPayloadHash == "" && len(body) > 0 {
+				requestPayloadHash = service.HashUsageRequestPayload(body)
+			}
 			inboundEndpoint := GetInboundEndpoint(c)
 			upstreamEndpoint := resolveOpenAIUpstreamEndpoint(c, account, res)
 			quotaPlatform := service.QuotaPlatform(c.Request.Context(), apiKey)
@@ -1106,7 +1150,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 				retainedUsage.settle(openAISettleUsage(result, submitResponsesUsage))
 				return
 			}
-			if h.handleGrokModerationRefusal(c, apiKey, account, sessionHashBody, reqModel, reqStream, result, err, submitResponsesUsage) {
+			if h.handleGrokModerationRefusalWithPrecomputedKeys(c, apiKey, account, sessionHashBody, precomputedGrokKeys, hasPrecomputedGrok, reqModel, reqStream, result, err, submitResponsesUsage) {
 				retainedUsage.discard()
 				return
 			}
@@ -1297,7 +1341,7 @@ func isBareOpenAIResponsesPath(c *gin.Context) bool {
 
 func isOpenAIRemoteCompactionV2Request(c *gin.Context, body []byte) bool {
 	stream, valid := parseOpenAICompatibleStream(c, body)
-	return valid && stream && service.HasCompactionTriggerInInput(body)
+	return valid && stream && service.HasCompactionTriggerInInputCtx(c, body)
 }
 
 // normalizeOpenAIResponsesCompactRequest keeps Codex remote compaction v2 on
@@ -1306,7 +1350,7 @@ func isOpenAIRemoteCompactionV2Request(c *gin.Context, body []byte) bool {
 // 返回归一化后的 body；ok=false 表示错误响应已写出，调用方应直接 return。
 func (h *OpenAIGatewayHandler) normalizeOpenAIResponsesCompactRequest(c *gin.Context, reqLog *zap.Logger, body []byte) ([]byte, bool) {
 	isCompactRequest := isOpenAILegacyCompactPath(c)
-	if !isCompactRequest && isBareOpenAIResponsesPath(c) && service.HasCompactionTriggerInInput(body) {
+	if !isCompactRequest && isBareOpenAIResponsesPath(c) && service.HasCompactionTriggerInInputCtx(c, body) {
 		if normalized, changed, err := service.NormalizeCompactionTriggerInputOrder(body); err != nil {
 			reqLog.Warn("codex.remote_compact.trigger_order_normalization_failed", zap.Error(err))
 		} else if changed {
@@ -1621,13 +1665,15 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 	msgPricingCtx = h.gatewayService.WithCodexQuotaOverdraftScheduling(msgPricingCtx)
 	msgPricingCtx, pricingAt := h.gatewayService.WithOpenAIRequestPricingContext(msgPricingCtx, apiKey.GroupID)
 	c.Request = c.Request.WithContext(msgPricingCtx)
-	preauthorizationBody := mappedBodyForMessages(channelMappingMsg.Mapped, channelMappingMsg.MappedModel)
-	balanceGuard, err := preauthorizeTextGatewayRequest(
-		msgPricingCtx, h.balancePreauthorizer, h.gatewayService,
-		apiKey, subscription, preauthorizationBody,
-		service.BalancePreauthorizationBillingModel(reqModel, channelMappingMsg),
-		pricingAt, gjson.GetBytes(preauthorizationBody, "service_tier").String(),
-	)
+	balanceGuard, err := func() (*service.BalancePreauthorizationGuard, error) {
+		preauthorizationBody := mappedBodyForMessages(channelMappingMsg.Mapped, channelMappingMsg.MappedModel)
+		return preauthorizeTextGatewayRequest(
+			msgPricingCtx, h.balancePreauthorizer, h.gatewayService,
+			apiKey, subscription, preauthorizationBody,
+			service.BalancePreauthorizationBillingModel(reqModel, channelMappingMsg),
+			pricingAt, gjson.GetBytes(preauthorizationBody, "service_tier").String(),
+		)
+	}()
 	if err != nil {
 		status, code, message, retryAfter := billingErrorDetails(err)
 		if retryAfter > 0 {
@@ -1653,6 +1699,37 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 		stopStreamHeaderKeepalive = service.StartOpenAIStreamSSEKeepalive(c, h.openAICompactKeepaliveInterval())
 	}
 	defer stopStreamHeaderKeepalive()
+
+	var currentForwardBody []byte
+	var precomputedMsgCyberPlan cyberSessionBlockWritePlan
+	var precomputedMsgCyberLastUserTurn string
+	var hasPrecomputedMsgCyber bool
+	var precomputedMsgGrokKeys []string
+	var hasPrecomputedMsgGrok bool
+	var precomputedMsgPayloadHash string
+	msgHookCtx, msgReleaseHook := service.WithRequestBodyReleaseHook(c.Request.Context(), c, func(acc *service.Account) {
+		if len(body) > 0 && precomputedMsgPayloadHash == "" {
+			precomputedMsgPayloadHash = service.HashUsageRequestPayload(body)
+		}
+		if h.gatewayService != nil && apiKey != nil {
+			if enabled, _ := h.gatewayService.CyberSessionBlockRuntime(c.Request.Context()); enabled {
+				precomputedMsgCyberPlan = buildCyberSessionBlockWritePlan(apiKey.ID, c, body)
+				hasPrecomputedMsgCyber = true
+			}
+		}
+		if h.contentModerationService != nil && apiKey != nil && h.contentModerationService.ShouldExtractCyberPolicyLastUserTurn(c.Request.Context(), apiKey.GroupID, reqModel) {
+			precomputedMsgCyberLastUserTurn = service.ExtractCyberPolicyLastUserTurn(GetInboundEndpoint(c), body)
+		}
+		if acc != nil && strings.EqualFold(strings.TrimSpace(acc.Platform), service.PlatformGrok) && len(body) > 0 {
+			precomputedMsgGrokKeys = service.PrecomputeGrokModerationTranscriptKeys(apiKey, body)
+			hasPrecomputedMsgGrok = true
+		}
+		body = nil
+		mappedBodyForMessages = nil
+		currentForwardBody = nil
+	})
+	c.Request = c.Request.WithContext(msgHookCtx)
+	defer msgReleaseHook.Clear(c)
 
 	for {
 		if failoverClientGone(c) {
@@ -1756,24 +1833,32 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 
 		defaultMappedModel := strings.TrimSpace(effectiveMappedModel)
 		// 应用渠道模型映射到请求体
-		forwardBody := mappedBodyForMessages(channelMappingMsg.Mapped, channelMappingMsg.MappedModel)
+		currentForwardBody = mappedBodyForMessages(channelMappingMsg.Mapped, channelMappingMsg.MappedModel)
 		// Exclude pre-header SSE comments from the semantic-output snapshot;
 		// otherwise a stalled account that emitted only keepalives would block
 		// the fill-scheduling retry path.
 		writerSizeBeforeForward := service.OpenAICompactKeepaliveAdjustedWrittenSize(c)
+		forwardCtx := c.Request.Context()
+		if !account.IsPoolMode() && !fillSchedulingSwitchAllowed(switchCount, maxAccountSwitches) {
+			forwardCtx = service.WithPreOutputFailoverDisabled(forwardCtx)
+		}
 		result, err := func() (*service.OpenAIForwardResult, error) {
 			defer func() {
 				if accountReleaseFunc != nil {
 					accountReleaseFunc()
 				}
 			}()
-			return h.gatewayService.ForwardAsAnthropic(c.Request.Context(), c, account, forwardBody, promptCacheKey, defaultMappedModel)
+			return h.gatewayService.ForwardAsAnthropic(forwardCtx, c, account, currentForwardBody, promptCacheKey, defaultMappedModel)
 		}()
 		var cyberBlockBodyMsg []byte
 		if service.GetOpsCyberPolicy(c) != nil {
 			cyberBlockBodyMsg = body
 		}
-		h.recordCyberPolicyIfMarked(c, apiKey, account, subscription, reqModel, shouldRecordStandaloneCyberUsage(err, result != nil), cyberBlockBodyMsg, body, clientRequestedUsageFields(c, channelMappingMsg, reqModel, ""), service.HashUsageRequestPayload(body))
+		msgCyberPayloadHash := precomputedMsgPayloadHash
+		if msgCyberPayloadHash == "" && len(body) > 0 {
+			msgCyberPayloadHash = service.HashUsageRequestPayload(body)
+		}
+		h.recordCyberPolicyIfMarkedWithPrecomputed(c, apiKey, account, subscription, reqModel, shouldRecordStandaloneCyberUsage(err, result != nil), cyberBlockBodyMsg, precomputedMsgCyberPlan, hasPrecomputedMsgCyber, body, precomputedMsgCyberLastUserTurn, clientRequestedUsageFields(c, channelMappingMsg, reqModel, ""), msgCyberPayloadHash)
 		forwardDurationMs := time.Since(forwardStart).Milliseconds()
 		upstreamLatencyMs, _ := getContextInt64(c, service.OpsUpstreamLatencyMsKey)
 		responseLatencyMs := forwardDurationMs
@@ -1795,7 +1880,10 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 			stampOpenAIRequestedReasoningEffort(res, c)
 			userAgent := c.GetHeader("User-Agent")
 			clientIP := ip.GetClientIP(c)
-			requestPayloadHash := service.HashUsageRequestPayload(body)
+			requestPayloadHash := precomputedMsgPayloadHash
+			if requestPayloadHash == "" && len(body) > 0 {
+				requestPayloadHash = service.HashUsageRequestPayload(body)
+			}
 			inboundEndpoint := GetInboundEndpoint(c)
 			upstreamEndpoint := resolveOpenAIUpstreamEndpoint(c, account, res)
 			quotaPlatform := service.QuotaPlatform(c.Request.Context(), apiKey)
@@ -1852,7 +1940,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 				retainedUsage.settle(openAISettleUsage(result, submitMessagesUsage))
 				return
 			}
-			if h.handleGrokModerationRefusal(c, apiKey, account, body, reqModel, reqStream, result, err, submitMessagesUsage) {
+			if h.handleGrokModerationRefusalWithPrecomputedKeys(c, apiKey, account, body, precomputedMsgGrokKeys, hasPrecomputedMsgGrok, reqModel, reqStream, result, err, submitMessagesUsage) {
 				retainedUsage.discard()
 				return
 			}
@@ -2127,16 +2215,12 @@ const (
 )
 
 func (h *OpenAIGatewayHandler) validateFunctionCallOutputRequest(c *gin.Context, body []byte, reqLog *zap.Logger) bool {
-	if !gjson.GetBytes(body, `input.#(type=="function_call_output")`).Exists() {
+	hasExactFunctionCallOutput, validation := service.ValidateFunctionCallOutputRequestCtx(c, body)
+	if !hasExactFunctionCallOutput || !validation.HasFunctionCallOutput {
 		return true
 	}
 
-	validation := service.ValidateFunctionCallOutputContextBytes(body)
-	if !validation.HasFunctionCallOutput {
-		return true
-	}
-
-	previousResponseID := strings.TrimSpace(gjson.GetBytes(body, "previous_response_id").String())
+	previousResponseID := strings.TrimSpace(service.RequestBodyTop(c, body).Get("previous_response_id").String())
 	if previousResponseID != "" {
 		// HTTP 续传对 OpenAI API-key 账号是支持的：保留 previous_response_id，
 		// 由上游按 response.id 解析历史。OAuth/SetupToken 账号由选号阶段跳过并
@@ -5296,6 +5380,10 @@ func (h *OpenAIGatewayHandler) enqueueCyberSessionBlockedOpsEntry(c *gin.Context
 // 正常 RecordUsage 消费的 result 时，recordStandaloneUsage 才为 true 并补一条用量行；
 // partial result 始终由正常任务统一记录和结算，避免同一请求出现两个 money task。
 func (h *OpenAIGatewayHandler) recordCyberPolicyIfMarked(c *gin.Context, apiKey *service.APIKey, account *service.Account, subscription *service.UserSubscription, model string, recordStandaloneUsage bool, cyberBlockBody []byte, requestBody []byte, channelFields service.ChannelUsageFields, requestPayloadHash string) {
+	h.recordCyberPolicyIfMarkedWithPrecomputed(c, apiKey, account, subscription, model, recordStandaloneUsage, cyberBlockBody, cyberSessionBlockWritePlan{}, false, requestBody, "", channelFields, requestPayloadHash)
+}
+
+func (h *OpenAIGatewayHandler) recordCyberPolicyIfMarkedWithPrecomputed(c *gin.Context, apiKey *service.APIKey, account *service.Account, subscription *service.UserSubscription, model string, recordStandaloneUsage bool, cyberBlockBody []byte, precomputedPlan cyberSessionBlockWritePlan, hasPrecomputedPlan bool, requestBody []byte, precomputedLastUserTurn string, channelFields service.ChannelUsageFields, requestPayloadHash string) {
 	mark := service.GetOpsCyberPolicy(c)
 	if mark == nil {
 		return
@@ -5379,7 +5467,12 @@ func (h *OpenAIGatewayHandler) recordCyberPolicyIfMarked(c *gin.Context, apiKey 
 		CreatedAt:       time.Now(),
 	}
 	if gwSvc != nil && apiKey != nil {
-		plan := buildCyberSessionBlockWritePlan(apiKey.ID, c, cyberBlockBody)
+		var plan cyberSessionBlockWritePlan
+		if hasPrecomputedPlan {
+			plan = precomputedPlan
+		} else {
+			plan = buildCyberSessionBlockWritePlan(apiKey.ID, c, cyberBlockBody)
+		}
 		if len(plan.keys) > 0 {
 			blockCtx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 			gwSvc.MarkCyberSessionBlocked(blockCtx, plan.scopeKey, plan.keys)
@@ -5414,21 +5507,22 @@ func (h *OpenAIGatewayHandler) recordCyberPolicyIfMarked(c *gin.Context, apiKey 
 		defer cancel()
 		if cmSvc != nil {
 			cmSvc.RecordCyberPolicyEvent(ctx, service.CyberPolicyRecordInput{
-				RequestID:       requestID,
-				UserID:          userID,
-				UserEmail:       userEmail,
-				APIKeyID:        apiKeyID,
-				APIKeyName:      apiKeyName,
-				GroupID:         groupID,
-				GroupName:       groupName,
-				Endpoint:        inboundEndpoint,
-				Model:           model,
-				RequestBody:     requestBody,
-				UpstreamMessage: mark.Message,
-				UpstreamBody:    mark.Body,
-				UpstreamStatus:  mark.UpstreamStatus,
-				UpstreamInTok:   mark.UpstreamInTok,
-				UpstreamOutTok:  mark.UpstreamOutTok,
+				RequestID:               requestID,
+				UserID:                  userID,
+				UserEmail:               userEmail,
+				APIKeyID:                apiKeyID,
+				APIKeyName:              apiKeyName,
+				GroupID:                 groupID,
+				GroupName:               groupName,
+				Endpoint:                inboundEndpoint,
+				Model:                   model,
+				RequestBody:             requestBody,
+				PrecomputedLastUserTurn: precomputedLastUserTurn,
+				UpstreamMessage:         mark.Message,
+				UpstreamBody:            mark.Body,
+				UpstreamStatus:          mark.UpstreamStatus,
+				UpstreamInTok:           mark.UpstreamInTok,
+				UpstreamOutTok:          mark.UpstreamOutTok,
 			})
 		}
 		if opsSvc != nil {

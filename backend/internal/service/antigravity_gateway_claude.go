@@ -474,16 +474,30 @@ func (s *AntigravityGatewayService) Forward(ctx context.Context, c *gin.Context,
 		c.Header("x-request-id", requestID)
 	}
 
+	geminiBody = nil
 	var usage *ClaudeUsage
 	var firstTokenMs *int
 	var clientDisconnect bool
 	var responseErr error
 	balanceAborted := false
 	goneOutputTokens := 0
+	var estimatedInputTokens int
+	var hasEstimatedInputTokens bool
 	hasFinalOutput := false
 	if claudeReq.Stream {
+		var popRelease func()
+		ctx, popRelease = PushServiceRequestBodyRelease(ctx, c, func(_ *Account) {
+			if len(body) > 0 {
+				estimatedInputTokens = estimateRequestInputTokens(body)
+				hasEstimatedInputTokens = true
+			}
+			body = nil
+			geminiBody = nil
+		})
+		TriggerRequestBodyRelease(ctx, c, account)
 		// 客户端要求流式，直接透传转换
 		streamRes, err := s.handleClaudeStreamingResponse(c, resp, startTime, originalModel)
+		popRelease()
 		if err != nil {
 			logger.LegacyPrintf("service.antigravity_gateway", "%s status=stream_error error=%v", prefix, err)
 			if streamRes == nil || (!streamRes.balanceAborted && !isBalanceHoldTopUpError(err)) {
@@ -528,7 +542,7 @@ func (s *AntigravityGatewayService) Forward(ctx context.Context, c *gin.Context,
 		if balanceAborted {
 			event = "antigravity_usage.balance_abort_estimated"
 		}
-		applyIncompleteGeminiUsage(event, account, billingModel, usage, goneOutputTokens, body, hasFinalOutput)
+		applyIncompleteGeminiUsageWithEstimate(event, account, billingModel, usage, goneOutputTokens, body, estimatedInputTokens, hasEstimatedInputTokens, hasFinalOutput)
 	}
 
 	return &ForwardResult{

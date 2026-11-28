@@ -1,8 +1,10 @@
 package service
 
 import (
+	"bytes"
 	"strings"
 
+	"github.com/gin-gonic/gin"
 	"github.com/tidwall/gjson"
 )
 
@@ -156,51 +158,85 @@ func AnalyzeToolContinuationSignals(reqBody map[string]any) ToolContinuationSign
 
 // ValidateFunctionCallOutputContextBytes 基于 raw JSON 校验工具输出续链，避免 handler 预校验阶段全量解码大 input。
 func ValidateFunctionCallOutputContextBytes(body []byte) FunctionCallOutputValidation {
-	result := FunctionCallOutputValidation{}
-	if len(body) == 0 {
-		return result
-	}
-	// handler 热路径只读扫描 input，避免 GetBytes 为大 Responses body 复制整段 JSON。
-	input := parseRawJSONView(body).Get("input")
-	if !input.IsArray() {
-		return result
-	}
+	return ValidateFunctionCallOutputContextBytesCtx(nil, body)
+}
 
+// ValidateFunctionCallOutputContextBytesCtx reuses request-scoped BodyTop /
+// responsesInputIndex when c != nil.
+func ValidateFunctionCallOutputContextBytesCtx(c *gin.Context, body []byte) FunctionCallOutputValidation {
+	if len(body) == 0 {
+		return FunctionCallOutputValidation{}
+	}
+	if !bytes.Contains(body, []byte("_output")) && !bytes.Contains(body, []byte("_call")) && !bytes.Contains(body, []byte(`\u`)) {
+		return FunctionCallOutputValidation{}
+	}
+	if idx := RequestBodyTop(c, body).responsesInput(); idx != nil && idx.usable {
+		return validateFunctionCallOutputFromIndex(idx)
+	}
+	_, validation := validateFunctionCallOutputSpanOrFallback(c, body, false)
+	return validation
+}
+
+// ValidateFunctionCallOutputRequestCtx computes both whether input contains an
+// item with type == "function_call_output" and the full continuation validation
+// in a single pass, reusing responsesInputIndex when available.
+func ValidateFunctionCallOutputRequestCtx(c *gin.Context, body []byte) (hasExactFunctionCallOutput bool, validation FunctionCallOutputValidation) {
+	if len(body) == 0 {
+		return false, FunctionCallOutputValidation{}
+	}
+	if !bytes.Contains(body, []byte("function_call_output")) && !bytes.Contains(body, []byte(`\u`)) {
+		return false, FunctionCallOutputValidation{}
+	}
+	if idx := RequestBodyTop(c, body).responsesInput(); idx != nil && idx.usable {
+		if !idx.hasExactFunctionCallOutput {
+			return false, FunctionCallOutputValidation{}
+		}
+		return true, validateFunctionCallOutputFromIndex(idx)
+	}
+	return validateFunctionCallOutputSpanOrFallback(c, body, true)
+}
+
+func validateFunctionCallOutputFromIndex(idx *responsesInputIndex) FunctionCallOutputValidation {
+	result := FunctionCallOutputValidation{}
+	if !idx.isArray {
+		return result
+	}
 	var callIDs map[string]struct{}
 	var referenceIDs map[string]struct{}
-	input.ForEach(func(_, item gjson.Result) bool {
-		if !item.IsObject() {
-			return true
+	for _, it := range idx.items {
+		if !it.isObject {
+			continue
 		}
-		itemType := item.Get("type").String()
 		switch {
-		case isCodexToolCallOutputItemType(itemType):
+		case isCodexToolCallOutputItemType(it.itemType):
 			result.HasFunctionCallOutput = true
-			callID := strings.TrimSpace(item.Get("call_id").String())
+			callID := strings.TrimSpace(it.callID)
 			if callID == "" {
 				result.HasFunctionCallOutputMissingCallID = true
-				return true
+				continue
 			}
 			if callIDs == nil {
 				callIDs = make(map[string]struct{})
 			}
 			callIDs[callID] = struct{}{}
-		case isCodexToolCallContextItemType(itemType):
-			if strings.TrimSpace(item.Get("call_id").String()) != "" {
+		case isCodexToolCallContextItemType(it.itemType):
+			if strings.TrimSpace(it.callID) != "" {
 				result.HasToolCallContext = true
 			}
-		case itemType == "item_reference":
-			idValue := strings.TrimSpace(item.Get("id").String())
+		case it.itemType == "item_reference":
+			idValue := strings.TrimSpace(it.id)
 			if idValue == "" {
-				return true
+				continue
 			}
 			if referenceIDs == nil {
 				referenceIDs = make(map[string]struct{})
 			}
 			referenceIDs[idValue] = struct{}{}
 		}
-		return !result.HasFunctionCallOutput || !result.HasToolCallContext
-	})
+		if result.HasFunctionCallOutput && result.HasToolCallContext {
+			break
+		}
+	}
 	if !result.HasFunctionCallOutput || result.HasToolCallContext || len(callIDs) == 0 || len(referenceIDs) == 0 {
 		return result
 	}
@@ -213,6 +249,147 @@ func ValidateFunctionCallOutputContextBytes(body []byte) FunctionCallOutputValid
 	}
 	result.HasItemReferenceForAllCallIDs = allReferenced
 	return result
+}
+
+func validateFunctionCallOutputSpanOrFallback(c *gin.Context, body []byte, trackExact bool) (bool, FunctionCallOutputValidation) {
+	result := FunctionCallOutputValidation{}
+	hasExact := false
+	var callIDs map[string]struct{}
+	var referenceIDs map[string]struct{}
+
+	applyItem := func(itemType, callID, idValue string) bool {
+		if trackExact && itemType == "function_call_output" {
+			hasExact = true
+		}
+		switch {
+		case isCodexToolCallOutputItemType(itemType):
+			result.HasFunctionCallOutput = true
+			callID = strings.TrimSpace(callID)
+			if callID == "" {
+				result.HasFunctionCallOutputMissingCallID = true
+				return true
+			}
+			if callIDs == nil {
+				callIDs = make(map[string]struct{})
+			}
+			callIDs[callID] = struct{}{}
+		case isCodexToolCallContextItemType(itemType):
+			if strings.TrimSpace(callID) != "" {
+				result.HasToolCallContext = true
+			}
+		case itemType == "item_reference":
+			idValue = strings.TrimSpace(idValue)
+			if idValue == "" {
+				return true
+			}
+			if referenceIDs == nil {
+				referenceIDs = make(map[string]struct{})
+			}
+			referenceIDs[idValue] = struct{}{}
+		}
+		if (!trackExact || hasExact) && result.HasFunctionCallOutput && result.HasToolCallContext {
+			return false
+		}
+		return true
+	}
+
+	inputStart, inputEnd, isArray, ok := locateJSONInputArraySpan(c, body)
+	if !ok {
+		input := parseRawJSONView(body).Get("input")
+		if !input.IsArray() {
+			return false, result
+		}
+		input.ForEach(func(_, item gjson.Result) bool {
+			if !item.IsObject() {
+				return true
+			}
+			return applyItem(item.Get("type").String(), item.Get("call_id").String(), item.Get("id").String())
+		})
+	} else {
+		if !isArray {
+			return false, result
+		}
+		stopped := false
+		elemOK := jsonForEachElementSpan(body, inputStart, inputEnd, func(elemStart, elemEnd int) bool {
+			if body[elemStart] != '{' {
+				return true
+			}
+			elem := jsonView(body[elemStart:elemEnd])
+			if !strings.Contains(elem, "_output") && !strings.Contains(elem, "_call") && !strings.Contains(elem, "item_reference") && !strings.Contains(elem, `\u`) {
+				return true
+			}
+			var typeRaw, callIDRaw, idRaw string
+			var hasType, hasCallID, hasID bool
+			memberOK := jsonForEachMemberSpan(body, elemStart, elemEnd, func(key string, valStart, valEnd, _, _ int) bool {
+				switch key {
+				case "type":
+					if !hasType {
+						typeRaw = jsonView(body[valStart:valEnd])
+						hasType = true
+					}
+				case "call_id":
+					if !hasCallID {
+						callIDRaw = jsonView(body[valStart:valEnd])
+						hasCallID = true
+					}
+				case "id":
+					if !hasID {
+						idRaw = jsonView(body[valStart:valEnd])
+						hasID = true
+					}
+				}
+				return !hasType || !hasCallID || !hasID
+			})
+			if !memberOK {
+				item := gjson.Parse(elem)
+				if !applyItem(item.Get("type").String(), item.Get("call_id").String(), item.Get("id").String()) {
+					stopped = true
+					return false
+				}
+				return true
+			}
+			var itemType, callID, idVal string
+			if hasType {
+				itemType = extractJSONMemberString(typeRaw, false)
+			}
+			if hasCallID {
+				callID = extractJSONMemberString(callIDRaw, false)
+			}
+			if hasID {
+				idVal = extractJSONMemberString(idRaw, false)
+			}
+			if !applyItem(itemType, callID, idVal) {
+				stopped = true
+				return false
+			}
+			return true
+		})
+		if !elemOK && !stopped {
+			result = FunctionCallOutputValidation{}
+			hasExact = false
+			callIDs = nil
+			referenceIDs = nil
+			gjson.Parse(jsonView(body[inputStart:inputEnd])).ForEach(func(_, item gjson.Result) bool {
+				if !item.IsObject() {
+					return true
+				}
+				return applyItem(item.Get("type").String(), item.Get("call_id").String(), item.Get("id").String())
+			})
+		}
+	}
+
+	if !result.HasFunctionCallOutput || result.HasToolCallContext || len(callIDs) == 0 || len(referenceIDs) == 0 {
+		return hasExact, result
+	}
+	allReferenced := true
+	for callID := range callIDs {
+		if _, ok := referenceIDs[callID]; !ok {
+			allReferenced = false
+			break
+		}
+	}
+	result.HasItemReferenceForAllCallIDs = allReferenced
+	return hasExact, result
 }
 
 // ToolCallOutputContextCoverage 描述 input 中工具输出与可重建上下文的覆盖关系，

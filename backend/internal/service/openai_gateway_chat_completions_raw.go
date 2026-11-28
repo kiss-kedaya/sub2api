@@ -325,7 +325,13 @@ func (s *OpenAIGatewayService) forwardAsRawChatCompletions(
 	var result *OpenAIForwardResult
 	var forwardErr error
 	if clientStream {
-		result, forwardErr = s.streamRawChatCompletions(c, resp, account, originalModel, billingModel, upstreamModel, reasoningEffort, serviceTier, startTime, len(body))
+		_, releaseRawCC := PushServiceRequestBodyRelease(ctx, c, func(_ *Account) {
+			body = nil
+			upstreamBody = nil
+		})
+		defer releaseRawCC()
+		reqBodyLen := len(body)
+		result, forwardErr = s.streamRawChatCompletions(c, resp, account, originalModel, billingModel, upstreamModel, reasoningEffort, serviceTier, startTime, reqBodyLen)
 	} else {
 		result, forwardErr = s.bufferRawChatCompletions(c, resp, account, originalModel, billingModel, upstreamModel, reasoningEffort, serviceTier, startTime)
 	}
@@ -371,6 +377,10 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 		observer = beginUpstreamResponseModelObservation(c)
 	}
 	requestID := resp.Header.Get("x-request-id")
+	releaseCtx := context.TODO()
+	if c != nil && c.Request != nil {
+		releaseCtx = c.Request.Context()
+	}
 	writeStreamHeaders := s.newStreamHeaderWriter(c, resp.Header)
 	scanner := s.newUpstreamSSEScanner(resp.Body)
 	// Read once: the chunk carrying usage arrives much later, and the headers are
@@ -428,6 +438,9 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 				}
 			}
 			pendingLines = pendingLines[:0]
+			if !clientOutputStarted {
+				TriggerRequestBodyRelease(releaseCtx, c, account)
+			}
 			clientOutputStarted = true
 			upstreamErrorDelivered = upstreamErrorDelivered || upstreamErrorBuffered
 		}

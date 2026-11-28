@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"github.com/tidwall/gjson"
 )
 
 // jsonValidCases mixes documents every JSON parser agrees on with the corner
@@ -28,6 +29,35 @@ var jsonValidCases = []string{
 func TestValidJSONMatchesStdlibOnCases(t *testing.T) {
 	for _, c := range jsonValidCases {
 		require.Equalf(t, json.Valid([]byte(c)), validJSON([]byte(c)), "input %q", c)
+	}
+}
+
+func TestValidJSONImpliesGJSONValidBytes(t *testing.T) {
+	check := func(doc []byte) {
+		t.Helper()
+		v := validJSON(doc)
+		g := gjson.ValidBytes(doc)
+		if v && !g {
+			t.Fatalf("validJSON=true but gjson.ValidBytes=false for %q", doc)
+		}
+		require.Equalf(t, g, v || g, "validJSON||gjson mismatch for %q", doc)
+		require.Equalf(t, g, (BodyTop{body: doc}).Valid(), "BodyTop(nil).Valid mismatch for %q", doc)
+		top := BodyTop{body: doc, idx: &bodyTopIndex{body: doc}}
+		require.Equalf(t, g, top.Valid(), "BodyTop(idx).Valid mismatch for %q", doc)
+	}
+	for _, c := range jsonValidCases {
+		check([]byte(c))
+	}
+	for _, depth := range []int{1, 64, 9999, 10000, 10001, 10002} {
+		for _, open := range []struct{ o, c string }{{"[", "]"}, {`{"a":`, "}"}} {
+			check([]byte(strings.Repeat(open.o, depth) + "1" + strings.Repeat(open.c, depth)))
+		}
+	}
+	r := rand.New(rand.NewSource(17))
+	for i := 0; i < 60000; i++ {
+		doc := randomJSONValue(r, 4)
+		check([]byte(doc))
+		check([]byte(mutateJSON(r, doc)))
 	}
 }
 

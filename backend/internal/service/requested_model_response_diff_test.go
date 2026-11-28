@@ -1,8 +1,11 @@
 package service
 
 import (
+	"bufio"
 	"bytes"
 	"fmt"
+	"net"
+	"net/http"
 	"strconv"
 	"strings"
 	"testing"
@@ -286,6 +289,79 @@ func BenchmarkRewriteSSEFrame(b *testing.B) {
 				for _, f := range tc.frames {
 					_ = refRewriteSSEFrame(f, tc.protocol, tc.model)
 				}
+			}
+		})
+	}
+}
+
+type discardGinWriter struct {
+	header http.Header
+	status int
+	size   int
+}
+
+func (d *discardGinWriter) Header() http.Header         { return d.header }
+func (d *discardGinWriter) Write(b []byte) (int, error) { d.size += len(b); return len(b), nil }
+func (d *discardGinWriter) WriteString(s string) (int, error) {
+	d.size += len(s)
+	return len(s), nil
+}
+func (d *discardGinWriter) WriteHeader(code int) { d.status = code }
+func (d *discardGinWriter) WriteHeaderNow()      {}
+func (d *discardGinWriter) Status() int          { return d.status }
+func (d *discardGinWriter) Size() int            { return d.size }
+func (d *discardGinWriter) Written() bool        { return d.size > 0 }
+func (d *discardGinWriter) Flush()               {}
+func (d *discardGinWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	return nil, nil, http.ErrNotSupported
+}
+func (d *discardGinWriter) CloseNotify() <-chan bool { return nil }
+func (d *discardGinWriter) Pusher() http.Pusher      { return nil }
+
+func BenchmarkRequestedModelWriterSSE(b *testing.B) {
+	enabledTrue := func() bool { return true }
+	enabledFalse := func() bool { return false }
+	for _, tc := range []struct {
+		name     string
+		frames   [][]byte
+		protocol string
+		model    string
+		enabled  bool
+	}{
+		{"responses_1000", ssefixture.ResponsesStream(1000), "openai", "client-model", true},
+		{"chat_1000", ssefixture.ChatStream(1000), "openai", "client-model", true},
+		{"chat_1000_same_model", ssefixture.ChatStream(1000), "openai", "model-a", true},
+		{"anthropic_1000", ssefixture.AnthropicStream(1000), "anthropic", "client-model", true},
+		{"responses_1000_disabled", ssefixture.ResponsesStream(1000), "openai", "client-model", false},
+	} {
+		rawLines := ssefixture.Lines(tc.frames)
+		lines := make([]string, len(rawLines))
+		total := 0
+		for i, line := range rawLines {
+			lines[i] = line + "\n"
+			total += len(lines[i])
+		}
+		enabledFn := enabledTrue
+		if !tc.enabled {
+			enabledFn = enabledFalse
+		}
+		hdr := http.Header{"Content-Type": {"text/event-stream"}}
+		b.Run(tc.name, func(b *testing.B) {
+			b.SetBytes(int64(total))
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				dw := discardGinWriter{header: hdr, status: http.StatusOK}
+				w := &requestedModelResponseWriter{
+					ResponseWriter: &dw,
+					protocol:       tc.protocol,
+					model:          tc.model,
+					enabled:        enabledFn,
+				}
+				for _, line := range lines {
+					_, _ = w.WriteString(line)
+				}
+				w.finish()
 			}
 		})
 	}

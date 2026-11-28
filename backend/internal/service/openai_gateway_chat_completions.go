@@ -421,9 +421,15 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 	// Keep the body that went upstream: a request that ends without a usage report is
 	// billed for the input it really sent (see applyCompatIncompleteUsage).
 	stashCompatUpstreamRequestBody(c, account, responsesBody)
+	serviceTier := extractOpenAIServiceTierFromBody(c, responsesBody)
 	var result *OpenAIForwardResult
 	var handleErr error
 	if clientStream {
+		_, releaseCC := PushServiceRequestBodyRelease(ctx, c, func(_ *Account) {
+			body = nil
+			responsesBody = nil
+		})
+		defer releaseCC()
 		result, handleErr = s.handleChatStreamingResponse(resp, c, account, originalModel, billingModel, upstreamModel, startTime, len(body))
 	} else {
 		result, handleErr = s.handleChatBufferedStreamingResponse(resp, c, account, originalModel, billingModel, upstreamModel, startTime)
@@ -443,7 +449,7 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 	// fast policy filter/force 之后）里的 tier，policy filter 删掉字段后不再
 	// 按原请求 Fast 计费。
 	if result != nil && (handleErr == nil || isBalanceHoldTopUpError(handleErr)) {
-		if tier := resolvedOpenAIUpstreamServiceTier(c, extractOpenAIServiceTierFromBody(c, responsesBody)); tier != nil {
+		if tier := resolvedOpenAIUpstreamServiceTier(c, serviceTier); tier != nil {
 			result.ServiceTier = tier
 		}
 		if responsesReq.Reasoning != nil && responsesReq.Reasoning.Effort != "" {
@@ -744,6 +750,10 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 	requestBodyLen int,
 ) (*OpenAIForwardResult, error) {
 	requestID := resp.Header.Get("x-request-id")
+	releaseCtx := context.TODO()
+	if c != nil && c.Request != nil {
+		releaseCtx = c.Request.Context()
+	}
 	writeStreamHeaders := s.newStreamHeaderWriter(c, resp.Header)
 
 	state := apicompat.NewResponsesEventToChatState()
@@ -1031,6 +1041,9 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 						}
 					}
 					pendingSSE = pendingSSE[:0]
+					if !clientDisconnected && !clientOutputStarted {
+						TriggerRequestBodyRelease(releaseCtx, c, account)
+					}
 					clientOutputStarted = !clientDisconnected
 					if clientDisconnected {
 						break
@@ -1113,6 +1126,9 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 						}
 					}
 					pendingSSE = pendingSSE[:0]
+					if !clientDisconnected && !clientOutputStarted {
+						TriggerRequestBodyRelease(releaseCtx, c, account)
+					}
 					clientOutputStarted = !clientDisconnected
 					if clientDisconnected {
 						break
@@ -1143,6 +1159,9 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 					}
 				}
 				pendingSSE = pendingSSE[:0]
+				if !clientDisconnected && !clientOutputStarted {
+					TriggerRequestBodyRelease(releaseCtx, c, account)
+				}
 				clientOutputStarted = !clientDisconnected
 			}
 		}
@@ -1154,6 +1173,9 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 				logger.L().Info("openai chat_completions stream: client disconnected during done flush",
 					zap.String("request_id", requestID),
 				)
+			}
+			if !clientDisconnected && !clientOutputStarted {
+				TriggerRequestBodyRelease(releaseCtx, c, account)
 			}
 			clientOutputStarted = !clientDisconnected
 		}

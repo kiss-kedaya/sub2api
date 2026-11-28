@@ -5,6 +5,7 @@ import (
 	"strings"
 	"unsafe"
 
+	"github.com/gin-gonic/gin"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 )
@@ -70,19 +71,169 @@ func shouldStripOpenAIResponsesNonPairCallID(itemType string) bool {
 // 旧实现对每个被改的 item 还要 []byte(item) → sjson.DeleteBytes → string(...)
 // 复制 3~4 遍，大 item（带 base64 图片的 message）一个就是几 MB 的垃圾。
 func sanitizeOpenAIResponsesInputItemIDs(body []byte) ([]byte, bool, error) {
+	return sanitizeOpenAIResponsesInputItemIDsCtx(nil, body)
+}
+
+func sanitizeOpenAIResponsesInputItemIDsCtx(c *gin.Context, body []byte) ([]byte, bool, error) {
+	if len(body) == 0 {
+		return body, false, nil
+	}
+	if idx := RequestBodyTop(c, body).responsesInput(); idx != nil && idx.usable {
+		if !idx.isArray || !idx.hasIDSanitization {
+			return body, false, nil
+		}
+		var edits []jsonEdit
+		for itemIndex, it := range idx.items {
+			if !it.stripID && !it.stripCallID {
+				continue
+			}
+			if it.tight && it.idDropEditCount > 0 {
+				edits = append(edits, it.idDropEdits[:it.idDropEditCount]...)
+				continue
+			}
+			replacement, err := deleteInputItemKeysWithSJSON(jsonView(body[it.start:it.end]), it.stripID, it.stripCallID, itemIndex)
+			if err != nil {
+				return nil, false, err
+			}
+			edits = append(edits, jsonEdit{start: int(it.start), end: int(it.end), replacement: replacement})
+		}
+		if len(edits) == 0 {
+			return body, false, nil
+		}
+		sanitized, err := applyJSONEdits(body, edits)
+		if err != nil {
+			return nil, false, err
+		}
+		return sanitized, true, nil
+	}
+
+	inputStart, inputEnd, isArray, ok := locateJSONInputArraySpan(c, body)
+	if !ok {
+		return body, false, fmt.Errorf("locate top-level OpenAI Responses input array")
+	}
+	if !isArray {
+		return body, false, nil
+	}
+
+	var (
+		edits      []jsonEdit
+		membersBuf [16]jsonObjMember
+		index      int
+		walkErr    error
+	)
+	elemOK := jsonForEachElementSpan(body, inputStart, inputEnd, func(elemStart, elemEnd int) bool {
+		itemIndex := index
+		index++
+		if body[elemStart] != '{' {
+			return true
+		}
+		members := membersBuf[:0]
+		var typeRaw string
+		var hasType, hasID bool
+		var idValStart, idValEnd int
+		idMember, callIDMember := -1, -1
+		memberOK := jsonForEachMemberSpan(body, elemStart, elemEnd, func(key string, valStart, valEnd, memberStart, memberEnd int) bool {
+			switch key {
+			case "type":
+				if !hasType {
+					typeRaw = jsonView(body[valStart:valEnd])
+					hasType = true
+				}
+			case "id":
+				if idMember < 0 {
+					hasID = true
+					idValStart, idValEnd = valStart, valEnd
+					idMember = len(members)
+				}
+			case "call_id":
+				if callIDMember < 0 {
+					callIDMember = len(members)
+				}
+			}
+			members = append(members, jsonObjMember{start: memberStart, end: memberEnd})
+			return true
+		})
+		if !memberOK {
+			elem := jsonView(body[elemStart:elemEnd])
+			item := gjson.Parse(elem)
+			if !item.IsObject() {
+				return true
+			}
+			trimmedItemType := strings.TrimSpace(item.Get("type").String())
+			id := item.Get("id")
+			stripID := id.Type == gjson.String && shouldStripOpenAIResponsesInputItemID(trimmedItemType, id.String())
+			stripCallID := item.Get("call_id").Exists() && shouldStripOpenAIResponsesNonPairCallID(trimmedItemType)
+			if !stripID && !stripCallID {
+				return true
+			}
+			replacement, err := deleteInputItemKeysWithSJSON(elem, stripID, stripCallID, itemIndex)
+			if err != nil {
+				walkErr = err
+				return false
+			}
+			edits = append(edits, jsonEdit{start: elemStart, end: elemEnd, replacement: replacement})
+			return true
+		}
+		var trimmedItemType string
+		if hasType {
+			trimmedItemType = strings.TrimSpace(extractJSONMemberString(typeRaw, false))
+		}
+		stripID := hasID && body[idValStart] == '"' &&
+			shouldStripOpenAIResponsesInputItemID(trimmedItemType, extractJSONMemberString(jsonView(body[idValStart:idValEnd]), false))
+		stripCallID := callIDMember >= 0 && shouldStripOpenAIResponsesNonPairCallID(trimmedItemType)
+		if !stripID && !stripCallID {
+			return true
+		}
+		if jsonObjMembersTight(body, elemStart, members) {
+			switch {
+			case stripID && stripCallID && idMember < callIDMember:
+				edits = appendJSONMemberDrops(edits, members, idMember, callIDMember)
+			case stripID && stripCallID:
+				edits = appendJSONMemberDrops(edits, members, callIDMember, idMember)
+			case stripID:
+				edits = appendJSONMemberDrops(edits, members, idMember)
+			default:
+				edits = appendJSONMemberDrops(edits, members, callIDMember)
+			}
+			return true
+		}
+		replacement, err := deleteInputItemKeysWithSJSON(jsonView(body[elemStart:elemEnd]), stripID, stripCallID, itemIndex)
+		if err != nil {
+			walkErr = err
+			return false
+		}
+		edits = append(edits, jsonEdit{start: elemStart, end: elemEnd, replacement: replacement})
+		return true
+	})
+	if walkErr != nil {
+		return nil, false, walkErr
+	}
+	if !elemOK {
+		return sanitizeOpenAIResponsesInputItemIDsLegacyGJSON(body)
+	}
+	if len(edits) == 0 {
+		return body, false, nil
+	}
+	sanitized, err := applyJSONEdits(body, edits)
+	if err != nil {
+		return nil, false, err
+	}
+	return sanitized, true, nil
+}
+
+func sanitizeOpenAIResponsesInputItemIDsLegacyGJSON(body []byte) ([]byte, bool, error) {
 	input := parseRawJSONView(body).Get("input")
 	if !input.IsArray() {
 		return body, false, nil
 	}
 	if input.Index < 0 || input.Index+len(input.Raw) > len(body) ||
 		unsafe.StringData(input.Raw) != unsafe.SliceData(body[input.Index:]) {
-		// parseRawJSONView 直接解析 body，子结果必须保留精确的源偏移；对不上就不动手。
 		return body, false, fmt.Errorf("locate top-level OpenAI Responses input array")
 	}
 
 	var (
 		edits   []jsonEdit
-		members []jsonObjMember // 逐 item 复用
+		members []jsonObjMember
 		index   int
 		walkErr error
 	)
@@ -97,7 +248,6 @@ func sanitizeOpenAIResponsesInputItemIDs(body []byte) ([]byte, bool, error) {
 		typeSeen := false
 		idMember, callIDMember := -1, -1
 		item.ForEach(func(key, value gjson.Result) bool {
-			// 重复键只认第一个，与 gjson.Get 一致。
 			switch key.Str {
 			case "type":
 				if !typeSeen {

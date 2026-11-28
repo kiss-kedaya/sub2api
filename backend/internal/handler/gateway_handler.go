@@ -317,16 +317,18 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 		h.handleStreamingAwareError(c, status, code, message, streamStarted)
 		return
 	}
-	preauthorizationBody := body
-	if channelMapping.Mapped {
-		preauthorizationBody = h.gatewayService.ReplaceModelInBody(body, channelMapping.MappedModel)
-	}
-	balanceGuard, err := preauthorizeTextGatewayRequest(
-		c.Request.Context(), h.balancePreauthorizer, h.gatewayService,
-		apiKey, subscription, preauthorizationBody,
-		service.BalancePreauthorizationBillingModel(reqModel, channelMapping),
-		pricingAt, gjson.GetBytes(preauthorizationBody, "service_tier").String(),
-	)
+	balanceGuard, err := func() (*service.BalancePreauthorizationGuard, error) {
+		preauthorizationBody := body
+		if channelMapping.Mapped {
+			preauthorizationBody = h.gatewayService.ReplaceModelInBody(body, channelMapping.MappedModel)
+		}
+		return preauthorizeTextGatewayRequest(
+			c.Request.Context(), h.balancePreauthorizer, h.gatewayService,
+			apiKey, subscription, preauthorizationBody,
+			service.BalancePreauthorizationBillingModel(reqModel, channelMapping),
+			pricingAt, gjson.GetBytes(preauthorizationBody, "service_tier").String(),
+		)
+	}()
 	if err != nil {
 		status, code, message, retryAfter := billingErrorDetails(err)
 		if retryAfter > 0 {
@@ -417,6 +419,39 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 	}
 	// 判断是否真的绑定了粘性会话：有 sessionKey 且已经绑定到某个账号
 	hasBoundSession := sessionKey != "" && sessionBoundAccountID > 0
+
+	var activeAttemptParsedReq *service.ParsedRequest
+	var activeAttemptBody []byte
+	var precomputedRequestPayloadHash string
+	hookCtx, releaseHook := service.WithRequestBodyReleaseHook(c.Request.Context(), c, func(_ *service.Account) {
+		var hashSource []byte
+		if activeAttemptParsedReq != nil && activeAttemptParsedReq.Body != nil {
+			hashSource = activeAttemptParsedReq.Body.Bytes()
+		}
+		if len(hashSource) == 0 {
+			hashSource = activeAttemptBody
+		}
+		if len(hashSource) == 0 {
+			hashSource = body
+		}
+		if len(hashSource) > 0 && precomputedRequestPayloadHash == "" {
+			precomputedRequestPayloadHash = service.HashUsageRequestPayload(hashSource)
+		}
+		if activeAttemptParsedReq != nil {
+			activeAttemptParsedReq.ReleaseBody()
+		}
+		activeAttemptParsedReq = nil
+		activeAttemptBody = nil
+		if parsedReq != nil {
+			parsedReq.ReleaseBody()
+		}
+		if bodyRef != nil {
+			bodyRef.Replace(nil)
+		}
+		body = nil
+	})
+	c.Request = c.Request.WithContext(hookCtx)
+	defer releaseHook.Clear(c)
 
 	if platform == service.PlatformGemini {
 		fs := NewFillFailoverState(h.maxAccountSwitchesGemini, hasBoundSession)
@@ -626,7 +661,10 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 				}
 				userAgent := c.GetHeader("User-Agent")
 				clientIP := ip.GetClientIP(c)
-				requestPayloadHash := service.HashUsageRequestPayload(body)
+				requestPayloadHash := precomputedRequestPayloadHash
+				if requestPayloadHash == "" && len(body) > 0 {
+					requestPayloadHash = service.HashUsageRequestPayload(body)
+				}
 				inboundEndpoint := GetInboundEndpoint(c)
 				upstreamEndpoint := GetUpstreamEndpoint(c, account.Platform)
 				if partial.ReasoningEffort == nil {
@@ -800,6 +838,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 				h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "Failed to parse request body")
 				return
 			}
+			activeAttemptParsedReq = attemptParsedReq
 
 			// 选择支持该模型的账号
 			reqLog.Debug("sticky.selecting_account",
@@ -1043,6 +1082,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 				return
 			}
 			attemptBody := attemptParsedReq.Body.Bytes()
+			activeAttemptBody = attemptBody
 
 			// 转发请求 - 根据账号平台分流
 			var result *service.ForwardResult
@@ -1085,7 +1125,10 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 				userAgent := c.GetHeader("User-Agent")
 				clientIP := ip.GetClientIP(c)
 				// Forward 内部可能继续改写 body，usage 去重指纹必须使用最终上游接受的当前 body。
-				requestPayloadHash := service.HashUsageRequestPayload(attemptParsedReq.Body.Bytes())
+				requestPayloadHash := precomputedRequestPayloadHash
+				if requestPayloadHash == "" && attemptParsedReq != nil && attemptParsedReq.Body != nil {
+					requestPayloadHash = service.HashUsageRequestPayload(attemptParsedReq.Body.Bytes())
+				}
 				inboundEndpoint := GetInboundEndpoint(c)
 				upstreamEndpoint := GetUpstreamEndpoint(c, account.Platform)
 

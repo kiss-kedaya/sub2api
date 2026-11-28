@@ -119,7 +119,7 @@ func (s *OpenAIGatewayService) forwardAnthropicViaNativeAnthropicEndpoint(
 
 	clientCtx := openAIClientContext(ctx, c)
 	upstreamCtx, releaseUpstreamCtx := detachStreamUpstreamContext(ctx, clientStream)
-	upstreamReq, _, err := s.buildNativeAnthropicUpstreamRequest(upstreamCtx, c, account, body, apiKey, targetURL)
+	upstreamReq, rewrittenBody, err := s.buildNativeAnthropicUpstreamRequest(upstreamCtx, c, account, body, apiKey, targetURL)
 	releaseUpstreamCtx()
 	if err != nil {
 		return nil, err
@@ -158,10 +158,15 @@ func (s *OpenAIGatewayService) forwardAnthropicViaNativeAnthropicEndpoint(
 		return s.handleAnthropicErrorResponse(resp, c, account, billingModel)
 	}
 
-	// Keep the body that went upstream: a request that ends without a usage report is
-	// billed for the input it really sent (see applyCompatIncompleteUsage).
-	stashCompatUpstreamRequestBody(c, account, body)
+	// Keep the estimated input tokens of the body that went upstream: a request that
+	// ends without a usage report is billed for the input it really sent (see applyCompatIncompleteUsage).
+	stashCompatUpstreamRequestBody(c, account, rewrittenBody)
 	if clientStream {
+		ctx, releaseNativeMsg := PushServiceRequestBodyRelease(ctx, c, func(_ *Account) {
+			body = nil
+			rewrittenBody = nil
+		})
+		defer releaseNativeMsg()
 		return s.handleNativeAnthropicStreamingResponse(ctx, resp, c, account, originalModel, billingModel, upstreamModel, reasoningEffort, startTime)
 	}
 	return s.handleNativeAnthropicBufferedResponse(ctx, resp, c, account, originalModel, billingModel, upstreamModel, reasoningEffort, startTime)
@@ -394,6 +399,7 @@ func (s *OpenAIGatewayService) handleNativeAnthropicStreamingResponse(
 	if !ok {
 		return nil, errors.New("streaming not supported")
 	}
+	TriggerRequestBodyRelease(ctx, c, account)
 
 	usage := &ClaudeUsage{}
 	var firstTokenMs *int

@@ -88,6 +88,7 @@ func (s *AntigravityGatewayService) ForwardUpstream(ctx context.Context, c *gin.
 
 	// 发送请求
 	resp, err := s.httpUpstream.Do(req, proxyURL, account.ID, account.Concurrency)
+	releaseUpstreamRequestPayload(req, resp)
 	if err != nil {
 		if geminiClientGoneCtx(ctx, c) {
 			clientErr := ctx.Err()
@@ -132,6 +133,8 @@ func (s *AntigravityGatewayService) ForwardUpstream(ctx context.Context, c *gin.
 	var responseErr error
 	balanceAborted := false
 	goneOutputTokens := 0
+	var estimatedInputTokens int
+	var hasEstimatedInputTokens bool
 	hasFinalOutput := false
 
 	if claudeReq.Stream {
@@ -143,7 +146,17 @@ func (s *AntigravityGatewayService) ForwardUpstream(ctx context.Context, c *gin.
 		c.Header("X-Accel-Buffering", "no")
 		c.Status(http.StatusOK)
 
+		var popRelease func()
+		ctx, popRelease = PushServiceRequestBodyRelease(ctx, c, func(_ *Account) {
+			if len(body) > 0 {
+				estimatedInputTokens = estimateRequestInputTokens(body)
+				hasEstimatedInputTokens = true
+			}
+			body = nil
+		})
+		TriggerRequestBodyRelease(ctx, c, account)
 		streamRes := s.streamUpstreamResponse(c, resp, startTime)
+		popRelease()
 		usage = streamRes.usage
 		firstTokenMs = streamRes.firstTokenMs
 		clientDisconnect = streamRes.clientDisconnect
@@ -172,6 +185,9 @@ func (s *AntigravityGatewayService) ForwardUpstream(ctx context.Context, c *gin.
 			_, _ = c.Writer.Write(respBody)
 		}
 	}
+	if usage == nil {
+		usage = &ClaudeUsage{}
+	}
 	if clientDisconnect || balanceAborted {
 		// The client left or balance withholding aborted mid-stream: bill what the
 		// upstream reported and estimate the rest (gemini_family_incomplete_usage.go).
@@ -179,7 +195,7 @@ func (s *AntigravityGatewayService) ForwardUpstream(ctx context.Context, c *gin.
 		if balanceAborted {
 			event = "antigravity_usage.balance_abort_estimated"
 		}
-		applyIncompleteGeminiUsage(event, account, originalModel, usage, goneOutputTokens, body, hasFinalOutput)
+		applyIncompleteGeminiUsageWithEstimate(event, account, originalModel, usage, goneOutputTokens, body, estimatedInputTokens, hasEstimatedInputTokens, hasFinalOutput)
 	}
 
 	// 构建计费结果

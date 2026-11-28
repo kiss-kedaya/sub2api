@@ -156,6 +156,7 @@ func (s *GatewayService) ForwardAsChatCompletions(
 
 	// 11. Send request
 	resp, err := s.httpUpstream.DoWithTLS(upstreamReq, proxyURL, account.ID, account.Concurrency, s.tlsFPProfileService.ResolveTLSProfile(account))
+	releaseUpstreamRequestPayload(upstreamReq, resp)
 	if err != nil {
 		if resp != nil && resp.Body != nil {
 			_ = resp.Body.Close()
@@ -222,6 +223,19 @@ func (s *GatewayService) ForwardAsChatCompletions(
 	var result *ForwardResult
 	var handleErr error
 	if clientStream {
+		var popRelease func()
+		ctx, popRelease = PushServiceRequestBodyRelease(ctx, c, func(_ *Account) {
+			if len(estimate.body) > 0 {
+				estimate.precomputedInputToks = estimateRequestInputTokens(estimate.body)
+				estimate.hasPrecomputed = true
+			}
+			estimate.body = nil
+			body = nil
+			anthropicBody = nil
+			wireBody = nil
+		})
+		TriggerRequestBodyRelease(ctx, c, account)
+		popRelease()
 		result, handleErr = s.handleCCStreamingFromAnthropic(resp, c, originalModel, mappedModel, reasoningEffort, startTime, includeUsage, estimate)
 	} else {
 		result, handleErr = s.handleCCBufferedFromAnthropic(resp, c, originalModel, mappedModel, reasoningEffort, startTime, estimate)

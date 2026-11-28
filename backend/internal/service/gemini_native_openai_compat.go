@@ -99,6 +99,7 @@ func (s *GeminiMessagesCompatService) forwardGeminiNativeViaOpenAICompat(
 		proxyURL = account.Proxy.URL()
 	}
 	resp, err := s.httpUpstream.Do(req, proxyURL, account.ID, account.Concurrency)
+	releaseUpstreamRequestPayload(req, resp)
 	if err != nil {
 		if geminiClientGoneCtx(ctx, c) {
 			clientErr := ctx.Err()
@@ -135,7 +136,20 @@ func (s *GeminiMessagesCompatService) forwardGeminiNativeViaOpenAICompat(
 		// Close a blocked read on cancellation, including custom upstream transports.
 		stopClosing := context.AfterFunc(ctx, closeBody)
 		defer stopClosing()
+		var estimatedInputTokens int
+		var hasEstimatedInputTokens bool
+		var popRelease func()
+		ctx, popRelease = PushServiceRequestBodyRelease(ctx, c, func(_ *Account) {
+			if len(body) > 0 {
+				estimatedInputTokens = estimateRequestInputTokens(body)
+				hasEstimatedInputTokens = true
+			}
+			body = nil
+			chatBody = nil
+		})
+		TriggerRequestBodyRelease(ctx, c, account)
 		result, outputTokens, hasFinalOutput, err := s.pipeOpenAIStreamAsGemini(ctx, c, resp.Body, mappedModel, protocol, start)
+		popRelease()
 		result.RequestID = resp.Header.Get("x-request-id")
 		result.UpstreamHeaders = resp.Header
 		result.Duration = time.Since(start)
@@ -144,7 +158,7 @@ func (s *GeminiMessagesCompatService) forwardGeminiNativeViaOpenAICompat(
 			if !result.ClientDisconnect {
 				event = "gemini_usage.balance_abort_estimated"
 			}
-			applyIncompleteGeminiUsage(event, account, mappedModel, &result.Usage, outputTokens, body, hasFinalOutput)
+			applyIncompleteGeminiUsageWithEstimate(event, account, mappedModel, &result.Usage, outputTokens, body, estimatedInputTokens, hasEstimatedInputTokens, hasFinalOutput)
 		}
 		return result, err
 	}

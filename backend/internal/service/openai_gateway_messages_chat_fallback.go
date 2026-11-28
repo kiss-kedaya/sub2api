@@ -185,6 +185,12 @@ func (s *OpenAIGatewayService) forwardAnthropicViaRawChatCompletions(
 	// billed for the input it really sent (see applyCompatIncompleteUsage).
 	stashCompatUpstreamRequestBody(c, account, chatBody)
 	if clientStream {
+		ctx, releaseFallback := PushServiceRequestBodyRelease(ctx, c, func(_ *Account) {
+			body = nil
+			chatBody = nil
+		})
+		defer releaseFallback()
+		TriggerRequestBodyRelease(ctx, c, account)
 		return s.streamChatCompletionsAsAnthropic(c, resp, originalModel, billingModel, upstreamModel, reasoningEffort, serviceTier, startTime)
 	}
 	return s.bufferChatCompletionsAsAnthropic(c, resp, originalModel, billingModel, upstreamModel, reasoningEffort, serviceTier, startTime)

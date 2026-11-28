@@ -151,10 +151,22 @@ func (s *GatewayService) forwardBedrock(
 	var firstTokenMs *int
 	var clientDisconnect bool
 	if reqStream {
+		var estimatedInputTokens int
+		var hasEstimatedInputTokens bool
+		var popRelease func()
+		ctx, popRelease = PushServiceRequestBodyRelease(ctx, c, func(_ *Account) {
+			if !IsStreamInputUsageObserved(ctx, c) && len(body) > 0 {
+				estimatedInputTokens = estimateRequestInputTokens(body)
+				hasEstimatedInputTokens = true
+			}
+			body = nil
+			parsed.ReleaseBody()
+		})
 		streamResult, err := s.handleBedrockStreamingResponse(ctx, resp, c, account, startTime, reqModel)
+		popRelease()
 		// 没有终帧就结束的流：上游没报的部分按已产出内容和请求体估算（Bedrock 上游
 		// 请求体已去掉 model，估算用客户端原始请求体）。
-		outputTokens, inputTokens := applyIncompleteAnthropicStreamUsage(account, streamResult, body, reqModel, resp.Header.Get("x-request-id"), err)
+		outputTokens, inputTokens := applyIncompleteAnthropicStreamUsageWithEstimate(account, streamResult, body, estimatedInputTokens, hasEstimatedInputTokens, reqModel, resp.Header.Get("x-request-id"), err)
 		if err != nil {
 			// 估算出了东西或流式预扣补扣中止时带结果返回；其余读错误保持原行为。
 			if outputTokens > 0 || inputTokens > 0 || isBalanceHoldTopUpError(err) {
@@ -228,6 +240,7 @@ func (s *GatewayService) executeBedrockUpstream(
 		}
 
 		resp, err = s.httpUpstream.DoWithTLS(upstreamReq, proxyURL, account.ID, account.Concurrency, nil)
+		releaseUpstreamRequestPayload(upstreamReq, resp)
 		if err != nil {
 			if resp != nil && resp.Body != nil {
 				_ = resp.Body.Close()

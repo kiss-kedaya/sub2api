@@ -87,13 +87,13 @@ func observePassthroughStreamOutput(acc *apicompat.BufferedResponseAccumulator, 
 	acc.ProcessEvent(&event)
 }
 
-// applyIncompletePassthroughStreamUsage fills an incomplete passthrough stream's
-// usage from the estimates, with the same rules as the non-passthrough stream.
-func applyIncompletePassthroughStreamUsage(account *Account, result *openaiStreamingResultPassthrough, requestBody []byte, model string, streamErr error) {
+// applyIncompletePassthroughStreamUsageWithEstimate fills an incomplete passthrough
+// stream's usage from the estimates, with the same rules as the non-passthrough stream.
+func applyIncompletePassthroughStreamUsageWithEstimate(account *Account, result *openaiStreamingResultPassthrough, requestBody []byte, precomputedInputTokens int, hasPrecomputed bool, model string, streamErr error) {
 	if result == nil {
 		return
 	}
-	applyIncompleteOpenAIStreamUsage(account, &openaiStreamingResult{
+	applyIncompleteOpenAIStreamUsageWithEstimate(account, &openaiStreamingResult{
 		usage:                    result.usage,
 		responseID:               result.responseID,
 		nonBillableUpstreamError: result.nonBillableUpstreamError,
@@ -101,5 +101,5 @@ func applyIncompletePassthroughStreamUsage(account *Account, result *openaiStrea
 		incompleteStream:         result.incompleteStream,
 		incompleteOutputTokens:   result.incompleteOutputTokens,
 		hasFinalOutput:           result.hasFinalOutput,
-	}, requestBody, model, streamErr)
+	}, requestBody, precomputedInputTokens, hasPrecomputed, model, streamErr)
 }

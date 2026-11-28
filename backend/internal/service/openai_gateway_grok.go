@@ -83,16 +83,31 @@ func (s *OpenAIGatewayService) forwardGrokResponses(
 	if err != nil {
 		return nil, fmt.Errorf("apply grok prompt cache identity: %w", err)
 	}
+	body = nil
 	// Free OAuth + client function tools: reuse Messages mixed-tools cache route
 	// (append web_search/x_search so xAI does not force non-cacheable build-free).
 	patchedBody, err = applyGrokFreeRequestToolCacheRoute(c, patchedBody, mixedCacheIntentBody, account, cacheIdentity)
 	if err != nil {
 		return nil, fmt.Errorf("apply grok Free function-tool cache route: %w", err)
 	}
+	mixedCacheIntentBody = nil
 	patchedBody, err = applyGrokResponsesUpstreamStream(patchedBody, isOpenAIResponsesCompactPath(c))
 	if err != nil {
 		return nil, err
 	}
+	inGrokStream := false
+	estimatedInputTokens := 0
+	hasEstimatedInputTokens := false
+	ctx, releaseGrokSvc := PushServiceRequestBodyRelease(ctx, c, func(_ *Account) {
+		if inGrokStream && !hasEstimatedInputTokens && len(patchedBody) > 0 {
+			estimatedInputTokens, _ = estimateIncompleteResponsesInput(patchedBody)
+			hasEstimatedInputTokens = true
+		}
+		body = nil
+		mixedCacheIntentBody = nil
+		patchedBody = nil
+	})
+	defer releaseGrokSvc()
 
 	token, _, err := s.getRequestCredential(ctx, c, account)
 	if err != nil {
@@ -123,6 +138,7 @@ func (s *OpenAIGatewayService) forwardGrokResponses(
 		// A client that leaves cancels the upstream at once; a dispatched request is
 		// billed for its estimated input (see openai_gateway_client_gone.go).
 		resp, err = s.doOpenAIUpstreamWithHeaderCancel(clientCtx, upstreamReq, proxyURL, account)
+		releaseUpstreamRequestPayload(upstreamReq, resp)
 		SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(upstreamStart).Milliseconds())
 		logGrokAPIKeyUpstreamResult(account, upstreamReq, resp, err)
 		if err != nil {
@@ -290,7 +306,9 @@ func (s *OpenAIGatewayService) forwardGrokResponses(
 		resp.Body = newGrokResponsesClientToolStreamBody(resp.Body, clientToolMapping, maxLineSize)
 	}
 	if reqStream {
+		inGrokStream = true
 		streamResult, err := s.handleStreamingResponse(ctx, resp, c, account, startTime, originalModel, upstreamModel)
+		inGrokStream = false
 		if streamResult != nil {
 			usage = streamResult.usage
 			firstTokenMs = streamResult.firstTokenMs
@@ -302,7 +320,7 @@ func (s *OpenAIGatewayService) forwardGrokResponses(
 			nonBillableUpstreamError = streamResult.nonBillableUpstreamError
 		}
 		if err != nil {
-			applyIncompleteOpenAIStreamUsage(account, streamResult, patchedBody, upstreamModel, err)
+			applyIncompleteOpenAIStreamUsageWithEstimate(account, streamResult, patchedBody, estimatedInputTokens, hasEstimatedInputTokens, upstreamModel, err)
 			return preserveOpenAIStreamingResultOnError(buildForwardResult(), err)
 		}
 	} else {

@@ -19,15 +19,23 @@ import (
 )
 
 type geminiCompatHTTPUpstreamStub struct {
-	response *http.Response
-	err      error
-	calls    int
-	lastReq  *http.Request
+	response    *http.Response
+	err         error
+	calls       int
+	lastReq     *http.Request
+	lastReqBody []byte
 }
 
 func (s *geminiCompatHTTPUpstreamStub) Do(req *http.Request, proxyURL string, accountID int64, accountConcurrency int) (*http.Response, error) {
 	s.calls++
 	s.lastReq = req
+	if req != nil && req.Body != nil {
+		b, _ := io.ReadAll(req.Body)
+		s.lastReqBody = b
+		req.Body = io.NopCloser(bytes.NewReader(b))
+	} else {
+		s.lastReqBody = nil
+	}
 	if s.err != nil {
 		return nil, s.err
 	}
@@ -90,9 +98,7 @@ func TestGeminiForwardAsChatCompletions_OAuthRoutesToGeminiAndReturnsChatFormat(
 	require.Empty(t, httpStub.lastReq.Header.Get("anthropic-version"))
 
 	var sent map[string]any
-	sentBody, err := io.ReadAll(httpStub.lastReq.Body)
-	require.NoError(t, err)
-	require.NoError(t, json.Unmarshal(sentBody, &sent))
+	require.NoError(t, json.Unmarshal(httpStub.lastReqBody, &sent))
 	require.Equal(t, "gemini-2.5-flash", sent["model"])
 	require.Equal(t, "project-1", sent["project"])
 	require.Contains(t, fmt.Sprint(sent["request"]), "hi")
@@ -214,11 +220,8 @@ func TestGeminiForwardAsChatCompletions_FunctionNamedWebSearchStaysClientSide(t 
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.NotNil(t, httpStub.lastReq)
 
-	postedBody, err := io.ReadAll(httpStub.lastReq.Body)
-	require.NoError(t, err)
-
 	var posted map[string]any
-	require.NoError(t, json.Unmarshal(postedBody, &posted))
+	require.NoError(t, json.Unmarshal(httpStub.lastReqBody, &posted))
 	tools, ok := posted["tools"].([]any)
 	require.True(t, ok)
 	require.Len(t, tools, 1, "Chat Completions function tools must not be promoted to Gemini built-ins by name")
@@ -634,11 +637,8 @@ func TestGeminiMessagesCompatServiceForward_NormalizesWebSearchToolForAIStudio(t
 	require.NotNil(t, result)
 	require.NotNil(t, httpStub.lastReq)
 
-	postedBody, err := io.ReadAll(httpStub.lastReq.Body)
-	require.NoError(t, err)
-
 	var posted map[string]any
-	require.NoError(t, json.Unmarshal(postedBody, &posted))
+	require.NoError(t, json.Unmarshal(httpStub.lastReqBody, &posted))
 	tools, ok := posted["tools"].([]any)
 	require.True(t, ok)
 	require.Len(t, tools, 2)

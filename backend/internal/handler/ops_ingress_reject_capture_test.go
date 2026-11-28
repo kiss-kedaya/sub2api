@@ -15,7 +15,7 @@ func TestOpsCaptureWriterDoesNotCopyIngressRejectBody(t *testing.T) {
 	context, _ := gin.CreateTestContext(httptest.NewRecorder())
 	writer := acquireOpsCaptureWriter(context.Writer)
 	defer releaseOpsCaptureWriter(writer)
-	writer.setContext(context)
+	writer.setContextAndOps(context, nil)
 	context.Writer = writer
 	middleware2.MarkIngressRejected(context, middleware2.IngressRejectInvalidAPIKey)
 	context.Status(http.StatusUnauthorized)

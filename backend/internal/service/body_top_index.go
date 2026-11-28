@@ -115,6 +115,10 @@ type bodyTopIndex struct {
 
 	validOnce sync.Once
 	valid     bool
+
+	inputOnce  sync.Once
+	inputIdx   *responsesInputIndex
+	inputBuilt atomic.Bool
 }
 
 // bodyTopMemo holds the two most recent bodies of one request (the incoming body
@@ -180,7 +184,21 @@ func (t BodyTop) Valid() bool {
 	if t.idx != nil {
 		return t.idx.isValid()
 	}
-	return gjson.ValidBytes(t.body)
+	return validJSON(t.body) || gjson.ValidBytes(t.body)
+}
+
+func (t BodyTop) responsesInput() *responsesInputIndex {
+	if t.idx == nil {
+		return nil
+	}
+	return t.idx.responsesInput()
+}
+
+func (t BodyTop) cachedResponsesInput() *responsesInputIndex {
+	if t.idx == nil || !t.idx.inputBuilt.Load() {
+		return nil
+	}
+	return t.idx.inputIdx
 }
 
 func (x *bodyTopIndex) holds(body []byte) bool {
@@ -188,7 +206,7 @@ func (x *bodyTopIndex) holds(body []byte) bool {
 }
 
 func (x *bodyTopIndex) isValid() bool {
-	x.validOnce.Do(func() { x.valid = gjson.ValidBytes(x.body) })
+	x.validOnce.Do(func() { x.valid = validJSON(x.body) || gjson.ValidBytes(x.body) })
 	return x.valid
 }
 

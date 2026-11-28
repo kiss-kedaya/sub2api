@@ -34,11 +34,83 @@ func NormalizeCompactionTriggerInputOrder(body []byte) ([]byte, bool, error) {
 	// Fast path: requests without a compaction trigger never change anything.
 	// Previously every Responses request paid a full encoding/json.Valid scan
 	// even when this pass was a no-op.
-	if !bytes.Contains(body, []byte("compaction_trigger")) {
+	if !bytes.Contains(body, []byte("compaction_trigger")) && !bytes.Contains(body, []byte(`\u`)) {
 		return body, false, nil
 	}
-	if !json.Valid(body) {
+	if !validJSON(body) && !json.Valid(body) {
 		return body, false, fmt.Errorf("normalize compaction trigger input order: invalid JSON")
+	}
+	if inputStart, inputEnd, isArray, ok := locateJSONInputArraySpan(nil, body); ok {
+		if !isArray {
+			return body, false, nil
+		}
+		type itemSpan struct{ start, end int }
+		var keepBuf [16]itemSpan
+		keep := keepBuf[:0]
+		triggerCount := 0
+		itemCount := 0
+		lastIsTrigger := false
+		keptBytes := 0
+		needFallback := false
+		elemOK := jsonForEachElementSpan(body, inputStart, inputEnd, func(elemStart, elemEnd int) bool {
+			itemCount++
+			isTrigger := false
+			if body[elemStart] == '{' {
+				elem := jsonView(body[elemStart:elemEnd])
+				if strings.Contains(elem, "compaction_trigger") || strings.Contains(elem, `\u`) {
+					var typeRaw string
+					var hasType bool
+					memberOK := jsonForEachMemberSpan(body, elemStart, elemEnd, func(key string, valStart, valEnd, _, _ int) bool {
+						if key == "type" {
+							typeRaw = jsonView(body[valStart:valEnd])
+							hasType = true
+							return false
+						}
+						return true
+					})
+					if !memberOK {
+						needFallback = true
+						return false
+					}
+					if hasType && extractJSONMemberString(typeRaw, false) == "compaction_trigger" {
+						isTrigger = true
+					}
+				}
+			}
+			lastIsTrigger = isTrigger
+			if isTrigger {
+				triggerCount++
+			} else {
+				keep = append(keep, itemSpan{start: elemStart, end: elemEnd})
+				keptBytes += elemEnd - elemStart
+			}
+			return true
+		})
+		if elemOK && !needFallback {
+			if triggerCount == 0 || (triggerCount == 1 && itemCount > 0 && lastIsTrigger) {
+				return body, false, nil
+			}
+			const appendedTrigger = `{"type":"compaction_trigger"}`
+			keptCount := len(keep) + 1
+			arrayLen := 2 + keptBytes + len(appendedTrigger) + (keptCount - 1)
+			outputLen := len(body) - (inputEnd - inputStart) + arrayLen
+			out := make([]byte, 0, outputLen)
+			out = append(out, body[:inputStart]...)
+			out = append(out, '[')
+			for idx, sp := range keep {
+				if idx > 0 {
+					out = append(out, ',')
+				}
+				out = append(out, body[sp.start:sp.end]...)
+			}
+			if len(keep) > 0 {
+				out = append(out, ',')
+			}
+			out = append(out, appendedTrigger...)
+			out = append(out, ']')
+			out = append(out, body[inputEnd:]...)
+			return out, true, nil
+		}
 	}
 	input := parseRawJSONView(body).Get("input")
 	if !input.IsArray() {
@@ -169,15 +241,77 @@ func applyOpenAICodexBetaFeatures(c *gin.Context, account *Account, h http.Heade
 // request path and stream flag to distinguish the native remote compaction v2
 // wire from the legacy /responses/compact bridge.
 func HasCompactionTriggerInInput(body []byte) bool {
+	return HasCompactionTriggerInInputCtx(nil, body)
+}
+
+// HasCompactionTriggerInInputCtx detects an input item with
+// type="compaction_trigger", reusing the request-scoped BodyTop /
+// responsesInputIndex when available.
+func HasCompactionTriggerInInputCtx(c *gin.Context, body []byte) bool {
 	if len(body) == 0 {
 		return false
 	}
-	input := parseRawJSONView(body).Get("input")
-	if !input.IsArray() {
+	if !bytes.Contains(body, []byte("compaction_trigger")) && !bytes.Contains(body, []byte(`\u`)) {
+		return false
+	}
+	if idx := RequestBodyTop(c, body).cachedResponsesInput(); idx != nil && idx.usable {
+		return idx.hasCompactionTrigger
+	}
+	inputStart, inputEnd, isArray, ok := locateJSONInputArraySpan(c, body)
+	if !ok {
+		input := parseRawJSONView(body).Get("input")
+		if !input.IsArray() {
+			return false
+		}
+		found := false
+		input.ForEach(func(_, item gjson.Result) bool {
+			if item.Get("type").String() == "compaction_trigger" {
+				found = true
+				return false
+			}
+			return true
+		})
+		return found
+	}
+	if !isArray {
 		return false
 	}
 	found := false
-	input.ForEach(func(_, item gjson.Result) bool {
+	elemOK := jsonForEachElementSpan(body, inputStart, inputEnd, func(elemStart, elemEnd int) bool {
+		if body[elemStart] != '{' {
+			return true
+		}
+		elem := jsonView(body[elemStart:elemEnd])
+		if !strings.Contains(elem, "compaction_trigger") && !strings.Contains(elem, `\u`) {
+			return true
+		}
+		var typeRaw string
+		var hasType bool
+		memberOK := jsonForEachMemberSpan(body, elemStart, elemEnd, func(key string, valStart, valEnd, _, _ int) bool {
+			if key == "type" {
+				typeRaw = jsonView(body[valStart:valEnd])
+				hasType = true
+				return false
+			}
+			return true
+		})
+		if !memberOK {
+			if gjson.Parse(elem).Get("type").String() == "compaction_trigger" {
+				found = true
+				return false
+			}
+			return true
+		}
+		if hasType && extractJSONMemberString(typeRaw, false) == "compaction_trigger" {
+			found = true
+			return false
+		}
+		return true
+	})
+	if elemOK {
+		return found
+	}
+	gjson.Parse(jsonView(body[inputStart:inputEnd])).ForEach(func(_, item gjson.Result) bool {
 		if item.Get("type").String() == "compaction_trigger" {
 			found = true
 			return false

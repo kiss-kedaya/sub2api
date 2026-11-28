@@ -816,6 +816,12 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 		return nil, errors.New("streaming not supported")
 	}
 
+	clientOutputCommitted := false
+	if isPreOutputFailoverDisabled(ctx) {
+		clientOutputCommitted = true
+		TriggerRequestBodyRelease(ctx, c, account)
+	}
+
 	usage := &ClaudeUsage{}
 	var firstTokenMs *int
 	// 流式预扣补扣：仅当请求持有带 tracker 的活动预扣 guard 时非空；逐帧仅整数
@@ -931,6 +937,10 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 		}
 		_, _ = fmt.Fprintf(w, "event: error\ndata: %s\n\n", body)
 		flusher.Flush()
+		if !clientOutputCommitted {
+			clientOutputCommitted = true
+			TriggerRequestBodyRelease(ctx, c, account)
+		}
 	}
 
 	needModelReplace := originalModel != mappedModel
@@ -1219,6 +1229,7 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 				}
 
 				for _, block := range outputBlocks {
+					wroteBlock := false
 					if !clientDisconnected {
 						restored := reverseToolNamesIfPresent(c, []byte(block))
 						if _, werr := fmt.Fprint(w, string(restored)); werr != nil {
@@ -1227,6 +1238,7 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 							markClientGone("client write failed")
 						} else {
 							flusher.Flush()
+							wroteBlock = true
 							lastDataAt = time.Now()
 							resetKeepaliveTimer()
 							// 输出块计量：累加已发可见/思考/工具输出字节作 token 上界，跨预扣窗口时补扣。
@@ -1265,7 +1277,14 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 						}
 						if usagePatch != nil {
 							mergeSSEUsagePatch(usage, usagePatch)
+							if usage.InputTokens > 0 || usage.CacheReadInputTokens > 0 || usage.CacheCreationInputTokens > 0 {
+								MarkStreamInputUsageObserved(ctx, c)
+							}
 						}
+					}
+					if wroteBlock && !clientOutputCommitted {
+						clientOutputCommitted = true
+						TriggerRequestBodyRelease(ctx, c, account)
 					}
 				}
 				if sawTerminalEvent {
@@ -1311,6 +1330,10 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 				continue
 			}
 			flusher.Flush()
+			if !clientOutputCommitted {
+				clientOutputCommitted = true
+				TriggerRequestBodyRelease(ctx, c, account)
+			}
 			lastDataAt = time.Now()
 			resetKeepaliveTimer()
 		}
@@ -1419,6 +1442,7 @@ func (s *GatewayService) extractSSEUsagePatch(event map[string]any) *sseUsagePat
 		// #8407). A bare placeholder zero - what re-serializing relays emit -
 		// must keep the message_start input, otherwise the whole
 		// uncached-input bucket disappears from billing.
+		hasPositiveInputUsage := sseDeltaReportsPositiveInputUsage(usageObj)
 		if v, ok := parseSSEUsageInt(usageObj["input_tokens"]); ok {
 			if v != 0 || sseDeltaReportsPositiveCacheUsage(usageObj) {
 				patch.inputTokens = v
@@ -1430,12 +1454,16 @@ func (s *GatewayService) extractSSEUsagePatch(event map[string]any) *sseUsagePat
 			patch.hasOutputTokens = true
 		}
 		if v, ok := parseSSEUsageInt(usageObj["cache_creation_input_tokens"]); ok {
-			patch.cacheCreationInputTokens = v
-			patch.hasCacheCreationInput = true
+			if v != 0 || hasPositiveInputUsage {
+				patch.cacheCreationInputTokens = v
+				patch.hasCacheCreationInput = true
+			}
 		}
 		if v, ok := parseSSEUsageInt(usageObj["cache_read_input_tokens"]); ok {
-			patch.cacheReadInputTokens = v
-			patch.hasCacheReadInput = true
+			if v != 0 || hasPositiveInputUsage {
+				patch.cacheReadInputTokens = v
+				patch.hasCacheReadInput = true
+			}
 		}
 		if cc, ok := usageObj["cache_creation"].(map[string]any); ok {
 			if v, exists := parseSSEUsageInt(cc["ephemeral_5m_input_tokens"]); exists {
@@ -1478,6 +1506,13 @@ func mapServerToolWebSearchRequests(usageObj map[string]any) (int, bool) {
 // object restates the cached portion of the prompt in the same event. The
 // helper mirrors anthropicDeltaCarriesPositiveCacheUsage for the map-based
 // event parser; see the message_delta branch in extractSSEUsagePatch.
+func sseDeltaReportsPositiveInputUsage(usageObj map[string]any) bool {
+	if v, ok := parseSSEUsageInt(usageObj["input_tokens"]); ok && v > 0 {
+		return true
+	}
+	return sseDeltaReportsPositiveCacheUsage(usageObj)
+}
+
 func sseDeltaReportsPositiveCacheUsage(usageObj map[string]any) bool {
 	for _, key := range []string{"cache_read_input_tokens", "cache_creation_input_tokens", "cached_tokens"} {
 		if v, ok := parseSSEUsageInt(usageObj[key]); ok && v > 0 {

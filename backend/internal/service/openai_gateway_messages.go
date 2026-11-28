@@ -560,9 +560,15 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 	// Keep the body that went upstream: a request that ends without a usage report is
 	// billed for the input it really sent (see applyCompatIncompleteUsage).
 	stashCompatUpstreamRequestBody(c, account, responsesBody)
+	serviceTier := extractOpenAIServiceTierFromBody(c, responsesBody)
 	var result *OpenAIForwardResult
 	var handleErr error
 	if clientStream {
+		_, releaseMsg := PushServiceRequestBodyRelease(ctx, c, func(_ *Account) {
+			body = nil
+			responsesBody = nil
+		})
+		defer releaseMsg()
 		result, handleErr = s.handleAnthropicStreamingResponse(resp, c, account, originalModel, billingModel, upstreamModel, startTime)
 	} else {
 		// Client wants JSON: buffer the streaming response and assemble a JSON reply.
@@ -590,7 +596,7 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 		}
 		// 计费 tier 优先采用上游回显值；上游未回显时回退到最终出站 body（经过
 		// fast policy filter/force 之后）里的 tier。
-		if tier := resolvedOpenAIUpstreamServiceTier(c, extractOpenAIServiceTierFromBody(c, responsesBody)); tier != nil {
+		if tier := resolvedOpenAIUpstreamServiceTier(c, serviceTier); tier != nil {
 			result.ServiceTier = tier
 		}
 		if responsesReq.Reasoning != nil && responsesReq.Reasoning.Effort != "" {
@@ -983,13 +989,14 @@ func (b *compatWatchedBody) Read(p []byte) (int, error) {
 	return n, err
 }
 
-// compatRequestStash is the request body the gateway sent upstream, kept on the gin
-// context so that a stream handler can estimate the input of a request that ends
-// without a usage report. It remembers the account so that a failover attempt through
-// a path that stashes nothing never reads the previous attempt's body.
+// compatRequestStash keeps only the precomputed input token estimate for the
+// request body sent upstream so a stream handler can bill an incomplete stream
+// without pinning megabytes of request JSON during active streaming. It remembers
+// the account so that a failover attempt through a path that stashes nothing
+// never reads the previous attempt's estimate.
 type compatRequestStash struct {
-	accountID int64
-	body      []byte
+	accountID            int64
+	estimatedInputTokens int
 }
 
 const compatUpstreamRequestBodyKey = "openai_compat_upstream_request_body"
@@ -998,26 +1005,28 @@ func stashCompatUpstreamRequestBody(c *gin.Context, account *Account, body []byt
 	if c == nil {
 		return
 	}
-	stash := compatRequestStash{body: body}
+	stash := compatRequestStash{
+		estimatedInputTokens: estimateRequestInputTokens(body),
+	}
 	if account != nil {
 		stash.accountID = account.ID
 	}
 	c.Set(compatUpstreamRequestBodyKey, stash)
 }
 
-func compatUpstreamRequestBodyFor(c *gin.Context, account *Account) (body []byte, accountID int64) {
+func compatUpstreamEstimatedTokensFor(c *gin.Context, account *Account) (estimatedInputTokens int, accountID int64) {
 	if c == nil {
-		return nil, 0
+		return 0, 0
 	}
 	value, ok := c.Get(compatUpstreamRequestBodyKey)
 	if !ok {
-		return nil, 0
+		return 0, 0
 	}
 	stash, ok := value.(compatRequestStash)
 	if !ok || (account != nil && stash.accountID != account.ID) {
-		return nil, 0
+		return 0, 0
 	}
-	return stash.body, stash.accountID
+	return stash.estimatedInputTokens, stash.accountID
 }
 
 // compatIncompleteUsage describes a request that ended without a usage report.
@@ -1066,11 +1075,11 @@ func applyCompatIncompleteUsage(c *gin.Context, usage *OpenAIUsage, in compatInc
 		usage.OutputTokens = in.OutputEstimate
 		filledOutput = in.OutputEstimate
 	}
-	requestBody, stashedAccountID := compatUpstreamRequestBodyFor(c, in.Account)
+	estimatedInput, stashedAccountID := compatUpstreamEstimatedTokensFor(c, in.Account)
 	if usage.InputTokens == 0 && usage.CacheReadInputTokens == 0 &&
 		usage.CacheCreationInputTokens == 0 && usage.ImageInputTokens == 0 {
-		if estimated := estimateRequestInputTokens(requestBody); estimated > 0 {
-			split := splitOpenAIIncompleteInput(estimated)
+		if estimatedInput > 0 {
+			split := splitOpenAIIncompleteInput(estimatedInput)
 			usage.InputTokens = split.Total
 			usage.CacheReadInputTokens = split.CacheRead
 			usage.CacheReadEstimated = true
@@ -1399,6 +1408,10 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 	requestID := resp.Header.Get("x-request-id")
 	// 上游已返回 200 + SSE，允许 handler 的 pre-header keepalive 写下游。
 	ArmOpenAIStreamSSEKeepalive(c)
+	releaseCtx := context.TODO()
+	if c != nil && c.Request != nil {
+		releaseCtx = c.Request.Context()
+	}
 	writeStreamHeaders := s.newStreamHeaderWriter(c, resp.Header)
 
 	state := apicompat.NewResponsesEventToAnthropicState()
@@ -1634,6 +1647,7 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 				if !clientDisconnected {
 					if !clientOutputStarted {
 						writeAnthropicError(c, errStatus, errType, errMsg)
+						TriggerRequestBodyRelease(releaseCtx, c, account)
 						clientOutputStarted = true
 					} else {
 						writeStreamHeaders()
@@ -1666,6 +1680,9 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 						zap.String("request_id", requestID),
 					)
 					break
+				}
+				if !clientOutputStarted {
+					TriggerRequestBodyRelease(releaseCtx, c, account)
 				}
 				clientOutputStarted = true
 			}
@@ -1726,6 +1743,9 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 						zap.String("request_id", requestID),
 					)
 					break
+				}
+				if !clientOutputStarted {
+					TriggerRequestBodyRelease(releaseCtx, c, account)
 				}
 				clientOutputStarted = true
 			}

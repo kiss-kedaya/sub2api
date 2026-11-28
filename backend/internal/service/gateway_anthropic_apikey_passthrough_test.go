@@ -21,6 +21,25 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+func (s *GatewayService) forwardAnthropicAPIKeyPassthrough(
+	ctx context.Context,
+	c *gin.Context,
+	account *Account,
+	body []byte,
+	reqModel string,
+	originalModel string,
+	reqStream bool,
+	startTime time.Time,
+) (*ForwardResult, error) {
+	return s.forwardAnthropicAPIKeyPassthroughWithInput(ctx, c, account, anthropicPassthroughForwardInput{
+		Body:          body,
+		RequestModel:  reqModel,
+		OriginalModel: originalModel,
+		RequestStream: reqStream,
+		StartTime:     startTime,
+	})
+}
+
 type anthropicHTTPUpstreamRecorder struct {
 	lastReq  *http.Request
 	lastBody []byte

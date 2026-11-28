@@ -216,6 +216,7 @@ func (s *AntigravityGatewayService) ForwardGemini(ctx context.Context, c *gin.Co
 					fallbackReq, err := antigravity.NewAPIRequest(fallbackAttemptCtx, upstreamAction, accessToken, fallbackWrapped)
 					if err == nil {
 						fallbackResp, err := s.httpUpstream.Do(fallbackReq, proxyURL, account.ID, account.Concurrency)
+						releaseUpstreamRequestPayload(fallbackReq, fallbackResp)
 						if err == nil && fallbackResp.StatusCode < 400 {
 							_ = resp.Body.Close()
 							resp = fallbackResp
@@ -449,17 +450,33 @@ handleSuccess:
 		c.Header("x-request-id", requestID)
 	}
 
+	injectedBody = nil
+	wrappedBody = nil
 	var usage *ClaudeUsage
 	var firstTokenMs *int
 	var clientDisconnect bool
 	var responseErr error
 	balanceAborted := false
 	goneOutputTokens := 0
+	var estimatedInputTokens int
+	var hasEstimatedInputTokens bool
 	hasFinalOutput := false
 
 	if stream {
+		var popRelease func()
+		ctx, popRelease = PushServiceRequestBodyRelease(ctx, c, func(_ *Account) {
+			if len(body) > 0 {
+				estimatedInputTokens = estimateRequestInputTokens(body)
+				hasEstimatedInputTokens = true
+			}
+			body = nil
+			injectedBody = nil
+			wrappedBody = nil
+		})
+		TriggerRequestBodyRelease(ctx, c, account)
 		// 客户端要求流式，直接透传
 		streamRes, err := s.handleGeminiStreamingResponse(c, resp, startTime)
+		popRelease()
 		if err != nil {
 			logger.LegacyPrintf("service.antigravity_gateway", "%s status=stream_error error=%v", prefix, err)
 			if streamRes == nil || (!streamRes.balanceAborted && !isBalanceHoldTopUpError(err)) {
@@ -505,7 +522,7 @@ handleSuccess:
 		if balanceAborted {
 			event = "antigravity_usage.balance_abort_estimated"
 		}
-		applyIncompleteGeminiUsage(event, account, forwardedModel, usage, goneOutputTokens, body, hasFinalOutput)
+		applyIncompleteGeminiUsageWithEstimate(event, account, forwardedModel, usage, goneOutputTokens, body, estimatedInputTokens, hasEstimatedInputTokens, hasFinalOutput)
 	}
 
 	// 判断是否为图片生成模型

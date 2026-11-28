@@ -186,14 +186,8 @@ func trySanitizeOpenAIResponsesToolSchemas(
 	if p.pos != len(body) {
 		return nil, false, fmt.Errorf("sanitize OpenAI Responses tool schemas: trailing data at byte %d", p.pos)
 	}
-	// No edits means the body is returned untouched, so the extra full-body
-	// json.Valid sweep buys nothing. Only pay for it when we are about to
-	// rewrite the document.
 	if len(p.edits) == 0 {
 		return body, false, nil
-	}
-	if !json.Valid(body) {
-		return nil, false, fmt.Errorf("sanitize OpenAI Responses tool schemas: invalid JSON")
 	}
 	return applyOpenAIResponsesToolSchemaEdits(body, p.edits)
 }
@@ -542,6 +536,10 @@ func (p *openAIResponsesToolSchemaParser) parseString() (int, int, error) {
 	start := p.pos
 	p.pos++
 	for p.pos < len(p.body) {
+		p.pos = skipSafeJSONStringRun(p.body, p.pos)
+		if p.pos >= len(p.body) {
+			break
+		}
 		switch p.body[p.pos] {
 		case '"':
 			p.pos++
@@ -569,10 +567,7 @@ func (p *openAIResponsesToolSchemaParser) parseString() (int, int, error) {
 				return 0, 0, p.syntaxError("invalid string escape")
 			}
 		default:
-			if p.body[p.pos] < 0x20 {
-				return 0, 0, p.syntaxError("control character in string")
-			}
-			p.pos++
+			return 0, 0, p.syntaxError("control character in string")
 		}
 	}
 	return 0, 0, p.syntaxError("unterminated string")

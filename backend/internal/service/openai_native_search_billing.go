@@ -2,6 +2,7 @@ package service
 
 import (
 	"strings"
+	"unsafe"
 
 	"github.com/gin-gonic/gin"
 	"github.com/tidwall/gjson"
@@ -18,7 +19,10 @@ import (
 //     function_call / custom_tool_call 且名字是检索工具名）；
 //  2. 该名字不是客户端自己声明的函数工具——function_call 表示“模型要求客户端
 //     调用这个函数”，网关既没有执行也没有向上游付费，绝不能按内置工具收费。
-const openAINativeSearchSkipFunctionToolsContextKey = "openai_native_search_skip_function_tools"
+const (
+	openAINativeSearchSkipFunctionToolsContextKey = "openai_native_search_skip_function_tools"
+	openAINativeSearchSkipFunctionToolsBodyKey    = "openai_native_search_skip_function_tools_body"
+)
 
 // openAINativeSearchBillingApplies 报告本次请求是否把内置检索次数写进计费结果。
 // 只按账号是否存在判断（没有账号就没有计费主体），不再按平台过滤。
@@ -33,12 +37,18 @@ func rememberOpenAINativeSearchSkipFunctionTools(c *gin.Context, body []byte) {
 	if c == nil {
 		return
 	}
+	if prev, ok := c.Get(openAINativeSearchSkipFunctionToolsBodyKey); ok {
+		if prevBody, ok := prev.([]byte); ok && len(prevBody) == len(body) && unsafe.SliceData(prevBody) == unsafe.SliceData(body) {
+			return
+		}
+	}
 	names := declaredClientFunctionToolNames(c, body)
 	if len(names) == 0 {
 		c.Set(openAINativeSearchSkipFunctionToolsContextKey, map[string]struct{}{})
-		return
+	} else {
+		c.Set(openAINativeSearchSkipFunctionToolsContextKey, names)
 	}
-	c.Set(openAINativeSearchSkipFunctionToolsContextKey, names)
+	c.Set(openAINativeSearchSkipFunctionToolsBodyKey, body)
 }
 
 // openAINativeSearchSkipFunctionTools 取回 rememberOpenAINativeSearchSkipFunctionTools
@@ -71,67 +81,257 @@ func openAINativeSearchSkipFunctionTools(c *gin.Context) map[string]struct{} {
 //     复制品钉住（生产 heap profile：298 个存活复制品、551 MB）。改用零拷贝只读视图。
 //   - 视图上取到的 name 仍指向请求体本身，key 必须 strings.Clone 成独立的小字符串，
 //     既不钉住请求体，也不会因为请求体之后被改写而变形。
+func extractJSONScalarAsGJSONString(raw string) string {
+	if raw == "" || raw == "null" {
+		return ""
+	}
+	if raw[0] == '"' && len(raw) >= 2 && raw[len(raw)-1] == '"' && strings.IndexByte(raw[1:len(raw)-1], '\\') < 0 {
+		return raw[1 : len(raw)-1]
+	}
+	return gjson.Parse(raw).String()
+}
+
 func declaredClientFunctionToolNames(c *gin.Context, body []byte) map[string]struct{} {
-	if len(body) == 0 || !RequestBodyTop(c, body).Valid() {
+	if len(body) == 0 {
 		return nil
 	}
-	root := parseRawJSONView(body)
-	if !root.IsObject() {
+	top := RequestBodyTop(c, body)
+	if !top.Valid() {
 		return nil
 	}
-	names := make(map[string]struct{}, 4)
+	var names map[string]struct{}
 	add := func(name string) {
 		name = strings.ToLower(strings.TrimSpace(name))
 		if name == "" {
 			return
 		}
-		if _, dup := names[name]; dup {
+		if names == nil {
+			names = make(map[string]struct{}, 4)
+		} else if _, dup := names[name]; dup {
 			return
 		}
 		names[strings.Clone(name)] = struct{}{}
 	}
-	collectTools := func(tools gjson.Result) {
-		tools.ForEach(func(_, tool gjson.Result) bool {
-			if !tool.IsObject() {
-				return true
-			}
-			kind := strings.ToLower(strings.TrimSpace(tool.Get("type").String()))
-			switch kind {
-			case "", "function", "custom":
-			default:
-				// 内置工具（web_search / web_search_preview / image_generation ...）
-				// 只按类型声明，没有可冲突的客户端函数名。
-				return true
-			}
-			add(tool.Get("name").String())
-			add(tool.Get("function.name").String())
-			return true
-		})
-	}
-	collectFunctions := func(functions gjson.Result) {
-		functions.ForEach(func(_, fn gjson.Result) bool {
-			add(fn.Get("name").String())
-			add(fn.Get("function.name").String())
-			return true
-		})
-	}
-	// 一次遍历顶层成员取 tools / functions；重复键只认第一个（与 gjson.Get 一致）。
-	var seenTools, seenFunctions bool
-	root.ForEach(func(key, value gjson.Result) bool {
-		switch key.Str {
-		case "tools":
-			if !seenTools {
-				seenTools = true
-				collectTools(value)
-			}
-		case "functions":
-			if !seenFunctions {
-				seenFunctions = true
-				collectFunctions(value)
-			}
+	collectToolResult := func(tool gjson.Result) {
+		if !tool.IsObject() {
+			return
 		}
-		return !seenTools || !seenFunctions
-	})
+		kind := strings.ToLower(strings.TrimSpace(tool.Get("type").String()))
+		switch kind {
+		case "", "function", "custom":
+		default:
+			// 内置工具（web_search / web_search_preview / image_generation ...）
+			// 只按类型声明，没有可冲突的客户端函数名。
+			return
+		}
+		add(tool.Get("name").String())
+		add(tool.Get("function.name").String())
+	}
+	collectFunctionResult := func(fn gjson.Result) {
+		add(fn.Get("name").String())
+		add(fn.Get("function.name").String())
+	}
+	collectFunctionObjectName := func(fnRaw string) {
+		if fnRaw == "" || fnRaw[0] != '{' {
+			return
+		}
+		var nameRaw string
+		var hasName bool
+		if ok := jsonForEachMember(fnRaw, func(k, v string) bool {
+			if k == "name" {
+				nameRaw = v
+				hasName = true
+				return false
+			}
+			return true
+		}); !ok {
+			add(gjson.Parse(fnRaw).Get("name").String())
+			return
+		}
+		if hasName {
+			add(extractJSONScalarAsGJSONString(nameRaw))
+		}
+	}
+	collectToolsRaw := func(raw string) {
+		if raw == "" {
+			return
+		}
+		if raw[0] == '{' {
+			gjson.Parse(raw).ForEach(func(_, tool gjson.Result) bool {
+				collectToolResult(tool)
+				return true
+			})
+			return
+		}
+		if raw[0] != '[' {
+			return
+		}
+		walkOK := jsonForEachElement(raw, func(elem string) bool {
+			if elem == "" || elem[0] != '{' {
+				return true
+			}
+			var typeRaw, nameRaw, fnRaw string
+			var hasType, hasName, hasFn bool
+			if ok := jsonForEachMember(elem, func(k, v string) bool {
+				switch k {
+				case "type":
+					if !hasType {
+						typeRaw = v
+						hasType = true
+					}
+				case "name":
+					if !hasName {
+						nameRaw = v
+						hasName = true
+					}
+				case "function":
+					if !hasFn {
+						fnRaw = v
+						hasFn = true
+					}
+				}
+				return !hasType || !hasName || !hasFn
+			}); !ok {
+				collectToolResult(gjson.Parse(elem))
+				return true
+			}
+			if hasType {
+				kind := strings.ToLower(strings.TrimSpace(extractJSONScalarAsGJSONString(typeRaw)))
+				switch kind {
+				case "", "function", "custom":
+				default:
+					return true
+				}
+			}
+			if hasName {
+				add(extractJSONScalarAsGJSONString(nameRaw))
+			}
+			if hasFn {
+				collectFunctionObjectName(fnRaw)
+			}
+			return true
+		})
+		if !walkOK {
+			gjson.Parse(raw).ForEach(func(_, tool gjson.Result) bool {
+				collectToolResult(tool)
+				return true
+			})
+		}
+	}
+	collectFunctionsRaw := func(raw string) {
+		if raw == "" {
+			return
+		}
+		if raw[0] == '{' {
+			gjson.Parse(raw).ForEach(func(_, fn gjson.Result) bool {
+				collectFunctionResult(fn)
+				return true
+			})
+			return
+		}
+		if raw[0] != '[' {
+			return
+		}
+		walkOK := jsonForEachElement(raw, func(elem string) bool {
+			if elem == "" || elem[0] != '{' {
+				return true
+			}
+			var nameRaw, fnRaw string
+			var hasName, hasFn bool
+			if ok := jsonForEachMember(elem, func(k, v string) bool {
+				switch k {
+				case "name":
+					if !hasName {
+						nameRaw = v
+						hasName = true
+					}
+				case "function":
+					if !hasFn {
+						fnRaw = v
+						hasFn = true
+					}
+				}
+				return !hasName || !hasFn
+			}); !ok {
+				collectFunctionResult(gjson.Parse(elem))
+				return true
+			}
+			if hasName {
+				add(extractJSONScalarAsGJSONString(nameRaw))
+			}
+			if hasFn {
+				collectFunctionObjectName(fnRaw)
+			}
+			return true
+		})
+		if !walkOK {
+			gjson.Parse(raw).ForEach(func(_, fn gjson.Result) bool {
+				collectFunctionResult(fn)
+				return true
+			})
+		}
+	}
+
+	if top.idx != nil {
+		if tools := top.Get("tools"); tools.Exists() {
+			collectToolsRaw(tools.Raw)
+		}
+		if functions := top.Get("functions"); functions.Exists() {
+			collectFunctionsRaw(functions.Raw)
+		}
+	} else {
+		s := jsonView(body)
+		i := jsonSkipSpace(s, 0)
+		if i >= len(s) || s[i] != '{' {
+			return nil
+		}
+		var toolsRaw, functionsRaw string
+		var seenTools, seenFunctions bool
+		walkOK := jsonForEachMember(s, func(key, val string) bool {
+			switch key {
+			case "tools":
+				if !seenTools {
+					seenTools = true
+					toolsRaw = val
+				}
+			case "functions":
+				if !seenFunctions {
+					seenFunctions = true
+					functionsRaw = val
+				}
+			}
+			return !seenTools || !seenFunctions
+		})
+		if walkOK {
+			if seenTools {
+				collectToolsRaw(toolsRaw)
+			}
+			if seenFunctions {
+				collectFunctionsRaw(functionsRaw)
+			}
+		} else {
+			root := parseRawJSONView(body)
+			if !root.IsObject() {
+				return nil
+			}
+			seenTools, seenFunctions = false, false
+			root.ForEach(func(key, value gjson.Result) bool {
+				switch key.Str {
+				case "tools":
+					if !seenTools {
+						seenTools = true
+						collectToolsRaw(value.Raw)
+					}
+				case "functions":
+					if !seenFunctions {
+						seenFunctions = true
+						collectFunctionsRaw(value.Raw)
+					}
+				}
+				return !seenTools || !seenFunctions
+			})
+		}
+	}
 	if len(names) == 0 {
 		return nil
 	}

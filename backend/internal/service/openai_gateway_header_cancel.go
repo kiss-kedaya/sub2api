@@ -44,9 +44,12 @@ func (s *OpenAIGatewayService) doOpenAIUpstreamWithHeaderCancel(clientCtx contex
 // Codex-specific token, ticket or cookie injection on their requests.
 func (s *OpenAIGatewayService) doOpenAIRequestWithHeaderCancel(clientCtx context.Context, request *http.Request, send func(*http.Request) (*http.Response, error)) (*http.Response, error) {
 	if clientCtx == nil || clientCtx.Done() == nil {
-		return send(request)
+		resp, err := send(request)
+		releaseUpstreamRequestPayload(request, resp)
+		return resp, err
 	}
 	if err := clientCtx.Err(); err != nil {
+		releaseUpstreamRequestPayload(request, nil)
 		return nil, errors.Join(err, errOpenAIRequestNotSent)
 	}
 	upstreamCtx, cancelUpstream := context.WithCancel(request.Context())
@@ -67,7 +70,10 @@ func (s *OpenAIGatewayService) doOpenAIRequestWithHeaderCancel(clientCtx context
 		defer close(watchDone)
 		cancelUpstream()
 	})
-	resp, err := send(request.WithContext(upstreamCtx))
+	upstreamReq := request.WithContext(upstreamCtx)
+	resp, err := send(upstreamReq)
+	releaseUpstreamRequestPayload(upstreamReq, resp)
+	releaseUpstreamRequestPayload(request, resp)
 	if !stopWatch() {
 		// Join a started callback so the cancellation is settled before the handoff
 		// decision below, and cannot cancel the body after handoff.

@@ -1,58 +1,96 @@
 package requestcapture
 
-import "encoding/json"
-
 // This scanner validates structure without allocating strings or whole events.
 // States: value, object key/end, colon, comma/end, array value/end, object key.
 type jsonValidator struct {
-	stack               []byte
-	kinds               []byte
+	stack               [128]byte
+	kinds               [128]byte
+	depth               uint8
 	root                byte
 	quoted, key, escape bool
 	unicode             int
-	primitive           []byte
+	primitive           [128]byte
+	primLen             uint8
 }
 
 // validPrimitive is json.Valid for the number/true/false/null tokens collected
-// in primitive, with the overwhelmingly common shapes decided without a scan.
+// in primitive, with zero allocations.
 func validPrimitive(p []byte) bool {
 	switch string(p) {
-	case "true", "false", "null", "0":
+	case "true", "false", "null":
 		return true
 	}
-	if len(p) > 0 && p[0] >= '1' && p[0] <= '9' {
-		for _, c := range p[1:] {
-			if c < '0' || c > '9' {
-				return json.Valid(p)
-			}
+	return validJSONNumber(p)
+}
+
+func validJSONNumber(p []byte) bool {
+	n := len(p)
+	if n == 0 {
+		return false
+	}
+	i := 0
+	if p[i] == '-' {
+		i++
+		if i >= n {
+			return false
 		}
-		return true
 	}
-	return json.Valid(p)
+	switch {
+	case p[i] == '0':
+		i++
+	case p[i] >= '1' && p[i] <= '9':
+		for i < n && p[i] >= '0' && p[i] <= '9' {
+			i++
+		}
+	default:
+		return false
+	}
+	if i < n && p[i] == '.' {
+		i++
+		if i >= n || p[i] < '0' || p[i] > '9' {
+			return false
+		}
+		for i < n && p[i] >= '0' && p[i] <= '9' {
+			i++
+		}
+	}
+	if i < n && (p[i] == 'e' || p[i] == 'E') {
+		i++
+		if i < n && (p[i] == '+' || p[i] == '-') {
+			i++
+		}
+		if i >= n || p[i] < '0' || p[i] > '9' {
+			return false
+		}
+		for i < n && p[i] >= '0' && p[i] <= '9' {
+			i++
+		}
+	}
+	return i == n
 }
 
 func (v *jsonValidator) state() byte {
-	if len(v.stack) == 0 {
+	if v.depth == 0 {
 		return v.root
 	}
-	return v.stack[len(v.stack)-1]
+	return v.stack[v.depth-1]
 }
 func (v *jsonValidator) set(s byte) {
-	if len(v.stack) == 0 {
+	if v.depth == 0 {
 		v.root = s
 	} else {
-		v.stack[len(v.stack)-1] = s
+		v.stack[v.depth-1] = s
 	}
 }
 func (v *jsonValidator) complete() bool {
-	if len(v.primitive) > 0 {
-		if !validPrimitive(v.primitive) {
+	if v.primLen > 0 {
+		if !validPrimitive(v.primitive[:v.primLen]) {
 			return false
 		}
-		v.primitive = v.primitive[:0]
+		v.primLen = 0
 		v.set(3)
 	}
-	return len(v.stack) == 0 && v.root == 3 && !v.quoted
+	return v.depth == 0 && v.root == 3 && !v.quoted
 }
 func (v *jsonValidator) accept(b byte) bool {
 	if v.quoted {
@@ -88,18 +126,19 @@ func (v *jsonValidator) accept(b byte) bool {
 		return true
 	}
 	space := b == ' ' || b == '\n' || b == '\r' || b == '\t'
-	if len(v.primitive) > 0 {
+	if v.primLen > 0 {
 		if b != ',' && b != '}' && b != ']' && !space {
-			if len(v.primitive) >= 128 || ((b < '0' || b > '9') && b != '.' && b != '-' && b != '+' && b != 'e' && b != 'E' && b != 'r' && b != 'u' && b != 'l' && b != 's' && b != 'a' && b != 't' && b != 'f' && b != 'n') {
+			if v.primLen >= 128 || ((b < '0' || b > '9') && b != '.' && b != '-' && b != '+' && b != 'e' && b != 'E' && b != 'r' && b != 'u' && b != 'l' && b != 's' && b != 'a' && b != 't' && b != 'f' && b != 'n') {
 				return false
 			}
-			v.primitive = append(v.primitive, b)
+			v.primitive[v.primLen] = b
+			v.primLen++
 			return true
 		}
-		if !validPrimitive(v.primitive) {
+		if !validPrimitive(v.primitive[:v.primLen]) {
 			return false
 		}
-		v.primitive = v.primitive[:0]
+		v.primLen = 0
 		v.set(3)
 	}
 	if space {
@@ -107,15 +146,14 @@ func (v *jsonValidator) accept(b byte) bool {
 	}
 	s := v.state()
 	if b == '}' || b == ']' {
-		if len(v.stack) == 0 {
+		if v.depth == 0 {
 			return false
 		}
-		kind := v.kinds[len(v.kinds)-1]
+		kind := v.kinds[v.depth-1]
 		if b == '}' && (kind != '{' || s != 1 && s != 3) || b == ']' && (kind != '[' || s != 4 && s != 3) {
 			return false
 		}
-		v.stack = v.stack[:len(v.stack)-1]
-		v.kinds = v.kinds[:len(v.kinds)-1]
+		v.depth--
 		v.set(3)
 		return true
 	}
@@ -135,10 +173,10 @@ func (v *jsonValidator) accept(b byte) bool {
 		return true
 	}
 	if s == 3 {
-		if b != ',' || len(v.stack) == 0 {
+		if b != ',' || v.depth == 0 {
 			return false
 		}
-		if v.kinds[len(v.kinds)-1] == '{' {
+		if v.kinds[v.depth-1] == '{' {
 			v.set(5)
 		} else {
 			v.set(0)
@@ -151,19 +189,21 @@ func (v *jsonValidator) accept(b byte) bool {
 		return true
 	}
 	if b == '{' || b == '[' {
-		if len(v.stack) >= 128 {
+		if v.depth >= 128 {
 			return false
 		}
 		next := byte(1)
 		if b == '[' {
 			next = 4
 		}
-		v.stack = append(v.stack, next)
-		v.kinds = append(v.kinds, b)
+		v.stack[v.depth] = next
+		v.kinds[v.depth] = b
+		v.depth++
 		return true
 	}
 	if b == '-' || b >= '0' && b <= '9' || b == 't' || b == 'f' || b == 'n' {
-		v.primitive = append(v.primitive, b)
+		v.primitive[v.primLen] = b
+		v.primLen++
 		return true
 	}
 	return false

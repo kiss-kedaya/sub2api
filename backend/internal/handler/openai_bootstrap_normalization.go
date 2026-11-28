@@ -11,7 +11,6 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
-	"github.com/tidwall/gjson"
 )
 
 // normalizeCodexDelegationBootstrap converts the call-less tool result emitted
@@ -64,17 +63,22 @@ func applyCodexBootstrapNormalizations(c *gin.Context, body []byte) codexBootstr
 }
 
 func codexBootstrapInputLooksRelevant(c *gin.Context, body []byte) bool {
-	input := service.RequestBodyTop(c, body).Get("input")
-	if !input.IsArray() {
+	_ = service.RequestBodyTop(c, body)
+	if len(body) == 0 {
 		return false
 	}
-	found := false
-	input.ForEach(func(_, item gjson.Result) bool {
-		if item.Get("type").String() != "function_call_output" {
-			return true
+	if !bytes.Contains(body, []byte(`\u`)) {
+		if !bytes.Contains(body, []byte("function_call_output")) {
+			return false
 		}
-		namespace := item.Get("namespace").String()
-		name := item.Get("name").String()
+		if !bytes.Contains(body, []byte("codex_app")) &&
+			!bytes.Contains(body, []byte("codex_tui")) &&
+			!bytes.Contains(body, []byte("agent")) {
+			return false
+		}
+	}
+	found := false
+	service.WalkCodexBootstrapInputCandidates(c, body, func(namespace, name string) bool {
 		if isCodexDelegationTool(namespace, name) ||
 			(namespace == "codex_app" && name == "automation_update") ||
 			isCodexUntrustedContextCandidate(namespace, name) {

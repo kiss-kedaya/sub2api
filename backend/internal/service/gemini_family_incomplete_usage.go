@@ -250,6 +250,13 @@ func geminiUsageReported(usage *ClaudeUsage) bool {
 // CacheReadInputTokens the cache share, flagged as an estimate so a model without a
 // cache price bills it at the input price.
 func fillIncompleteGeminiUsage(usage *ClaudeUsage, outputTokens int, requestBody []byte, hasFinalOutput bool) (filledOutput, filledInput int) {
+	return fillIncompleteGeminiUsageWithEstimate(usage, outputTokens, requestBody, 0, false, hasFinalOutput)
+}
+
+// fillIncompleteGeminiUsageWithEstimate behaves like fillIncompleteGeminiUsage while
+// allowing callers that released requestBody mid-stream to pass a precomputed input
+// token estimate.
+func fillIncompleteGeminiUsageWithEstimate(usage *ClaudeUsage, outputTokens int, requestBody []byte, precomputedInputTokens int, hasPrecomputed bool, hasFinalOutput bool) (filledOutput, filledInput int) {
 	if usage == nil {
 		return 0, 0
 	}
@@ -259,7 +266,11 @@ func fillIncompleteGeminiUsage(usage *ClaudeUsage, outputTokens int, requestBody
 		filledOutput = outputTokens
 	}
 	if usage.InputTokens == 0 && usage.CacheReadInputTokens == 0 && usage.CacheCreationInputTokens == 0 {
-		if total := estimateRequestInputTokens(requestBody); total > 0 {
+		total := precomputedInputTokens
+		if !hasPrecomputed {
+			total = estimateRequestInputTokens(requestBody)
+		}
+		if total > 0 {
 			split := splitGeminiIncompleteInput(total)
 			usage.InputTokens = split.Fresh
 			usage.CacheReadInputTokens = split.CacheRead
@@ -275,6 +286,19 @@ func fillIncompleteGeminiUsage(usage *ClaudeUsage, outputTokens int, requestBody
 // event names the log line.
 func applyIncompleteGeminiUsage(event string, account *Account, model string, usage *ClaudeUsage, outputTokens int, requestBody []byte, hasFinalOutput bool) {
 	filledOutput, filledInput := fillIncompleteGeminiUsage(usage, outputTokens, requestBody, hasFinalOutput)
+	logIncompleteGeminiUsage(event, account, model, filledOutput, filledInput)
+}
+
+// applyIncompleteGeminiUsageWithEstimate fills the missing usage of a request whose
+// client left or whose balance hold aborted after the upstream accepted it (using a
+// precomputed input token estimate when requestBody was released mid-stream), and logs
+// the estimate. event names the log line.
+func applyIncompleteGeminiUsageWithEstimate(event string, account *Account, model string, usage *ClaudeUsage, outputTokens int, requestBody []byte, precomputedInputTokens int, hasPrecomputed bool, hasFinalOutput bool) {
+	filledOutput, filledInput := fillIncompleteGeminiUsageWithEstimate(usage, outputTokens, requestBody, precomputedInputTokens, hasPrecomputed, hasFinalOutput)
+	logIncompleteGeminiUsage(event, account, model, filledOutput, filledInput)
+}
+
+func logIncompleteGeminiUsage(event string, account *Account, model string, filledOutput, filledInput int) {
 	if filledOutput == 0 && filledInput == 0 {
 		return
 	}

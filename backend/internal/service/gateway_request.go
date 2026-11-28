@@ -618,6 +618,23 @@ func (p *ParsedRequest) ReplaceBody(data []byte) error {
 	return nil
 }
 
+// ReleaseBody clears both Body and the cached gatewayBodyView slice while
+// cloning retained scalar string fields so no backing array of the request
+// body remains pinned during active streaming.
+func (p *ParsedRequest) ReleaseBody() {
+	if p == nil {
+		return
+	}
+	p.Model = strings.Clone(p.Model)
+	p.MetadataUserID = strings.Clone(p.MetadataUserID)
+	p.OutputEffort = strings.Clone(p.OutputEffort)
+	p.Speed = strings.Clone(p.Speed)
+	if p.Body != nil {
+		p.Body.Replace(nil)
+	}
+	p.view = gatewayBodyView{}
+}
+
 // sliceRawFromBody 返回 Result.Raw 对应的原始字节切片。
 // 优先使用 Result.Index 直接从 body 切片，避免对大字段（如 messages）产生额外拷贝。
 // 当 Index 不可用时，退化为复制（理论上极少发生）。

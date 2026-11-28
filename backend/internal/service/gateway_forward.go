@@ -130,23 +130,7 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 	}
 
 	if account != nil && account.IsAnthropicAPIKeyPassthroughEnabled() {
-		passthroughBody := parsed.Body.Bytes()
-		passthroughModel := parsed.Model
-		if passthroughModel != "" {
-			if mappedModel := account.GetMappedModel(passthroughModel); mappedModel != passthroughModel {
-				passthroughBody = s.replaceModelInBody(passthroughBody, mappedModel)
-				logger.LegacyPrintf("service.gateway", "Passthrough model mapping: %s -> %s (account: %s)", parsed.Model, mappedModel, account.Name)
-				passthroughModel = mappedModel
-			}
-		}
-		return s.forwardAnthropicAPIKeyPassthroughWithInput(ctx, c, account, anthropicPassthroughForwardInput{
-			Body:          passthroughBody,
-			Parsed:        parsed,
-			RequestModel:  passthroughModel,
-			OriginalModel: parsed.Model,
-			RequestStream: parsed.Stream,
-			StartTime:     startTime,
-		})
+		return s.forwardAnthropicAPIKeyPassthroughFromParsed(ctx, c, account, parsed, startTime)
 	}
 
 	if account != nil && account.IsBedrock() {
@@ -175,7 +159,7 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 		body = parsed.Body.Bytes()
 		return nil
 	}
-	reqModel := parsed.Model
+	reqModel := strings.Clone(parsed.Model)
 	reqStream := parsed.Stream
 	originalModel := reqModel
 
@@ -442,6 +426,7 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 
 		// 发送请求
 		resp, err = s.httpUpstream.DoWithTLS(upstreamReq, proxyURL, account.ID, account.Concurrency, tlsProfile)
+		releaseUpstreamRequestPayload(upstreamReq, resp)
 		if err != nil {
 			if resp != nil && resp.Body != nil {
 				_ = resp.Body.Close()
@@ -519,6 +504,7 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 					retryReq, retryWireBody, buildErr := s.buildUpstreamRequest(upstream.attempt(), c, account, filteredBody, token, tokenType, reqModel, reqStream, shouldMimicClaudeCode)
 					if buildErr == nil {
 						retryResp, retryErr := s.httpUpstream.DoWithTLS(retryReq, proxyURL, account.ID, account.Concurrency, tlsProfile)
+						releaseUpstreamRequestPayload(retryReq, retryResp)
 						if retryErr == nil {
 							if retryResp.StatusCode < 400 {
 								// 重试请求被上游接受后同步 ParsedRequest，保证 usage/日志看到真实请求体。
@@ -560,6 +546,7 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 									retryReq2, retryWireBody2, buildErr2 := s.buildUpstreamRequest(upstream.attempt(), c, account, filteredBody2, token, tokenType, reqModel, reqStream, shouldMimicClaudeCode)
 									if buildErr2 == nil {
 										retryResp2, retryErr2 := s.httpUpstream.DoWithTLS(retryReq2, proxyURL, account.ID, account.Concurrency, tlsProfile)
+										releaseUpstreamRequestPayload(retryReq2, retryResp2)
 										if retryErr2 == nil {
 											if retryResp2.StatusCode < 400 {
 												// 二阶段工具块降级成功时也必须更新当前 body。
@@ -646,6 +633,7 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 						budgetRetryReq, budgetWireBody, buildErr := s.buildUpstreamRequest(upstream.attempt(), c, account, rectifiedBody, token, tokenType, reqModel, reqStream, shouldMimicClaudeCode)
 						if buildErr == nil {
 							budgetRetryResp, retryErr := s.httpUpstream.DoWithTLS(budgetRetryReq, proxyURL, account.ID, account.Concurrency, tlsProfile)
+							releaseUpstreamRequestPayload(budgetRetryReq, budgetRetryResp)
 							if retryErr == nil {
 								if budgetRetryResp.StatusCode < 400 {
 									// budget 修正请求成功后，ParsedRequest 也要描述被接受的修正版。
@@ -736,6 +724,7 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 				logger.LegacyPrintf("service.gateway", "[DEBUG]   %s: %v", k, v)
 			}
 		}
+		upstreamReq = nil
 		break
 	}
 	if resp == nil || resp.Body == nil {
@@ -824,6 +813,7 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 			return nil, err
 		}
 	}
+	lastWireBody = nil
 
 	// 触发上游接受回调（提前释放串行锁，不等流完成）
 	if parsed.OnUpstreamAccepted != nil {
@@ -836,7 +826,21 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 	var nonBillableUpstreamError bool
 	if reqStream {
 		writerSizeBeforeStream := c.Writer.Size()
+		var estimatedInputTokens int
+		var hasEstimatedInputTokens bool
+		var popRelease func()
+		ctx, popRelease = PushServiceRequestBodyRelease(ctx, c, func(_ *Account) {
+			if !IsStreamInputUsageObserved(ctx, c) && len(body) > 0 {
+				estimatedInputTokens = estimateRequestInputTokens(body)
+				hasEstimatedInputTokens = true
+			}
+			body = nil
+			lastWireBody = nil
+			replaceBody = nil
+			parsed.ReleaseBody()
+		})
 		streamResult, err := s.handleStreamingResponse(ctx, resp, c, account, startTime, originalModel, reqModel, shouldMimicClaudeCode)
+		popRelease()
 		if err != nil {
 			var sseErr *sseStreamErrorEventError
 			if errors.As(err, &sseErr) {
@@ -894,7 +898,7 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 			// 流中断（缺失 terminal 事件、读错误、数据间隔超时、客户端断开等）时保留已观测到的
 			// usage 与错误一起返回，handler 在错误处理完成后照常提交 usage 记录。
 			// 上游没有 usage 上报的部分按已产出内容和请求体估算。
-			applyIncompleteAnthropicStreamUsage(account, streamResult, body, originalModel, resp.Header.Get("x-request-id"), err)
+			applyIncompleteAnthropicStreamUsageWithEstimate(account, streamResult, body, estimatedInputTokens, hasEstimatedInputTokens, originalModel, resp.Header.Get("x-request-id"), err)
 			if partial := partialStreamUsageResult(c, resp, streamResult, originalModel, mappedModel, startTime, err); partial != nil {
 				return partial, err
 			}
@@ -937,6 +941,32 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 		NonBillableUpstreamError:      nonBillableUpstreamError,
 		SearchCount:                   usage.WebSearchRequests,
 	}, nil
+}
+
+func (s *GatewayService) forwardAnthropicAPIKeyPassthroughFromParsed(
+	ctx context.Context,
+	c *gin.Context,
+	account *Account,
+	parsed *ParsedRequest,
+	startTime time.Time,
+) (*ForwardResult, error) {
+	passthroughBody := parsed.Body.Bytes()
+	passthroughModel := parsed.Model
+	if passthroughModel != "" {
+		if mappedModel := account.GetMappedModel(passthroughModel); mappedModel != passthroughModel {
+			passthroughBody = s.replaceModelInBody(passthroughBody, mappedModel)
+			logger.LegacyPrintf("service.gateway", "Passthrough model mapping: %s -> %s (account: %s)", parsed.Model, mappedModel, account.Name)
+			passthroughModel = mappedModel
+		}
+	}
+	return s.forwardAnthropicAPIKeyPassthroughWithInput(ctx, c, account, anthropicPassthroughForwardInput{
+		Body:          passthroughBody,
+		Parsed:        parsed,
+		RequestModel:  passthroughModel,
+		OriginalModel: parsed.Model,
+		RequestStream: parsed.Stream,
+		StartTime:     startTime,
+	})
 }
 
 func anthropicSpeedModel(parsed *ParsedRequest, result *ForwardResult) string {
