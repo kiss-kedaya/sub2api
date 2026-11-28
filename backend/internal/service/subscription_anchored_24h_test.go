@@ -703,4 +703,131 @@ func TestGroupDailyResetMode_ValidationNormalizationDuplicateAndAuthSnapshot(t *
 	snap.Group.DailyResetMode = ""
 	legacyRestored := apiKeySvc.snapshotToAPIKey("test-key", snap)
 	require.Equal(t, DailyResetModeCalendar, legacyRestored.Group.DailyResetMode)
+
+	// Rolling-upgrade safety: v28 rejects legacy v27 snapshots that omit daily_reset_mode.
+	require.Equal(t, 28, APIKeyAuthCacheSchemaVersion)
+	legacyV27Entry := &APIKeyAuthCacheEntry{
+		Snapshot: &APIKeyAuthSnapshot{
+			Version:  27,
+			APIKeyID: 1,
+			UserID:   2,
+			Status:   StatusActive,
+			User:     APIKeyAuthUserSnapshot{ID: 2, Status: StatusActive},
+			Group: &APIKeyAuthGroupSnapshot{
+				ID:               10,
+				SubscriptionType: SubscriptionTypeSubscription,
+			},
+		},
+	}
+	key, accepted, err := apiKeySvc.applyAuthCacheEntry("test-key", legacyV27Entry)
+	require.NoError(t, err)
+	require.False(t, accepted, "v28 must reject v27 snapshots lacking daily_reset_mode")
+	require.Nil(t, key)
+}
+
+func TestAnchored24h_ExpiredSubscriptionWithStaleWindowOmitsNextDailyResetAt(t *testing.T) {
+	loc := time.FixedZone("Asia/Shanghai", 8*3600)
+	aug6Noon := time.Date(2026, 8, 6, 12, 0, 0, 0, loc)
+	aug7Noon := aug6Noon.Add(24 * time.Hour)
+	aug8Noon := aug6Noon.Add(48 * time.Hour)
+	aug9Morning := time.Date(2026, 8, 9, 10, 0, 0, 0, loc)
+
+	group := newAnchoredTestGroup(100, DailyResetModeAnchored24h)
+	sub := &UserSubscription{
+		ID:               55,
+		UserID:           1,
+		GroupID:          group.ID,
+		Status:           SubscriptionStatusActive, // status not yet swept
+		StartsAt:         aug6Noon,
+		ExpiresAt:        aug8Noon,
+		DailyWindowStart: &aug6Noon, // stale window start from day 1
+		DailyUsageUSD:    20,
+		Group:            group,
+	}
+
+	// While active on Aug 6 18:00, interior boundary Aug 7 12:00 is returned.
+	activeNext := sub.NextDailyResetAtAt(aug6Noon.Add(6 * time.Hour))
+	require.NotNil(t, activeNext)
+	require.True(t, aug7Noon.Equal(*activeNext))
+
+	// At exact expiry (Aug 8 12:00) and after expiry (Aug 9 10:00), NextDailyResetAtAt MUST be nil
+	// and DailyResetTimeAt MUST fall back to ExpiresAt.
+	for _, evalAt := range []time.Time{aug8Noon, aug9Morning} {
+		require.Nil(t, sub.NextDailyResetAtAt(evalAt))
+		resetTime := sub.DailyResetTimeAt(evalAt)
+		require.NotNil(t, resetTime)
+		require.True(t, aug8Noon.Equal(*resetTime))
+	}
+
+	// calculateProgress at Aug 9 must also cap ResetsAt to ExpiresAt.
+	svc := NewSubscriptionService(groupRepoNoop{}, userSubRepoNoop{}, nil, nil, nil)
+	svc.now = func() time.Time { return aug9Morning }
+	progress := svc.calculateProgress(sub, group)
+	require.NotNil(t, progress.Daily)
+	require.True(t, aug8Noon.Equal(progress.Daily.ResetsAt))
+	require.Zero(t, progress.Daily.ResetsInSeconds)
+
+	// Explicitly expired status always omits NextDailyResetAt.
+	sub.Status = SubscriptionStatusExpired
+	require.Nil(t, sub.NextDailyResetAt())
+}
+
+func TestAnchored24h_ExtendExpiredSubscriptionResetsAnchorAndGrantsSingleWindow(t *testing.T) {
+	loc := time.FixedZone("Asia/Shanghai", 8*3600)
+	aug6Noon := time.Date(2026, 8, 6, 12, 0, 0, 0, loc)
+	aug10Afternoon := time.Date(2026, 8, 10, 14, 30, 0, 0, loc)
+	aug11Noon := time.Date(2026, 8, 11, 12, 0, 0, 0, loc) // old stale StartsAt hour!
+	aug11Afternoon := aug10Afternoon.AddDate(0, 0, 1)
+
+	group := newAnchoredTestGroup(100, DailyResetModeAnchored24h)
+	repo := newAnchoredSubRepoStub(group)
+	svc := NewSubscriptionService(&subscriptionGroupRepoStub{group: group}, repo, nil, nil, nil)
+
+	// 1. Activate 1-day subscription on Aug 6 12:00 (expires Aug 7 12:00) and exhaust quota.
+	svc.now = func() time.Time { return aug6Noon }
+	sub, _, err := svc.AssignOrExtendSubscription(context.Background(), &AssignSubscriptionInput{
+		UserID: 31, GroupID: group.ID, ValidityDays: 1,
+	})
+	require.NoError(t, err)
+	sub, err = simulateRequestAt(t, svc, repo, sub.ID, group, aug6Noon.Add(15*time.Minute), 100.01)
+	require.NoError(t, err)
+
+	// 2. Admin extends the now-expired subscription by +1 day on Aug 10 14:30.
+	svc.now = func() time.Time { return aug10Afternoon }
+	extended, err := svc.ExtendSubscription(context.Background(), sub.ID, 1)
+	require.NoError(t, err)
+	require.Equal(t, SubscriptionStatusActive, extended.Status)
+	require.True(t, aug10Afternoon.Equal(extended.StartsAt), "extending an expired subscription must reset StartsAt to now")
+	require.True(t, aug11Afternoon.Equal(extended.ExpiresAt))
+	require.NotNil(t, extended.DailyWindowStart)
+	require.True(t, aug10Afternoon.Equal(*extended.DailyWindowStart), "daily window must anchor at new StartsAt")
+	require.Zero(t, extended.DailyUsageUSD, "stale usage from expired term must be cleared")
+	require.True(t, extended.HasOneTimeDailyQuota())
+	require.Nil(t, extended.NextDailyResetAtAt(aug10Afternoon))
+
+	// 3. User exhausts the single 1-day quota at Aug 10 14:40.
+	_, err = simulateRequestAt(t, svc, repo, sub.ID, group, aug10Afternoon.Add(10*time.Minute), 100.01)
+	require.NoError(t, err)
+
+	// 4. Crossing midnight (Aug 11 00:01) AND passing old stale StartsAt hour (Aug 11 12:00) MUST NOT grant a 2nd window!
+	_, err = simulateRequestAt(t, svc, repo, sub.ID, group, time.Date(2026, 8, 11, 0, 1, 0, 0, loc), 1)
+	require.ErrorIs(t, err, ErrDailyLimitExceeded)
+	_, err = simulateRequestAt(t, svc, repo, sub.ID, group, aug11Noon, 1)
+	require.ErrorIs(t, err, ErrDailyLimitExceeded, "stale pre-expiry StartsAt hour (12:00) must not grant a second quota window")
+
+	// 5. Expires cleanly at Aug 11 14:30 -> exactly 1 quota window granted.
+	_, err = simulateRequestAt(t, svc, repo, sub.ID, group, aug11Afternoon, 1)
+	require.ErrorIs(t, err, ErrSubscriptionExpired)
+
+	// 6. Contrast: extending an ACTIVE subscription preserves original StartsAt anchor.
+	svc.now = func() time.Time { return aug6Noon }
+	activeSub, _, err := svc.AssignOrExtendSubscription(context.Background(), &AssignSubscriptionInput{
+		UserID: 32, GroupID: group.ID, ValidityDays: 1,
+	})
+	require.NoError(t, err)
+	svc.now = func() time.Time { return aug6Noon.Add(6 * time.Hour) }
+	extendedActive, err := svc.ExtendSubscription(context.Background(), activeSub.ID, 1)
+	require.NoError(t, err)
+	require.True(t, aug6Noon.Equal(extendedActive.StartsAt), "extending an active subscription must keep existing StartsAt anchor")
+	require.True(t, aug6Noon.AddDate(0, 0, 2).Equal(extendedActive.ExpiresAt))
 }

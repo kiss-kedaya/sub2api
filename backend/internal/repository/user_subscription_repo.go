@@ -328,6 +328,8 @@ func (r *userSubscriptionRepository) List(ctx context.Context, params pagination
 		if err := r.attachUserSubscriptionRelations(ctx, result); err != nil {
 			return nil, nil, err
 		}
+	} else if err := r.attachMissingGroups(ctx, result); err != nil {
+		return nil, nil, err
 	}
 
 	return result, paginationResultFromTotal(int64(total), params), nil
@@ -580,7 +582,8 @@ func (r *userSubscriptionRepository) attachUserSubscriptionRelations(ctx context
 		userByID[u.ID] = userEntityToService(u)
 	}
 
-	groups, err := client.Group.Query().Where(group.IDIn(uniqueInt64s(groupIDs)...)).All(ctx)
+	// 含软删除分组一起回填，确保历史/已撤销订阅仍能读取所属分组的 daily_reset_mode 与限额配置。
+	groups, err := client.Group.Query().Where(group.IDIn(uniqueInt64s(groupIDs)...)).All(mixins.SkipSoftDelete(ctx))
 	if err != nil {
 		return err
 	}
@@ -606,6 +609,35 @@ func (r *userSubscriptionRepository) attachUserSubscriptionRelations(ctx context
 		subs[i].Group = groupByID[subs[i].GroupID]
 		if subs[i].AssignedBy != nil {
 			subs[i].AssignedByUser = assignedByID[*subs[i].AssignedBy]
+		}
+	}
+	return nil
+}
+
+// attachMissingGroups 为 WithGroup() 未命中的订阅补齐软删除分组信息，避免 DTO 计算重置时间时丢失 daily_reset_mode。
+func (r *userSubscriptionRepository) attachMissingGroups(ctx context.Context, subs []service.UserSubscription) error {
+	var missingGroupIDs []int64
+	for i := range subs {
+		if subs[i].Group == nil && subs[i].GroupID > 0 {
+			missingGroupIDs = append(missingGroupIDs, subs[i].GroupID)
+		}
+	}
+	if len(missingGroupIDs) == 0 {
+		return nil
+	}
+
+	client := clientFromContext(ctx, r.client)
+	groups, err := client.Group.Query().Where(group.IDIn(uniqueInt64s(missingGroupIDs)...)).All(mixins.SkipSoftDelete(ctx))
+	if err != nil {
+		return err
+	}
+	groupByID := make(map[int64]*service.Group, len(groups))
+	for _, g := range groups {
+		groupByID[g.ID] = groupEntityToService(g)
+	}
+	for i := range subs {
+		if subs[i].Group == nil {
+			subs[i].Group = groupByID[subs[i].GroupID]
 		}
 	}
 	return nil

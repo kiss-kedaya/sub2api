@@ -252,13 +252,29 @@ func (s *UserSubscription) automaticWindowStartAt(previous *time.Time, period ti
 }
 
 // NextDailyResetAt 返回到期前下一次自动刷新日额度的时刻；若无后续自动刷新
-// （窗口未激活、一次性日卡或下一次刷新边界 >= ExpiresAt），返回 nil。
+// （窗口未激活、订阅已过期/撤销、一次性日卡或下一次刷新边界 >= ExpiresAt），返回 nil。
 func (s *UserSubscription) NextDailyResetAt() *time.Time {
-	return s.NextDailyResetAtForGroup(nil)
+	return s.NextDailyResetAtForGroupAt(nil, time.Time{})
+}
+
+// NextDailyResetAtAt 在指定评估时刻 now 下计算下一次自动刷新日额度时刻；
+// 若 now >= ExpiresAt（已过期），返回 nil。
+func (s *UserSubscription) NextDailyResetAtAt(now time.Time) *time.Time {
+	return s.NextDailyResetAtForGroupAt(nil, now)
 }
 
 func (s *UserSubscription) NextDailyResetAtForGroup(group *Group) *time.Time {
+	return s.NextDailyResetAtForGroupAt(group, time.Time{})
+}
+
+func (s *UserSubscription) NextDailyResetAtForGroupAt(group *Group, now time.Time) *time.Time {
 	if s == nil || s.DailyWindowStart == nil {
+		return nil
+	}
+	if s.Status == SubscriptionStatusExpired || s.Status == SubscriptionStatusRevoked || s.DeletedAt != nil {
+		return nil
+	}
+	if !now.IsZero() && !s.ExpiresAt.IsZero() && !now.Before(s.ExpiresAt) {
 		return nil
 	}
 	if s.HasOneTimeDailyQuota() {
@@ -287,14 +303,22 @@ func (s *UserSubscription) NextDailyResetAtForGroup(group *Group) *time.Time {
 }
 
 func (s *UserSubscription) DailyResetTime() *time.Time {
-	return s.DailyResetTimeForGroup(nil)
+	return s.DailyResetTimeForGroupAt(nil, time.Time{})
+}
+
+func (s *UserSubscription) DailyResetTimeAt(now time.Time) *time.Time {
+	return s.DailyResetTimeForGroupAt(nil, now)
 }
 
 func (s *UserSubscription) DailyResetTimeForGroup(group *Group) *time.Time {
+	return s.DailyResetTimeForGroupAt(group, time.Time{})
+}
+
+func (s *UserSubscription) DailyResetTimeForGroupAt(group *Group, now time.Time) *time.Time {
 	if s == nil || s.DailyWindowStart == nil {
 		return nil
 	}
-	if next := s.NextDailyResetAtForGroup(group); next != nil {
+	if next := s.NextDailyResetAtForGroupAt(group, now); next != nil {
 		return next
 	}
 	if !s.ExpiresAt.IsZero() {

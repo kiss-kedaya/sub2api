@@ -702,14 +702,26 @@ func (s *SubscriptionService) ExtendSubscription(ctx context.Context, subscripti
 		return nil, ErrAdjustWouldExpire
 	}
 
-	if err := s.userSubRepo.ExtendExpiry(ctx, subscriptionID, newExpiresAt); err != nil {
-		return nil, err
-	}
-
-	// 如果订阅已过期，恢复为active状态
-	if sub.Status == SubscriptionStatusExpired {
-		if err := s.userSubRepo.UpdateStatus(ctx, subscriptionID, SubscriptionStatusActive); err != nil {
+	if isExpired {
+		// 已过期订阅被管理员正向延长时，开启新周期：重置 starts_at 锚点并清空旧窗口用量，
+		// 避免沿用过期前的旧 starts_at 导致 24h 锚定模式在首个延长日多发一个日额度窗口。
+		renewed := renewedSubscriptionTerm(sub, sub.Group, "", now, newExpiresAt)
+		if sub.Status == SubscriptionStatusSuspended {
+			renewed.Status = SubscriptionStatusSuspended
+		}
+		if err := s.userSubRepo.Update(ctx, renewed); err != nil {
 			return nil, err
+		}
+	} else {
+		if err := s.userSubRepo.ExtendExpiry(ctx, subscriptionID, newExpiresAt); err != nil {
+			return nil, err
+		}
+
+		// 如果订阅已过期，恢复为active状态
+		if sub.Status == SubscriptionStatusExpired {
+			if err := s.userSubRepo.UpdateStatus(ctx, subscriptionID, SubscriptionStatusActive); err != nil {
+				return nil, err
+			}
 		}
 	}
 
@@ -820,12 +832,8 @@ func (s *SubscriptionService) List(ctx context.Context, page, pageSize int, user
 	return subs, pag, nil
 }
 
-// normalizeExpiredWindows 将已过期窗口的数据清零（仅影响返回数据，不影响数据库）
+// normalizeExpiredWindowsAt 将已过期窗口的数据清零（仅影响返回数据，不影响数据库）
 // 这确保前端显示正确的当前窗口状态，而不是过期窗口的历史数据
-func normalizeExpiredWindows(subs []UserSubscription) {
-	normalizeExpiredWindowsAt(subs, time.Now())
-}
-
 func normalizeExpiredWindowsAt(subs []UserSubscription, now time.Time) {
 	for i := range subs {
 		sub := &subs[i]
@@ -847,12 +855,8 @@ func normalizeExpiredWindowsAt(subs []UserSubscription, now time.Time) {
 	}
 }
 
-// normalizeSubscriptionStatus 根据实际过期时间修正状态（仅影响返回数据，不影响数据库）
+// normalizeSubscriptionStatusAt 根据实际过期时间修正状态（仅影响返回数据，不影响数据库）
 // 这确保前端显示正确的状态，即使定时任务尚未更新数据库
-func normalizeSubscriptionStatus(subs []UserSubscription) {
-	normalizeSubscriptionStatusAt(subs, time.Now())
-}
-
 func normalizeSubscriptionStatusAt(subs []UserSubscription, now time.Time) {
 	for i := range subs {
 		sub := &subs[i]
@@ -1150,7 +1154,7 @@ func (s *SubscriptionService) calculateProgress(sub *UserSubscription, group *Gr
 	if group.HasDailyLimit() && sub.DailyWindowStart != nil {
 		limit := *group.DailyLimitUSD
 		resetsAt := sub.DailyWindowStart.Add(24 * time.Hour)
-		if dailyResetTime := sub.DailyResetTimeForGroup(group); dailyResetTime != nil {
+		if dailyResetTime := sub.DailyResetTimeForGroupAt(group, now); dailyResetTime != nil {
 			resetsAt = *dailyResetTime
 		}
 		progress.Daily = &UsageWindowProgress{
