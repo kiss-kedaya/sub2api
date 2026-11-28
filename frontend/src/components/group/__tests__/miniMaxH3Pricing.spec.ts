@@ -9,6 +9,23 @@ describe('MiniMax-H3 pricing', () => {
     expect(writeMiniMaxH3Price(prices, { ...settings, mode: 'per_request', seconds: 5, price: 0.08 })).toEqual({
       'grok-imagine-video': { '720p': 0.2 }, 'minimax-h3': { request_5s: 0.08 }
     })
+    expect(writeMiniMaxH3Price(prices, { ...settings, mode: 'per_request', seconds: 30, price: 0.5 })).toEqual({
+      'grok-imagine-video': { '720p': 0.2 }, 'minimax-h3': { request_30s: 0.5 }
+    })
+    expect(writeMiniMaxH3Price(prices, { ...settings, mode: 'flat_per_request', price: 0.5 })).toEqual({
+      'grok-imagine-video': { '720p': 0.2 }, 'minimax-h3': { per_request: 0.5 }
+    })
+    expect(readMiniMaxH3Price({ 'minimax-h3': { per_request: 0.5 } })).toMatchObject({
+      enabled: true,
+      mode: 'flat_per_request',
+      price: 0.5
+    })
+    expect(readMiniMaxH3Price({ 'minimax-h3': { request_30s: 0.5 } })).toMatchObject({
+      enabled: true,
+      mode: 'per_request',
+      seconds: 30,
+      price: 0.5
+    })
     expect(writeMiniMaxH3Price(prices, { ...settings, enabled: false })).toEqual({ 'grok-imagine-video': { '720p': 0.2 } })
   })
   it('does not silently turn an empty price into a free tariff', () => {

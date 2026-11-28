@@ -41,22 +41,69 @@ func (h *OpenAIGatewayHandler) GrokVideoExtension(c *gin.Context) {
 	h.handleGrokMedia(c, service.GrokMediaEndpointVideosExtensions, "")
 }
 
-// GrokVideoStatus handles xAI video status retrieval through Grok groups.
+// GrokVideoStatus handles xAI video status retrieval through Grok groups, and
+// delegates composite-group MiniMax-H3 task lookups on /v1/videos/:request_id.
 func (h *OpenAIGatewayHandler) GrokVideoStatus(c *gin.Context) {
 	endpoint := service.GrokMediaEndpointVideoStatus
 	if strings.Contains(c.Request.URL.Path, "/videos/generations/") {
 		endpoint = service.GrokMediaEndpointVideoGenerationsStatus
+	} else if !strings.Contains(c.Request.URL.Path, "/videos/edits/") &&
+		!strings.Contains(c.Request.URL.Path, "/videos/extensions/") &&
+		h.isCompositeMiniMaxH3VideoLookup(c, c.Param("request_id")) {
+		h.MiniMaxH3Videos(c)
+		return
 	}
 	h.handleGrokMedia(c, endpoint, c.Param("request_id"))
 }
 
-// GrokVideoContent proxies downloadable video content through the task's upstream account.
+// GrokVideoContent proxies downloadable video content through the task's upstream account,
+// and delegates composite-group MiniMax-H3 content downloads on /v1/videos/:request_id/content.
 func (h *OpenAIGatewayHandler) GrokVideoContent(c *gin.Context) {
 	endpoint := service.GrokMediaEndpointVideoContent
 	if strings.Contains(c.Request.URL.Path, "/videos/generations/") {
 		endpoint = service.GrokMediaEndpointVideoGenerationsContent
+	} else if !strings.Contains(c.Request.URL.Path, "/videos/edits/") &&
+		!strings.Contains(c.Request.URL.Path, "/videos/extensions/") &&
+		h.isCompositeMiniMaxH3VideoLookup(c, c.Param("request_id")) {
+		h.MiniMaxH3Videos(c)
+		return
 	}
 	h.handleGrokMedia(c, endpoint, c.Param("request_id"))
+}
+
+// isCompositeMiniMaxH3VideoLookup checks whether a GET /v1/videos/:request_id(/content)
+// request on a composite or multi-group key belongs to a MiniMax-H3 task (#720).
+func (h *OpenAIGatewayHandler) isCompositeMiniMaxH3VideoLookup(c *gin.Context, rawRequestID string) bool {
+	if h == nil || h.gatewayService == nil {
+		return false
+	}
+	rawRequestID = strings.TrimSpace(rawRequestID)
+	if rawRequestID == "" {
+		return false
+	}
+	apiKey, ok := middleware2.GetAPIKeyFromContext(c)
+	if !ok || apiKey == nil || apiKey.Group == nil {
+		return false
+	}
+	if apiKey.Group.Platform != service.PlatformComposite && len(apiKey.CandidateGroupIDs()) <= 1 {
+		return false
+	}
+	subject, ok := middleware2.GetAuthSubjectFromContext(c)
+	if !ok {
+		return false
+	}
+	taskKey := service.MiniMaxH3TaskKey(rawRequestID)
+	ctx := c.Request.Context()
+	if job, err := h.gatewayService.LoadGrokVideoBillingJob(ctx, subject.UserID, apiKey.ID, taskKey); err == nil && job != nil {
+		return true
+	}
+	if pending, err := h.gatewayService.LoadGrokVideoPendingBilling(ctx, taskKey, subject.UserID, apiKey.ID); err == nil && pending != nil && pending.Provider == service.VideoProviderMiniMaxH3 {
+		return true
+	}
+	if accountID, err := h.gatewayService.ResolveGrokMediaVideoRequestAccount(ctx, apiKey.GroupID, taskKey, subject.UserID, apiKey.ID); err == nil && accountID > 0 {
+		return true
+	}
+	return false
 }
 
 func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.GrokMediaEndpoint, requestID string) {
@@ -125,7 +172,7 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 		requestInfo, err = service.ParseSeedanceRequest(body)
 	}
 	if endpoint == service.MiniMaxH3EndpointCreate {
-		requestInfo, err = service.ParseMiniMaxH3Request(body)
+		requestInfo, err = service.ParseMiniMaxH3RequestWithContentType(contentType, body)
 	}
 	if err != nil {
 		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", err.Error())

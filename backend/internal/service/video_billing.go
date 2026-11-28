@@ -104,7 +104,7 @@ func NormalizeVideoModelPrices(in map[string]map[string]float64) map[string]map[
 				continue
 			}
 			if family == MiniMaxH3PriceFamily {
-				if tierKey == MiniMaxH3PerSecond {
+				if tierKey == MiniMaxH3PerSecond || tierKey == MiniMaxH3PerRequest {
 					normalizedTiers[tierKey] = price
 				} else if _, valid := miniMaxH3RequestSeconds(tierKey); valid {
 					normalizedTiers[tierKey] = price

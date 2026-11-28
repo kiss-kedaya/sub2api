@@ -14,16 +14,24 @@ const (
 	VideoBillingMinDurationSeconds     = 1
 	VideoBillingMaxDurationSeconds     = 15
 	VideoBillingDefaultDurationSeconds = 8
+	// MiniMaxH3VideoBillingMaxDurationSeconds 是 MiniMax-H3 视频中转的时长上限（含 20s/30s 拼接档，#720）。
+	MiniMaxH3VideoBillingMaxDurationSeconds = 30
 	// SeedanceVideoBillingMaxDurationSeconds 是 Ark Seedance 原生协议的时长上限。
-	// 共享上限 15 秒只覆盖 xAI 与 MiniMax-H3；若按共享值封顶，按秒计费的 60 秒
+	// 共享上限 15 秒仅覆盖 xAI；若按共享值封顶，按秒计费的 60 秒
 	// Seedance 视频只会记 15 秒，等于给长视频打 2.5 折（#436）。
 	SeedanceVideoBillingMaxDurationSeconds = 60
 )
 
 // NormalizeVideoBillingDurationSecondsForProvider 按提供方上限归一化计费用视频时长。
-// Grok/xAI 与 MiniMax-H3 保持 1-15 秒口径；Ark Seedance 允许到 60 秒。
+// Grok/xAI 保持 1-15 秒口径；MiniMax-H3 允许到 30 秒；Ark Seedance 允许到 60 秒。
 func NormalizeVideoBillingDurationSecondsForProvider(provider string, durationSeconds int) int {
-	if provider != VideoProviderSeedance {
+	var maxSeconds int
+	switch provider {
+	case VideoProviderSeedance:
+		maxSeconds = SeedanceVideoBillingMaxDurationSeconds
+	case VideoProviderMiniMaxH3:
+		maxSeconds = MiniMaxH3VideoBillingMaxDurationSeconds
+	default:
 		return NormalizeVideoBillingDurationSecondsOrDefault(durationSeconds)
 	}
 	if durationSeconds <= 0 {
@@ -32,8 +40,8 @@ func NormalizeVideoBillingDurationSecondsForProvider(provider string, durationSe
 	if durationSeconds < VideoBillingMinDurationSeconds {
 		return VideoBillingMinDurationSeconds
 	}
-	if durationSeconds > SeedanceVideoBillingMaxDurationSeconds {
-		return SeedanceVideoBillingMaxDurationSeconds
+	if durationSeconds > maxSeconds {
+		return maxSeconds
 	}
 	return durationSeconds
 }
