@@ -858,6 +858,9 @@ func normalizeNativeAnthropicBufferedMessageID(body []byte) []byte {
 }
 
 func normalizeNativeAnthropicMessageStartID(trimmed string, root gjson.Result) (string, bool) {
+	if !gjson.Valid(trimmed) {
+		return "", false
+	}
 	if root.Get("type").String() != "message_start" {
 		return "", false
 	}

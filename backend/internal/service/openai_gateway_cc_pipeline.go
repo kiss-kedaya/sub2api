@@ -206,6 +206,10 @@ func (s *OpenAIGatewayService) sendCCUpstreamRequest(
 	userAgent string,
 	grokCacheIdentity string,
 ) (*http.Response, error) {
+	// Account-aware DeepSeek duplicate tool_call_id cleanup runs after account
+	// selection so neutral aliases mapped to non-DeepSeek models (e.g. Kimi) or
+	// native DeepSeek accounts never lose repeated multi-turn tool history.
+	body = RewriteDeepSeekCallIDsForAccount(account, body)
 	// DeepSeek thinking mode requires reasoning_content on every assistant
 	// message that produced reasoning. Cache-backed replay can miss (eviction,
 	// other key, item never recorded); fill only the still-empty slots.

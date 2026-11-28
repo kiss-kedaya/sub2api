@@ -303,4 +303,11 @@ func TestNativeAnthropicPassthroughNormalizesNonMsgIDs(t *testing.T) {
 		raw := []byte(`{"id":"err_1","type":"error","error":{"type":"invalid_request_error","message":"bad"}}`)
 		require.Equal(t, string(raw), string(normalizeNativeAnthropicBufferedMessageID(raw)))
 	})
+
+	t.Run("malformed message_start json is untouched", func(t *testing.T) {
+		raw := `{"type":"message_start","message":{"id":"chatcmpl-truncated"`
+		updated, changed := normalizeNativeAnthropicMessageStartID(raw, gjson.Parse(raw))
+		require.False(t, changed)
+		require.Empty(t, updated)
+	})
 }

@@ -205,4 +205,100 @@ func TestNormalizeDeepSeekResponsesRequestBody_KimiAndDeepSeekURLRelayScoping(t 
 		body := []byte(`{"model":"deepseek-v4.1-flash","input":[{"type":"function_call","call_id":"call_a","name":"do"},{"type":"function_call","call_id":"call_a","name":"do"},{"type":"function_call_output","call_id":"call_a","output":"1"}]}`)
 		require.True(t, deepSeekDuplicateCallIDRewrite(acc, body))
 	})
+
+	t.Run("multi-segment vendor prefixes and kimi variants are explicit non-DeepSeek", func(t *testing.T) {
+		for _, model := range []string{
+			"accounts/fireworks/models/kimi-k2",
+			"openrouter/moonshotai/k2.5",
+			"openrouter/anthropic/claude-sonnet-4",
+			"kimi_k2",
+			"k2p5",
+			"k3p1",
+		} {
+			require.True(t, isExplicitNonDeepSeekModel(model), "model=%q", model)
+		}
+		require.False(t, isExplicitNonDeepSeekModel("openrouter/deepseek/deepseek-chat"))
+		require.False(t, isExplicitNonDeepSeekModel("some-alias"))
+	})
+
+	t.Run("explicit account model_mapping to kimi overrides deepseek-named client alias", func(t *testing.T) {
+		acc := &Account{
+			Platform: PlatformOpenAI,
+			Type:     AccountTypeAPIKey,
+			Credentials: map[string]any{
+				"base_url":      "https://platform.deepseek.example/v1",
+				"model_mapping": map[string]any{"deepseek-alias": "kimi-k3.1-pro"},
+			},
+		}
+		body := []byte(`{"model":"deepseek-alias","messages":[{"role":"assistant","tool_calls":[{"id":"dup","type":"function","function":{"name":"legacy_lookup_with_a_much_longer_name","arguments":"{}"}}]},{"role":"tool","tool_call_id":"dup","content":"old"},{"role":"assistant","tool_calls":[{"id":"dup","type":"function","function":{"name":"f_new","arguments":"{}"}}]},{"role":"tool","tool_call_id":"dup","content":"new"}]}`)
+		require.False(t, deepSeekDuplicateCallIDRewrite(acc, body))
+		require.Equal(t, string(body), string(normalizeDeepSeekResponsesRequestBody(acc, body)))
+	})
+}
+
+func TestRewriteDeepSeekCallIDsForAccount_PreservesMappedAliasesAndNativeDeepSeek(t *testing.T) {
+	t.Parallel()
+	kvvChatPayload := []byte(`{"model":"custom-k3","messages":[` +
+		`{"role":"assistant","tool_calls":[{"id":"dup","type":"function","function":{"name":"legacy_lookup_with_a_much_longer_name","arguments":"{\"key\":\"old\"}"}}]},` +
+		`{"role":"tool","tool_call_id":"dup","content":"old_result"},` +
+		`{"role":"assistant","tool_calls":[{"id":"dup","type":"function","function":{"name":"f_new","arguments":"{\"key\":\"new\"}"}}]},` +
+		`{"role":"tool","tool_call_id":"dup","content":"new_result"}]}`)
+
+	t.Run("openai account mapping opaque alias to kimi preserves both turns even with deepseek relay URL", func(t *testing.T) {
+		acc := &Account{
+			Platform: PlatformOpenAI,
+			Type:     AccountTypeAPIKey,
+			Credentials: map[string]any{
+				"base_url":      "https://platform.deepseek.example/v1",
+				"model_mapping": map[string]any{"custom-k3": "kimi-k3.1-pro"},
+			},
+		}
+		out := RewriteDeepSeekCallIDsForAccount(acc, kvvChatPayload)
+		require.Equal(t, string(kvvChatPayload), string(out))
+		require.Contains(t, string(out), "legacy_lookup_with_a_much_longer_name")
+		require.Contains(t, string(out), "f_new")
+	})
+
+	t.Run("openai account with neutral non-deepseek URL and opaque alias preserves both turns", func(t *testing.T) {
+		acc := &Account{
+			Platform: PlatformOpenAI,
+			Type:     AccountTypeAPIKey,
+			Credentials: map[string]any{
+				"base_url": "https://api.openai.com/v1",
+			},
+		}
+		out := RewriteDeepSeekCallIDsForAccount(acc, kvvChatPayload)
+		require.Equal(t, string(kvvChatPayload), string(out))
+	})
+
+	t.Run("native deepseek account preserves duplicate history intact", func(t *testing.T) {
+		acc := &Account{Platform: PlatformDeepseek, Type: AccountTypeAPIKey}
+		out := RewriteDeepSeekCallIDsForAccount(acc, kvvChatPayload)
+		require.Equal(t, string(kvvChatPayload), string(out))
+	})
+
+	t.Run("openai relay mapping opaque alias to deepseek still dedupes", func(t *testing.T) {
+		acc := &Account{
+			Platform: PlatformOpenAI,
+			Type:     AccountTypeAPIKey,
+			Credentials: map[string]any{
+				"base_url":      "https://relay.example/v1",
+				"model_mapping": map[string]any{"custom-k3": "deepseek-chat"},
+			},
+		}
+		out := RewriteDeepSeekCallIDsForAccount(acc, kvvChatPayload)
+		require.Len(t, gjson.GetBytes(out, "messages").Array(), 2)
+	})
+
+	t.Run("channel model override to kimi suppresses dedupe on deepseek URL relay", func(t *testing.T) {
+		acc := &Account{
+			Platform: PlatformOpenAI,
+			Type:     AccountTypeAPIKey,
+			Credentials: map[string]any{
+				"base_url": "https://platform.deepseek.example/v1",
+			},
+		}
+		out := RewriteDeepSeekCallIDsForAccount(acc, kvvChatPayload, "kimi-k3.1-pro")
+		require.Equal(t, string(kvvChatPayload), string(out))
+	})
 }

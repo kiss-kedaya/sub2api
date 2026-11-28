@@ -443,6 +443,9 @@ func NormalizeAnthropicMessageID(id string) string {
 	for _, prefix := range []string{"chatcmpl-", "chatcmpl_", "resp_", "resp-"} {
 		if suffix, ok := strings.CutPrefix(trimmed, prefix); ok {
 			if suffix != "" {
+				if strings.HasPrefix(suffix, "msg_") {
+					return suffix
+				}
 				return "msg_" + suffix
 			}
 			break

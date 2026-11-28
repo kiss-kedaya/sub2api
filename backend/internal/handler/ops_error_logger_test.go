@@ -2526,3 +2526,38 @@ func TestOpsErrorLoggerClassifiesAnthropicAuthErrors(t *testing.T) {
 		})
 	}
 }
+
+func TestShouldSkipOpsErrorLog_DoesNotSwallowUpstreamInvalidAPIKey(t *testing.T) {
+	ops := service.NewOpsService(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	ctx := context.Background()
+
+	anthropicInvalidBody := `{"type":"error","error":{"type":"authentication_error","message":"Invalid API key"}}`
+	anthropicRequiredBody := `{"type":"error","error":{"type":"authentication_error","message":"API key is required in Authorization header (Bearer scheme), x-api-key header, or x-goog-api-key header"}}`
+
+	// Local client auth rejections are ignored when IgnoreInvalidApiKeyErrors is enabled.
+	require.True(t, shouldSkipOpsErrorLog(ctx, ops, "Invalid API key", anthropicInvalidBody, "/v1/messages", false))
+	require.True(t, shouldSkipOpsErrorLog(ctx, ops, "API key is required in Authorization header", anthropicRequiredBody, "/v1/messages", false))
+
+	// Upstream / account_auth failures with the same message MUST NOT be dropped.
+	require.False(t, shouldSkipOpsErrorLog(ctx, ops, "Invalid API key", anthropicInvalidBody, "/v1/messages", true))
+	require.False(t, shouldSkipOpsErrorLog(ctx, ops, "API key is required", anthropicRequiredBody, "/v1/messages", true))
+
+	// End-to-end middleware check: an upstream 401/502 error carrying "Invalid API key"
+	// must still enqueue an ops error log row.
+	setupOpsErrorLogTestQueue(t, 4)
+	gin.SetMode(gin.TestMode)
+
+	router := gin.New()
+	router.Use(OpsErrorLoggerMiddleware(ops))
+	router.POST("/v1/messages", func(c *gin.Context) {
+		c.Set(service.OpsUpstreamStatusCodeKey, http.StatusUnauthorized)
+		c.Data(http.StatusBadGateway, "application/json", []byte(anthropicInvalidBody))
+	})
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusBadGateway, w.Code)
+	require.Equal(t, int64(1), OpsErrorLogEnqueuedTotal(), "upstream invalid API key failure must still be recorded in ops_error_logs")
+}

@@ -1623,7 +1623,8 @@ func OpsErrorLoggerMiddleware(ops *service.OpsService) gin.HandlerFunc {
 		}
 
 		// Skip logging if the error should be filtered based on settings
-		if shouldSkipOpsErrorLog(c.Request.Context(), ops, parsed.Message, string(body), c.Request.URL.Path) {
+		isUpstreamError := hasOpsUpstreamErrorContext(c) || hasOpsAccountAuthFailure(c)
+		if shouldSkipOpsErrorLog(c.Request.Context(), ops, parsed.Message, string(body), c.Request.URL.Path, isUpstreamError) {
 			return
 		}
 		if shouldSkipHighChurnOpsError(normalizeOpsErrorType(parsed.ErrorType, parsed.Code), status, parsed.Message) {
@@ -1956,7 +1957,8 @@ func logOpsStreamErrorValue(c *gin.Context, ops *service.OpsService, wireStatus 
 	}
 
 	// 复用与 status>=400 分支相同的设置过滤（context canceled / 无可用账号等）。
-	if shouldSkipOpsErrorLog(c.Request.Context(), ops, streamErr.Message, streamErr.Message, c.Request.URL.Path) {
+	isUpstreamError := !streamErr.RequestScoped && (hasOpsUpstreamErrorContext(c) || hasOpsAccountAuthFailure(c))
+	if shouldSkipOpsErrorLog(c.Request.Context(), ops, streamErr.Message, streamErr.Message, c.Request.URL.Path, isUpstreamError) {
 		return
 	}
 
@@ -2985,7 +2987,7 @@ func strconvItoa(v int) string {
 
 // shouldSkipOpsErrorLog determines if an error should be skipped from logging based on settings.
 // Returns true for errors that should be filtered according to OpsAdvancedSettings.
-func shouldSkipOpsErrorLog(ctx context.Context, ops *service.OpsService, message, body, requestPath string) bool {
+func shouldSkipOpsErrorLog(ctx context.Context, ops *service.OpsService, message, body, requestPath string, isUpstream bool) bool {
 	if ops == nil {
 		return false
 	}
@@ -3016,8 +3018,10 @@ func shouldSkipOpsErrorLog(ctx context.Context, ops *service.OpsService, message
 		}
 	}
 
-	// Check if invalid/missing API key errors should be ignored (user misconfiguration)
-	if settings.IgnoreInvalidApiKeyErrors {
+	// Check if invalid/missing API key errors should be ignored (user misconfiguration).
+	// Upstream/account_auth failures must never be swallowed here, because an
+	// upstream provider returning "Invalid API key" indicates a broken upstream account.
+	if settings.IgnoreInvalidApiKeyErrors && !isUpstream {
 		if strings.Contains(bodyLower, opsErrInvalidAPIKey) || strings.Contains(bodyLower, opsErrAPIKeyRequired) ||
 			strings.Contains(msgLower, "invalid api key") || strings.Contains(msgLower, "api key is required") {
 			return true

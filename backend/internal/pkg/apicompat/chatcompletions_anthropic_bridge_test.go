@@ -1126,6 +1126,8 @@ func TestNormalizeAnthropicMessageID(t *testing.T) {
 		{"  msg_01abc  ", "msg_01abc"},
 		{"chatcmpl-01a220e7", "msg_01a220e7"},
 		{"chatcmpl_01a220e7", "msg_01a220e7"},
+		{"chatcmpl-msg_01a220e7", "msg_01a220e7"},
+		{"resp_msg_01a220e7", "msg_01a220e7"},
 		{"chatcmpl-", "msg_chatcmpl-"},
 		{"chatcmpl_", "msg_chatcmpl_"},
 		{"resp_01abc", "msg_01abc"},

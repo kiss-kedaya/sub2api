@@ -595,12 +595,17 @@ func isExplicitNonDeepSeekModel(model string) bool {
 	if p, ok := DetectModelPlatform(normalized); ok {
 		return p != PlatformDeepseek
 	}
-	if slash := strings.IndexByte(normalized, '/'); slash > 0 {
+	if slash := strings.LastIndexByte(normalized, '/'); slash >= 0 {
 		normalized = strings.TrimSpace(normalized[slash+1:])
+		if p, ok := DetectModelPlatform(normalized); ok {
+			return p != PlatformDeepseek
+		}
 	}
-	return normalized == "kimi" ||
+	return normalized == "kimi" || strings.HasPrefix(normalized, "kimi_") ||
 		normalized == "k2" || strings.HasPrefix(normalized, "k2-") || strings.HasPrefix(normalized, "k2.") ||
+		strings.HasPrefix(normalized, "k2_") || strings.HasPrefix(normalized, "k2p") ||
 		strings.HasPrefix(normalized, "k3-") || strings.HasPrefix(normalized, "k3.") ||
+		strings.HasPrefix(normalized, "k3_") || strings.HasPrefix(normalized, "k3p") ||
 		strings.HasPrefix(normalized, "qwen")
 }
 
@@ -614,6 +619,11 @@ func isExplicitNonDeepSeekModel(model string) bool {
 // when the body carries tool calls.
 func deepSeekDuplicateCallIDRewrite(account *Account, body []byte) bool {
 	model := strings.TrimSpace(gjson.Get(jsonView(body), "model").String())
+	return deepSeekDuplicateCallIDRewriteForModel(account, model)
+}
+
+func deepSeekDuplicateCallIDRewriteForModel(account *Account, model string) bool {
+	model = strings.TrimSpace(model)
 	if account == nil {
 		return deepSeekCallIDScope("", model)
 	}
@@ -621,7 +631,16 @@ func deepSeekDuplicateCallIDRewrite(account *Account, body []byte) bool {
 		return true
 	}
 	mappedModel := strings.TrimSpace(account.GetMappedModel(model))
-	if deepSeekCallIDScope("", model) || deepSeekCallIDScope("", mappedModel) {
+	if mappedModel != "" && !strings.EqualFold(mappedModel, model) {
+		// An explicit account model mapping is authoritative over the client alias.
+		if deepSeekCallIDScope("", mappedModel) {
+			return true
+		}
+		if isExplicitNonDeepSeekModel(mappedModel) {
+			return false
+		}
+	}
+	if deepSeekCallIDScope("", model) {
 		return true
 	}
 	if !isNeutralDeepSeekAliasPlatform(account.Platform) {
@@ -632,6 +651,60 @@ func deepSeekDuplicateCallIDRewrite(account *Account, body []byte) bool {
 	}
 	base := strings.ToLower(account.GetOpenAIBaseURL() + " " + account.GetCNProtocolBaseURL(APIProtocolResponses) + " " + account.GetCNProtocolBaseURL(APIProtocolChatCompletions))
 	return strings.Contains(base, "deepseek")
+}
+
+// RewriteDeepSeekCallIDsForAccount deduplicates repeated tool call IDs only
+// after the target account is selected, so neutral aliases mapped to
+// non-DeepSeek models (e.g. kimi-k3.1-pro) or routed to native DeepSeek
+// accounts never lose multi-turn tool history before account selection.
+func RewriteDeepSeekCallIDsForAccount(account *Account, body []byte, modelOverride ...string) []byte {
+	if account == nil || len(body) == 0 {
+		return body
+	}
+	// Native DeepSeek validates call ids itself; preserve client history intact.
+	if strings.EqualFold(strings.TrimSpace(account.Platform), PlatformDeepseek) {
+		return body
+	}
+	model := ""
+	if len(modelOverride) > 0 {
+		model = strings.TrimSpace(modelOverride[0])
+	}
+	if model == "" {
+		model = strings.TrimSpace(gjson.Get(jsonView(body), "model").String())
+	}
+	if !deepSeekDuplicateCallIDRewriteForModel(account, model) {
+		return body
+	}
+	if !responsesBodyMayRewrite(body, responsesRewriteScope{dedupe: true}) {
+		return body
+	}
+	var requestBody map[string]any
+	if err := decodeOpenAIJSONUseNumber(body, &requestBody); err != nil {
+		return body
+	}
+	changed := false
+	if input, ok := requestBody["input"]; ok {
+		if next, did := apicompat.DedupeResponsesCallIDs(input); did {
+			if !responsesCallPairsIntact(input) || responsesCallPairsIntact(next) {
+				requestBody["input"] = next
+				changed = true
+			}
+		}
+	}
+	if messages, ok := requestBody["messages"]; ok {
+		if next, did := apicompat.DedupeChatToolCallIDs(messages); did {
+			requestBody["messages"] = next
+			changed = true
+		}
+	}
+	if !changed {
+		return body
+	}
+	rebuilt, err := marshalOpenAIUpstreamJSON(requestBody)
+	if err != nil {
+		return body
+	}
+	return rebuilt
 }
 
 // bodyHasToolCallIDs reports whether the body carries any responses-style

@@ -234,11 +234,13 @@ func TestTrack1GroupBEquivalenceAndZeroAlloc(t *testing.T) {
 		{Platform: PlatformOpenAI, Type: AccountTypeOAuth},
 		{Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Credentials: map[string]any{"base_url": "https://api.deepseek.com/v1"}},
 		{Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Credentials: map[string]any{"model_mapping": map[string]any{"alias": "deepseek-chat"}}},
+		{Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Credentials: map[string]any{"base_url": "https://platform.deepseek.example/v1", "model_mapping": map[string]any{"deepseek-alias": "kimi-k3.1-pro"}}},
 		{Platform: PlatformKimi, Type: AccountTypeAPIKey, Credentials: map[string]any{"base_url": "https://platform.deepseek.example/v1"}},
 	}
 	bodies := [][]byte{
 		[]byte(`{"model":"gpt-5","input":"hi"}`),
 		[]byte(`{"model":"deepseek-chat","input":"hi"}`),
+		[]byte(`{"model":"deepseek-alias","input":"hi"}`),
 		[]byte(`{"model":"alias","input":"hi"}`),
 		[]byte(`{"model":"kimi-k3.1-pro","messages":[{"role":"assistant","tool_calls":[{"id":"dup"}]}]}`),
 		[]byte(`{"model":"gpt-5","input":[{"type":"function_call","call_id":"c1"}]}`),
@@ -250,9 +252,16 @@ func TestTrack1GroupBEquivalenceAndZeroAlloc(t *testing.T) {
 			model := strings.TrimSpace(gjson.GetBytes(body, "model").String())
 			if acc == nil {
 				want = deepSeekCallIDScope("", model)
+			} else if strings.EqualFold(strings.TrimSpace(acc.Platform), PlatformDeepseek) {
+				want = true
 			} else {
 				mapped := strings.TrimSpace(acc.GetMappedModel(model))
-				if deepSeekCallIDScope(acc.Platform, model) || deepSeekCallIDScope("", mapped) {
+				explicitOverride := mapped != "" && !strings.EqualFold(mapped, model)
+				if explicitOverride && deepSeekCallIDScope("", mapped) {
+					want = true
+				} else if explicitOverride && isExplicitNonDeepSeekModel(mapped) {
+					want = false
+				} else if deepSeekCallIDScope("", model) {
 					want = true
 				} else if isNeutralDeepSeekAliasPlatform(acc.Platform) && !isExplicitNonDeepSeekModel(model) && !isExplicitNonDeepSeekModel(mapped) {
 					want = strings.Contains(strings.ToLower(acc.GetOpenAIBaseURL()+" "+acc.GetCNProtocolBaseURL(APIProtocolResponses)+" "+acc.GetCNProtocolBaseURL(APIProtocolChatCompletions)), "deepseek")

@@ -537,6 +537,8 @@ func TestUpstreamFinancialCode400001ParameterVsFinancial(t *testing.T) {
 			`{"error":{"ref_code":400001,"message":"已达到使用限制或余额不足"}}`,
 			`{"error":{"code":"400001","message":"已达到使用限制或余额不足","type":"invalid_request_error"}}`,
 			`{"error":{"code":"400001","message":"已达到使用限制"}}`,
+			`{"error":{"code":"400001","message":"已达到每日使用限制"}}`,
+			`{"error":{"code":"400001","message":"达到当前账号使用限制"}}`,
 			`{"error":{"code":"400001","message":"Insufficient balance for this request","type":"invalid_request_error"}}`,
 			`{"error":{"code":"400001","message":"Your credit balance is too low","type":"invalid_request_error"}}`,
 			`{"error":{"ref_code":400901,"message":"blocked"}}`,

@@ -197,14 +197,6 @@ func openAIAccountScheduleModel(c *gin.Context, account *service.Account, forwar
 	return service.ResolveOpenAIAccountUpstreamModelForRequest(account, forwardModel, requireCompact)
 }
 
-func rewriteInboundDeepSeekCallIDs(apiKey *service.APIKey, model string, body []byte) []byte {
-	platform := ""
-	if apiKey != nil && apiKey.Group != nil {
-		platform = apiKey.Group.Platform
-	}
-	return service.RewriteInboundDeepSeekCallIDs(platform, model, body)
-}
-
 // stripDeepSeekUnsupportedImages applies only after composite routing has
 // resolved the effective target platform. DeepSeek text accounts cannot accept
 // image input; removing only known protocol image parts lets the text portion
@@ -592,7 +584,6 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		return service.ContextShouldReturnRequestedModel(c)
 	})
 	defer finishModelResponse()
-	body = rewriteInboundDeepSeekCallIDs(apiKey, reqModel, body)
 	ensureCompositeTargetPlatform(c, apiKey, reqModel)
 	if !openAICompatibleTextTargetAllowed(c, apiKey, reqModel) {
 		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "Model is not supported by this OpenAI-compatible endpoint for composite groups")
@@ -1557,7 +1548,6 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 		return service.ContextShouldReturnRequestedModel(c)
 	})
 	defer finishModelResponse()
-	body = rewriteInboundDeepSeekCallIDs(apiKey, reqModel, body)
 	if service.IsChatUnsupportedMediaModel(reqModel) {
 		h.anthropicErrorResponse(c, http.StatusBadRequest, "invalid_request_error", "This model is not supported on the Messages endpoint")
 		return
@@ -3051,7 +3041,6 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 		return
 	}
 	reqModel := strings.TrimSpace(gjson.GetBytes(firstMessage, "model").String())
-	firstMessage = rewriteInboundDeepSeekCallIDs(apiKey, reqModel, firstMessage)
 	if reqModel == "" {
 		closeOpenAIClientWS(wsConn, coderws.StatusPolicyViolation, "model is required in first response.create payload")
 		return
@@ -3671,7 +3660,11 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 					model = reqModel
 				}
 				if turn > 1 {
-					payload = rewriteInboundDeepSeekCallIDs(apiKey, model, payload)
+					effectiveModel := model
+					if channelMappingWS.Mapped && strings.EqualFold(model, reqModel) && strings.TrimSpace(channelMappingWS.MappedModel) != "" {
+						effectiveModel = strings.TrimSpace(channelMappingWS.MappedModel)
+					}
+					payload = service.RewriteDeepSeekCallIDsForAccount(account, payload, effectiveModel)
 				}
 				if turn == 1 {
 					return payload, nil
@@ -4103,6 +4096,11 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 		}
 
 		wsFirstMessage := wsAttemptMessage
+		firstTurnModel := reqModel
+		if channelMappingWS.Mapped && strings.TrimSpace(channelMappingWS.MappedModel) != "" {
+			firstTurnModel = strings.TrimSpace(channelMappingWS.MappedModel)
+		}
+		wsFirstMessage = service.RewriteDeepSeekCallIDsForAccount(account, wsFirstMessage, firstTurnModel)
 		// 切组/会话失配防护：previous_response_id 未在当前分组命中粘连账号（StickyPreviousHit=false），
 		// 说明该会话链不属于本次调度到的账号，原样转发会触发上游会话链鉴权失败（“鉴权失败，请检查 API Key”）。
 		// 故剥离首包里的 previous_response_id，改用首包内 input 重建上下文；带 function_call_output 的
