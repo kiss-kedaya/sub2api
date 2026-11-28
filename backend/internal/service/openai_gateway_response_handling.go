@@ -860,10 +860,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 				streamDoneItems.ObserveFrame(frame)
 			}
 			if responsesStreamEventMayContributeToOutput(eventType) {
-				var streamEvent apicompat.ResponsesStreamEvent
-				if err := json.Unmarshal(dataBytes, &streamEvent); err == nil {
-					streamOutputAccumulator.ProcessEvent(&streamEvent)
-				}
+				observeResponsesStreamOutputFrame(streamOutputAccumulator, frame)
 			}
 			if normalizedData, normalized := normalizeResponsesStreamingTerminalFrameOutput(frame, streamOutputAccumulator, streamDoneItems, streamImageOutputs); normalized {
 				dataBytes = normalizedData
@@ -995,7 +992,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 					// 补扣失败通过 streamEarlyErr 中止：补齐当前 SSE 事件空行分隔符并刷出，
 					// 后续行被 processSSELine 顶部守卫跳过，scanner 循环结束后返回并关闭上游连接。
 					// tracker 为 nil 时整体零开销。
-					if streamEarlyErr == nil {
+					if streamBalanceGuard != nil && streamEarlyErr == nil {
 						if observedBytes := responsesSSEDataOutputBytes(eventType, dataBytes); observedBytes > 0 {
 							if topUpErr := streamBalanceGuard.ObserveStreamingOutput(streamBalanceGuardCtx, observedBytes); topUpErr != nil {
 								terminateOpenEvent()
@@ -1102,35 +1099,33 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 	}
 
 	type scanEvent struct {
-		line      string
-		err       error
-		processed chan struct{}
+		line string
+		err  error
 	}
 	// 独立 goroutine 读上游，好发 keepalive / 做超时。
 	// 旧实现队列深 16 且不等待下游处理：scanner.Text() 每行一份拷贝，
-	// 高峰等于把十几份 SSE 正文堆在内存里。无缓冲 + 处理完再读下一行。
+	// 高峰等于把十几份 SSE 正文堆在内存里。无缓冲 events + 复用单个 buffered ack
+	// 保持严格背压（处理完再读下一行），同时消除原先每行现建 make(chan struct{}) 的堆分配。
 	events := make(chan scanEvent)
+	ack := make(chan struct{}, 1)
 	done := make(chan struct{})
 	sendEvent := func(ev scanEvent) bool {
-		ev.processed = make(chan struct{})
 		select {
 		case events <- ev:
 		case <-done:
 			return false
 		}
-		if ev.processed == nil {
-			return true
-		}
 		select {
-		case <-ev.processed:
+		case <-ack:
 			return true
 		case <-done:
 			return false
 		}
 	}
-	markEventProcessed := func(ev scanEvent) {
-		if ev.processed != nil {
-			close(ev.processed)
+	markEventProcessed := func() {
+		select {
+		case ack <- struct{}{}:
+		default:
 		}
 	}
 	var lastReadAt int64
@@ -1174,11 +1169,9 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 				return finalizeStream()
 			}
 			if result, err, done := handleScanErr(ev.err); done {
-				markEventProcessed(ev)
 				return result, err
 			}
 			processSSELine(ev.line, len(events) == 0)
-			markEventProcessed(ev)
 			if streamEarlyErr != nil {
 				return resultWithUsage(), streamEarlyErr
 			}
@@ -1188,6 +1181,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 				_ = resp.Body.Close()
 				return finalizeStream()
 			}
+			markEventProcessed()
 
 		case <-intervalCh:
 			observeClientCancellation()
@@ -2306,7 +2300,7 @@ func (s *OpenAIGatewayService) writeGrokModerationRefusalProtocolError(resp *htt
 		if eventType != "error" {
 			eventType = "response.failed"
 		}
-		_, _ = fmt.Fprintf(c.Writer, "event: %s\ndata: %s\n\n", eventType, clientPayload)
+		_, _ = c.Writer.WriteString("event: " + eventType + "\ndata: " + string(clientPayload) + "\n\n")
 		c.Writer.Flush()
 	} else {
 		c.Data(http.StatusForbidden, "application/json", clientPayload)
@@ -2751,6 +2745,67 @@ func normalizeResponsesStreamingTerminalFrameOutput(frame openAISSEDataFrame, ac
 
 func responsesStreamEventMayContributeToOutput(eventType string) bool {
 	return passthroughStreamEventContributesOutput(eventType)
+}
+
+// observeResponsesStreamOutputFrame feeds an already-parsed Responses SSE frame
+// into BufferedResponseAccumulator without running reflection-heavy json.Unmarshal
+// on high-frequency delta frames.
+func observeResponsesStreamOutputFrame(acc *apicompat.BufferedResponseAccumulator, frame openAISSEDataFrame) {
+	if acc == nil || !frame.validJSON {
+		return
+	}
+	payloadType := frame.payloadEventType
+	if payloadType == "" {
+		return
+	}
+	switch payloadType {
+	case "response.output_text.delta",
+		"response.refusal.delta",
+		"response.reasoning_summary_text.delta",
+		"response.reasoning_text.delta":
+		if delta := frame.root.Get("delta"); delta.Type == gjson.String && delta.Str != "" {
+			acc.ProcessEvent(&apicompat.ResponsesStreamEvent{
+				Type:  payloadType,
+				Delta: delta.Str,
+			})
+		}
+	case "response.function_call_arguments.delta", "response.custom_tool_call_input.delta":
+		if delta := frame.root.Get("delta"); delta.Type == gjson.String && delta.Str != "" {
+			acc.ProcessEvent(&apicompat.ResponsesStreamEvent{
+				Type:        payloadType,
+				OutputIndex: int(frame.root.Get("output_index").Int()),
+				Delta:       delta.Str,
+			})
+		}
+	case "response.function_call_arguments.done", "response.custom_tool_call_input.done":
+		event := apicompat.ResponsesStreamEvent{
+			Type:        payloadType,
+			OutputIndex: int(frame.root.Get("output_index").Int()),
+		}
+		if payloadType == "response.custom_tool_call_input.done" {
+			if v := frame.root.Get("input"); v.Type == gjson.String {
+				event.Input = v.Str
+			}
+		} else {
+			if v := frame.root.Get("arguments"); v.Type == gjson.String {
+				event.Arguments = v.Str
+			}
+		}
+		acc.ProcessEvent(&event)
+	case "response.output_item.added", "response.output_item.done":
+		item := frame.root.Get("item")
+		if !item.IsObject() {
+			return
+		}
+		itemType := item.Get("type").String()
+		if itemType != "function_call" && itemType != "custom_tool_call" {
+			return
+		}
+		var streamEvent apicompat.ResponsesStreamEvent
+		if err := json.Unmarshal(frame.trimmed, &streamEvent); err == nil {
+			acc.ProcessEvent(&streamEvent)
+		}
+	}
 }
 
 // collectRawResponsesOutputItemsFromSSE 按到达顺序收集 SSE 流中

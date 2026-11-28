@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unsafe"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -17,13 +18,35 @@ import (
 // it never captures request prompts, response text or credentials in storage.
 type automationObserverWriter struct {
 	gin.ResponseWriter
-	mu            sync.Mutex
-	frame         []byte
-	terminal      bool
-	failed        bool
-	truncated     bool
-	body          []byte
-	bodyTruncated bool
+	mu                 sync.Mutex
+	frame              []byte
+	terminal           bool
+	failed             bool
+	truncated          bool
+	body               []byte
+	bodyTruncated      bool
+	contentTypeChecked bool
+	isSSE              bool
+}
+
+func (w *automationObserverWriter) isSSELocked() bool {
+	if !w.contentTypeChecked {
+		w.isSSE = strings.Contains(w.Header().Get("Content-Type"), "text/event-stream")
+		w.contentTypeChecked = true
+	}
+	return w.isSSE
+}
+
+func (w *automationObserverWriter) observeWrittenLocked(p []byte) {
+	if !w.isSSELocked() && !w.bodyTruncated {
+		if len(w.body)+len(p) <= 64<<10 {
+			w.body = append(w.body, p...)
+		} else {
+			w.bodyTruncated = true
+			w.body = nil
+		}
+	}
+	w.observe(p)
 }
 
 func (w *automationObserverWriter) Write(p []byte) (int, error) {
@@ -33,18 +56,30 @@ func (w *automationObserverWriter) Write(p []byte) (int, error) {
 	if err != nil {
 		w.failed = true
 	}
-	if !strings.Contains(w.Header().Get("Content-Type"), "text/event-stream") && !w.bodyTruncated {
-		if len(w.body)+n <= 64<<10 {
-			w.body = append(w.body, p[:n]...)
-		} else {
-			w.bodyTruncated = true
-			w.body = nil
-		}
+	if n > 0 {
+		w.observeWrittenLocked(p[:n])
 	}
-	w.observe(p[:n])
 	return n, err
 }
-func (w *automationObserverWriter) WriteString(s string) (int, error) { return w.Write([]byte(s)) }
+
+func (w *automationObserverWriter) WriteString(s string) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	n, err := w.ResponseWriter.WriteString(s)
+	if err != nil {
+		w.failed = true
+	}
+	if n > 0 {
+		limit := n
+		if limit > len(s) {
+			limit = len(s)
+		}
+		// observeWrittenLocked copies any bytes it retains and never mutates p.
+		w.observeWrittenLocked(unsafe.Slice(unsafe.StringData(s), limit))
+	}
+	return n, err
+}
+
 func (w *automationObserverWriter) Flush() {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -56,14 +91,20 @@ func (w *automationObserverWriter) observe(p []byte) {
 		if end < 0 {
 			if len(w.frame)+len(p) > 64<<10 {
 				w.truncated = true
-				w.frame = nil
+				w.frame = w.frame[:0]
 			} else if !w.truncated {
 				w.frame = append(w.frame, p...)
 			}
 			return
 		}
 		if !w.truncated {
-			if len(w.frame)+end <= 64<<10 {
+			if len(w.frame) == 0 {
+				if end <= 64<<10 {
+					w.observeLine(p[:end])
+				} else {
+					w.failed = true
+				}
+			} else if len(w.frame)+end <= 64<<10 {
 				w.frame = append(w.frame, p[:end]...)
 				w.observeLine(w.frame)
 			} else {
@@ -72,7 +113,7 @@ func (w *automationObserverWriter) observe(p []byte) {
 		} else {
 			w.failed = true
 		}
-		w.frame = nil
+		w.frame = w.frame[:0]
 		w.truncated = false
 		p = p[end+1:]
 	}
@@ -142,19 +183,64 @@ func (w *automationObserverWriter) observeLine(line []byte) {
 // means observeLine would leave failed and terminal untouched. One pass over
 // the line: only a quote or a backslash needs a closer look.
 func automationLineMayMatter(line []byte) bool {
-	for i, b := range line {
-		switch b {
+	for i := 0; i < len(line); i++ {
+		switch line[i] {
 		case '"':
 			if automationVerdictLiteralAt(line[i+1:]) {
 				return true
 			}
 		case '\\':
-			if i+1 < len(line) && line[i+1] == 'u' {
-				return true
+			// Only fall back to json.Unmarshal when a \uXXXX escape decodes to an
+			// ASCII byte that can appear in one of the verdict literals (or the
+			// case-insensitive "error" key). Common escapes such as Go's HTML-safe
+			// \u003c (<), \u003e (>), \u0026 (&), control bytes, and non-ASCII
+			// runes cannot spell any verdict literal.
+			if i+5 < len(line) && line[i+1] == 'u' {
+				if u, ok := parseAutomationHex4(line[i+2 : i+6]); ok {
+					if u < 128 && automationVerdictEscapeChar[u] {
+						return true
+					}
+					i += 5
+				}
 			}
 		}
 	}
 	return false
+}
+
+// automationVerdictEscapeChar marks ASCII characters that appear in at least
+// one verdict literal ("response.failed", "response.incomplete",
+// "response.completed", "message_stop", "stop", "length", "tool_calls",
+// "function_call", "STOP", "MAX_TOKENS") or case-folded "error".
+var automationVerdictEscapeChar = [128]bool{
+	'.': true, '_': true,
+	'A': true, 'E': true, 'K': true, 'M': true, 'N': true,
+	'O': true, 'P': true, 'R': true, 'S': true, 'T': true, 'X': true,
+	'a': true, 'c': true, 'd': true, 'e': true, 'f': true, 'g': true,
+	'h': true, 'i': true, 'l': true, 'm': true, 'n': true, 'o': true,
+	'p': true, 'r': true, 's': true, 't': true, 'u': true,
+}
+
+func parseAutomationHex4(b []byte) (uint32, bool) {
+	if len(b) < 4 {
+		return 0, false
+	}
+	var v uint32
+	for i := 0; i < 4; i++ {
+		c := b[i]
+		v <<= 4
+		switch {
+		case c >= '0' && c <= '9':
+			v |= uint32(c - '0')
+		case c >= 'a' && c <= 'f':
+			v |= uint32(c-'a') + 10
+		case c >= 'A' && c <= 'F':
+			v |= uint32(c-'A') + 10
+		default:
+			return 0, false
+		}
+	}
+	return v, true
 }
 
 // The closing quote is part of each literal: they must be whole strings.
@@ -238,7 +324,7 @@ func OpsAutomationObserver(engine *service.OpsAutomationService) gin.HandlerFunc
 		}
 		writer.mu.Lock()
 		success := c.Request.Context().Err() == nil && writer.Status() >= 200 && writer.Status() < 300 && len(c.Errors) == 0 && !writer.failed && !failedAccounts[id]
-		streaming := c.GetBool(opsStreamKey) || strings.Contains(writer.Header().Get("Content-Type"), "text/event-stream")
+		streaming := c.GetBool(opsStreamKey) || writer.isSSELocked()
 		if streaming && !writer.terminal {
 			success = false
 		}
