@@ -38,6 +38,8 @@ CREATE TABLE IF NOT EXISTS user_group_watch_notifications (
     title VARCHAR(200) NOT NULL,
     content TEXT NOT NULL,
     metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+    delivered_channels JSONB NOT NULL DEFAULT '{}'::jsonb,
+    delivery_attempts SMALLINT NOT NULL DEFAULT 1,
     read_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     CONSTRAINT uq_user_group_watch_notifs_user_dedupe UNIQUE (user_id, dedupe_key)

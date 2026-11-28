@@ -11,22 +11,26 @@ import (
 )
 
 type memoryGroupWatchRepo struct {
-	mu            sync.Mutex
-	subs          map[int64]map[int64]struct{} // userID -> groupIDs
-	subscribers   map[int64][]GroupWatchSubscriber
-	states        map[int64]GroupMonitorWatchState
-	notifications []UserGroupWatchNotification
-	dedupeKeys    map[string]struct{}
-	nextID        int64
+	mu                sync.Mutex
+	subs              map[int64]map[int64]struct{} // userID -> groupIDs
+	subscribers       map[int64][]GroupWatchSubscriber
+	states            map[int64]GroupMonitorWatchState
+	notifications     []UserGroupWatchNotification
+	notifByKey        map[string]int64
+	deliveredChannels map[int64]map[string]bool
+	attemptsByID      map[int64]int
+	nextID            int64
 }
 
 func newMemoryGroupWatchRepo() *memoryGroupWatchRepo {
 	return &memoryGroupWatchRepo{
-		subs:        map[int64]map[int64]struct{}{},
-		subscribers: map[int64][]GroupWatchSubscriber{},
-		states:      map[int64]GroupMonitorWatchState{},
-		dedupeKeys:  map[string]struct{}{},
-		nextID:      1,
+		subs:              map[int64]map[int64]struct{}{},
+		subscribers:       map[int64][]GroupWatchSubscriber{},
+		states:            map[int64]GroupMonitorWatchState{},
+		notifByKey:        map[string]int64{},
+		deliveredChannels: map[int64]map[string]bool{},
+		attemptsByID:      map[int64]int{},
+		nextID:            1,
 	}
 }
 
@@ -96,25 +100,64 @@ func (r *memoryGroupWatchRepo) GetGroupWatchStates(_ context.Context, groupIDs [
 	return out, nil
 }
 
-func (r *memoryGroupWatchRepo) UpsertGroupWatchState(_ context.Context, state GroupMonitorWatchState) error {
+func (r *memoryGroupWatchRepo) SeedGroupWatchStateIfMissing(_ context.Context, state GroupMonitorWatchState) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if _, exists := r.states[state.GroupID]; exists {
+		return nil
+	}
 	r.states[state.GroupID] = state
 	return nil
 }
 
-func (r *memoryGroupWatchRepo) InsertNotificationIfNew(_ context.Context, notif UserGroupWatchNotification) (bool, int64, error) {
+func (r *memoryGroupWatchRepo) UpsertGroupWatchState(_ context.Context, state GroupMonitorWatchState) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if existing, ok := r.states[state.GroupID]; ok && state.LastBucketStart.Before(existing.LastBucketStart) {
+		return nil
+	}
+	r.states[state.GroupID] = state
+	return nil
+}
+
+func (r *memoryGroupWatchRepo) UpsertNotificationForDelivery(_ context.Context, notif UserGroupWatchNotification) (GroupWatchNotificationDeliveryRecord, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	key := notif.DedupeKey + "#" + string(rune(notif.UserID))
-	if _, exists := r.dedupeKeys[key]; exists {
-		return false, 0, nil
+	if id, exists := r.notifByKey[key]; exists {
+		r.attemptsByID[id]++
+		copied := make(map[string]bool, len(r.deliveredChannels[id]))
+		for k, v := range r.deliveredChannels[id] {
+			copied[k] = v
+		}
+		return GroupWatchNotificationDeliveryRecord{
+			ID:                id,
+			DeliveredChannels: copied,
+			Attempts:          r.attemptsByID[id],
+		}, nil
 	}
-	r.dedupeKeys[key] = struct{}{}
-	notif.ID = r.nextID
+	id := r.nextID
 	r.nextID++
+	notif.ID = id
+	r.notifByKey[key] = id
+	r.deliveredChannels[id] = map[string]bool{}
+	r.attemptsByID[id] = 1
 	r.notifications = append(r.notifications, notif)
-	return true, notif.ID, nil
+	return GroupWatchNotificationDeliveryRecord{
+		ID:                id,
+		DeliveredChannels: map[string]bool{},
+		Attempts:          1,
+	}, nil
+}
+
+func (r *memoryGroupWatchRepo) MarkNotificationChannelDelivered(_ context.Context, notificationID int64, channelKey string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.deliveredChannels[notificationID] == nil {
+		r.deliveredChannels[notificationID] = map[string]bool{}
+	}
+	r.deliveredChannels[notificationID][channelKey] = true
+	return nil
 }
 
 func (r *memoryGroupWatchRepo) SummaryNotifications(_ context.Context, userID int64) (int, int, error) {
@@ -519,4 +562,165 @@ func TestCollectGroupWatchEmailRecipients_IncludesRegisteredAndExtraEmails(t *te
 	}
 	got := collectGroupWatchEmailRecipients(sub)
 	require.Equal(t, []string{"Registered@Example.com", "ops-alert@example.com"}, got)
+}
+
+func TestDiffGroupPricing_ForceOpenAIFast(t *testing.T) {
+	// When FreeOpenAIFast is false, toggling ForceOpenAIFast changes billed tier -> alert.
+	base := &Group{ID: 61, Name: "OpenAI Fast", Platform: PlatformOpenAI, RateMultiplier: 1.0, FreeOpenAIFast: false, ForceOpenAIFast: false}
+	before := SnapshotGroupPricing(base)
+	base.ForceOpenAIFast = true
+	changes := DiffGroupPricing(before, SnapshotGroupPricing(base))
+	require.Len(t, changes, 1)
+	require.Equal(t, "openai_tier_multipliers", changes[0].Field)
+	require.Contains(t, changes[0].Summary, "强制 Fast")
+
+	// When FreeOpenAIFast is true, toggling ForceOpenAIFast still bills at Standard -> silent.
+	freeBase := &Group{ID: 62, Name: "OpenAI Free Fast", Platform: PlatformOpenAI, RateMultiplier: 1.0, FreeOpenAIFast: true, ForceOpenAIFast: false}
+	freeBefore := SnapshotGroupPricing(freeBase)
+	freeBase.ForceOpenAIFast = true
+	require.Empty(t, DiffGroupPricing(freeBefore, SnapshotGroupPricing(freeBase)))
+}
+
+func TestGroupWatch_MissedFreshBucketsAndPlatformMoveMonotonic(t *testing.T) {
+	ctx := context.Background()
+	gid := int64(88)
+	t1000 := time.Date(2026, 11, 28, 10, 0, 0, 0, time.UTC)
+	t1005 := t1000.Add(5 * time.Minute)
+	t1010 := t1000.Add(10 * time.Minute)
+	now := t1010.Add(2 * time.Minute)
+
+	repo := newMemoryGroupWatchRepo()
+	repo.subscribers[gid] = []GroupWatchSubscriber{{UserID: 30, Email: "u@example.com", Username: "u", Role: "user"}}
+	repo.states[gid] = GroupMonitorWatchState{
+		GroupID:         gid,
+		Status:          GroupWatchStatusGreen,
+		BlackNotified:   false,
+		LastBucketStart: t1000,
+		UpdatedAt:       t1000,
+	}
+	authz := &stubGroupWatchAuthorizer{byUser: map[int64][]Group{30: {{ID: gid, Name: "Migrated Pool"}}}}
+	// Newer platform "anthropic" sorts before older platform "openai", AND has both missed black@10:05 and green@10:10.
+	mon := &stubGroupWatchMonitorRepo{
+		cfg: &ChannelMonitorV2Config{Enabled: true},
+		matrix: &ChannelMonitorV2Matrix{
+			Items: []ChannelMonitorV2MatrixRow{
+				{
+					Platform:  PlatformAnthropic,
+					GroupID:   &gid,
+					GroupName: "Migrated Pool",
+					Buckets: []ChannelMonitorV2TrendPoint{
+						{BucketStart: t1005, Health: ChannelMonitorV2Health{Overall: "critical"}, Metrics: ChannelMonitorV2Metric{CacheRate: 0.10, ErrorRate: 0.05}},
+						{BucketStart: t1010, Health: ChannelMonitorV2Health{Overall: "healthy"}, Metrics: ChannelMonitorV2Metric{CacheRate: 0.55, ErrorRate: 0.02}},
+					},
+				},
+				{
+					Platform:  PlatformOpenAI,
+					GroupID:   &gid,
+					GroupName: "Migrated Pool",
+					Buckets: []ChannelMonitorV2TrendPoint{
+						{BucketStart: t1000, Health: ChannelMonitorV2Health{Overall: "healthy"}, Metrics: ChannelMonitorV2Metric{CacheRate: 0.50, ErrorRate: 0.05}},
+					},
+				},
+			},
+		},
+	}
+	push := &recordingPushNotifier{}
+	svc := NewGroupWatchService(repo, mon, authz, nil, nil)
+	svc.SetPushNotifier(push)
+	svc.syncDispatch = true
+	svc.now = func() time.Time { return now }
+
+	svc.EvaluateMonitorTransitions(ctx, now)
+
+	require.Len(t, repo.notifications, 2)
+	require.Equal(t, GroupWatchEventStatusBlack, repo.notifications[0].EventType)
+	require.Equal(t, GroupWatchEventStatusGreen, repo.notifications[1].EventType)
+	require.Len(t, push.pushes, 2)
+	// Final persisted bucket must stay at t1010 (not regressed to openai t1000).
+	require.Equal(t, t1010, repo.states[gid].LastBucketStart)
+	require.Equal(t, GroupWatchStatusGreen, repo.states[gid].Status)
+	require.False(t, repo.states[gid].BlackNotified)
+}
+
+func TestGroupWatch_ChannelRetryDoesNotDuplicateInAppOrSkipBark(t *testing.T) {
+	ctx := context.Background()
+	gid := int64(89)
+	t1000 := time.Date(2026, 11, 28, 10, 0, 0, 0, time.UTC)
+	t1005 := t1000.Add(5 * time.Minute)
+	now := t1005.Add(1 * time.Minute)
+
+	repo := newMemoryGroupWatchRepo()
+	repo.subscribers[gid] = []GroupWatchSubscriber{{UserID: 31, Email: "retry@example.com", Username: "r", Role: "user"}}
+	repo.states[gid] = GroupMonitorWatchState{GroupID: gid, Status: GroupWatchStatusGreen, LastBucketStart: t1000, UpdatedAt: t1000}
+	authz := &stubGroupWatchAuthorizer{byUser: map[int64][]Group{31: {{ID: gid, Name: "Retry Pool"}}}}
+	mon := &stubGroupWatchMonitorRepo{
+		cfg: &ChannelMonitorV2Config{Enabled: true},
+		matrix: &ChannelMonitorV2Matrix{
+			Items: []ChannelMonitorV2MatrixRow{{
+				Platform: PlatformOpenAI, GroupID: &gid, GroupName: "Retry Pool",
+				Buckets: []ChannelMonitorV2TrendPoint{
+					{BucketStart: t1005, Health: ChannelMonitorV2Health{Overall: "critical"}, Metrics: ChannelMonitorV2Metric{CacheRate: 0.10, ErrorRate: 0.05}},
+				},
+			}},
+		},
+	}
+	push := &recordingPushNotifier{err: errors.New("temporary bark timeout")}
+	svc := NewGroupWatchService(repo, mon, authz, nil, nil)
+	svc.SetPushNotifier(push)
+	svc.syncDispatch = true
+	svc.now = func() time.Time { return now }
+
+	// Tick 1: Bark fails transiently -> in-app row saved once, state NOT yet advanced to black.
+	svc.EvaluateMonitorTransitions(ctx, now)
+	require.Len(t, repo.notifications, 1)
+	require.Empty(t, push.pushes)
+	require.Equal(t, GroupWatchStatusGreen, repo.states[gid].Status)
+
+	// Tick 2: Bark recovers -> retries Bark without creating duplicate in-app row, then advances state.
+	push.err = nil
+	svc.EvaluateMonitorTransitions(ctx, now.Add(time.Minute))
+	require.Len(t, repo.notifications, 1)
+	require.Len(t, push.pushes, 1)
+	require.Equal(t, GroupWatchStatusBlack, repo.states[gid].Status)
+	require.True(t, repo.states[gid].BlackNotified)
+
+	// Tick 3: steady black -> no repeat Bark or in-app alert.
+	svc.EvaluateMonitorTransitions(ctx, now.Add(2*time.Minute))
+	require.Len(t, repo.notifications, 1)
+	require.Len(t, push.pushes, 1)
+}
+
+func TestGroupWatch_PriceEditDistinctDedupeInSameMinuteAndSeedInsertOnly(t *testing.T) {
+	ctx := context.Background()
+	gid := int64(90)
+	baseTime := time.Date(2026, 11, 28, 11, 0, 10, 0, time.UTC)
+
+	repo := newMemoryGroupWatchRepo()
+	repo.subscribers[gid] = []GroupWatchSubscriber{{UserID: 32, Email: "p@example.com", Username: "p", Role: "user"}}
+	authz := &stubGroupWatchAuthorizer{byUser: map[int64][]Group{32: {{ID: gid, Name: "DeepSeek Tools"}}}}
+	svc := NewGroupWatchService(repo, nil, authz, nil, nil)
+	svc.syncDispatch = true
+	svc.now = func() time.Time { return baseTime }
+
+	p1, p2, p3 := 1.0, 2.0, 3.0
+	s1 := SnapshotGroupPricing(&Group{ID: gid, Name: "DeepSeek Tools", Platform: PlatformDeepseek, RateMultiplier: 1.0, SearchPricePer1k: &p1, UpdatedAt: baseTime})
+	s2 := SnapshotGroupPricing(&Group{ID: gid, Name: "DeepSeek Tools", Platform: PlatformDeepseek, RateMultiplier: 1.0, SearchPricePer1k: &p2, UpdatedAt: baseTime.Add(5 * time.Second)})
+	s3 := SnapshotGroupPricing(&Group{ID: gid, Name: "DeepSeek Tools", Platform: PlatformDeepseek, RateMultiplier: 1.0, SearchPricePer1k: &p3, UpdatedAt: baseTime.Add(10 * time.Second)})
+
+	// Two distinct SearchPricePer1k edits in the same minute must emit 2 distinct notifications.
+	svc.NotifyGroupPriceChanged(ctx, s1, s2)
+	svc.NotifyGroupPriceChanged(ctx, s2, s3)
+	require.Len(t, repo.notifications, 2)
+
+	// Replaying the exact same committed edit dedupes to the existing notification row.
+	svc.NotifyGroupPriceChanged(ctx, s2, s3)
+	require.Len(t, repo.notifications, 2)
+
+	// Insert-only seed must NOT overwrite an existing newer evaluator state.
+	newer := GroupMonitorWatchState{GroupID: gid, Status: GroupWatchStatusGreen, BlackNotified: false, LastBucketStart: baseTime.Add(5 * time.Minute), UpdatedAt: baseTime.Add(5 * time.Minute)}
+	require.NoError(t, repo.UpsertGroupWatchState(ctx, newer))
+	olderSeed := GroupMonitorWatchState{GroupID: gid, Status: GroupWatchStatusBlack, BlackNotified: true, LastBucketStart: baseTime, UpdatedAt: baseTime}
+	require.NoError(t, repo.SeedGroupWatchStateIfMissing(ctx, olderSeed))
+	require.Equal(t, GroupWatchStatusGreen, repo.states[gid].Status)
+	require.False(t, repo.states[gid].BlackNotified)
 }

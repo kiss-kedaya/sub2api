@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
@@ -42,6 +43,7 @@ const (
 	groupWatchPruneBatchSize        = 2000
 	groupWatchDeliveryTimeout       = 45 * time.Second
 	groupWatchDeliveryConcurrency   = 8
+	groupWatchMaxDeliveryAttempts   = 3
 	groupWatchBarkGroup             = "channel-watch"
 )
 
@@ -87,6 +89,14 @@ type UserGroupWatchNotification struct {
 	CreatedAt time.Time         `json:"created_at"`
 }
 
+// GroupWatchNotificationDeliveryRecord tracks per-channel delivery completion
+// and retry attempts for one user notification row.
+type GroupWatchNotificationDeliveryRecord struct {
+	ID                int64
+	DeliveredChannels map[string]bool
+	Attempts          int
+}
+
 // GroupWatchRepository persists subscriptions, state transitions, and in-app notifications.
 type GroupWatchRepository interface {
 	ListSubscribedGroupIDs(ctx context.Context, userID int64) ([]int64, error)
@@ -95,8 +105,10 @@ type GroupWatchRepository interface {
 	ListWatchedGroupIDs(ctx context.Context) ([]int64, error)
 	ListSubscriberUsersByGroupID(ctx context.Context, groupID int64) ([]GroupWatchSubscriber, error)
 	GetGroupWatchStates(ctx context.Context, groupIDs []int64) (map[int64]GroupMonitorWatchState, error)
+	SeedGroupWatchStateIfMissing(ctx context.Context, state GroupMonitorWatchState) error
 	UpsertGroupWatchState(ctx context.Context, state GroupMonitorWatchState) error
-	InsertNotificationIfNew(ctx context.Context, notif UserGroupWatchNotification) (inserted bool, id int64, err error)
+	UpsertNotificationForDelivery(ctx context.Context, notif UserGroupWatchNotification) (GroupWatchNotificationDeliveryRecord, error)
+	MarkNotificationChannelDelivered(ctx context.Context, notificationID int64, channelKey string) error
 	SummaryNotifications(ctx context.Context, userID int64) (total int, unread int, err error)
 	ListNotifications(ctx context.Context, userID int64, unreadOnly bool, limit int) ([]UserGroupWatchNotification, error)
 	MarkNotificationRead(ctx context.Context, userID, notificationID int64, readAt time.Time) (bool, error)
@@ -155,10 +167,12 @@ type GroupPricingSnapshot struct {
 	AudioTTSPricePerMillionChars *float64
 	AudioSTTPricePerHour         *float64
 	FreeOpenAIFast               bool
+	ForceOpenAIFast              bool
 	OpenAIFastMultiplier         *float64
 	OpenAIUltrafastMultiplier    *float64
 	LongContextPricingEnabled    bool
 	ModelPricing                 []ChannelModelPricing
+	UpdatedAt                    time.Time
 }
 
 // GroupPriceChangeItem describes one concrete pricing field change.
@@ -204,9 +218,11 @@ func SnapshotGroupPricing(g *Group) GroupPricingSnapshot {
 		AudioTTSPricePerMillionChars: cloneFloat64Ptr(g.AudioTTSPricePerMillionChars),
 		AudioSTTPricePerHour:         cloneFloat64Ptr(g.AudioSTTPricePerHour),
 		FreeOpenAIFast:               g.FreeOpenAIFast,
+		ForceOpenAIFast:              g.ForceOpenAIFast,
 		OpenAIFastMultiplier:         cloneFloat64Ptr(g.OpenAIFastMultiplier),
 		OpenAIUltrafastMultiplier:    cloneFloat64Ptr(g.OpenAIUltrafastMultiplier),
 		LongContextPricingEnabled:    g.LongContextPricingEnabled,
+		UpdatedAt:                    g.UpdatedAt,
 	}
 	if len(g.VideoModelPrices) > 0 {
 		snap.VideoModelPrices = make(map[string]map[string]float64, len(g.VideoModelPrices))
@@ -375,12 +391,23 @@ func DiffGroupPricing(before, after GroupPricingSnapshot) []GroupPriceChangeItem
 			Summary: "工具/搜索/语音等按次计费单价已调整",
 		})
 	}
+	beforeForcedBilled := before.ForceOpenAIFast && !before.FreeOpenAIFast
+	afterForcedBilled := after.ForceOpenAIFast && !after.FreeOpenAIFast
 	if before.FreeOpenAIFast != after.FreeOpenAIFast ||
+		beforeForcedBilled != afterForcedBilled ||
 		floatPtrDiffers(before.OpenAIFastMultiplier, after.OpenAIFastMultiplier) ||
 		floatPtrDiffers(before.OpenAIUltrafastMultiplier, after.OpenAIUltrafastMultiplier) {
+		summary := fmt.Sprintf("OpenAI 档位倍率调整（Fast %s / UltraFast %s）", formatOptMultiplier(after.OpenAIFastMultiplier), formatOptMultiplier(after.OpenAIUltrafastMultiplier))
+		if beforeForcedBilled != afterForcedBilled {
+			if afterForcedBilled {
+				summary += "，已开启强制 Fast 计费"
+			} else {
+				summary += "，已关闭强制 Fast 计费"
+			}
+		}
 		changes = append(changes, GroupPriceChangeItem{
 			Field:   "openai_tier_multipliers",
-			Summary: fmt.Sprintf("OpenAI 档位倍率调整（Fast %s / UltraFast %s）", formatOptMultiplier(after.OpenAIFastMultiplier), formatOptMultiplier(after.OpenAIUltrafastMultiplier)),
+			Summary: summary,
 		})
 	}
 	if before.LongContextPricingEnabled != after.LongContextPricingEnabled ||
@@ -640,26 +667,21 @@ func (s *GroupWatchService) seedGroupStateBestEffort(groupID int64) {
 		if err != nil || matrix == nil {
 			return
 		}
-		for i := range matrix.Items {
-			row := &matrix.Items[i]
-			if row.GroupID == nil || *row.GroupID != groupID {
-				continue
-			}
-			bucket, status, cachePct, availPct, ok := latestFreshClassifiedBucket(row.Buckets, now)
-			if !ok {
-				return
-			}
-			_ = s.repo.UpsertGroupWatchState(ctx, GroupMonitorWatchState{
-				GroupID:         groupID,
-				Status:          status,
-				BlackNotified:   status == GroupWatchStatusBlack,
-				LastBucketStart: bucket.BucketStart.UTC(),
-				CacheRate:       cachePct / 100.0,
-				AvailabilityPct: availPct,
-				UpdatedAt:       now,
-			})
+		grouped := groupFreshMonitorBuckets(matrix.Items, now)
+		entry, ok := grouped[groupID]
+		if !ok || len(entry.buckets) == 0 {
 			return
 		}
+		newest := entry.buckets[len(entry.buckets)-1]
+		_ = s.repo.SeedGroupWatchStateIfMissing(ctx, GroupMonitorWatchState{
+			GroupID:         groupID,
+			Status:          newest.status,
+			BlackNotified:   newest.status == GroupWatchStatusBlack,
+			LastBucketStart: newest.bucket.BucketStart.UTC(),
+			CacheRate:       newest.cachePct / 100.0,
+			AvailabilityPct: newest.availPct,
+			UpdatedAt:       now,
+		})
 	}
 	if s.syncDispatch {
 		run()
@@ -682,30 +704,99 @@ func buildGroupWatchMatrixFilter(now time.Time, groupIDs []int64) ChannelMonitor
 	}
 }
 
-func latestFreshClassifiedBucket(buckets []ChannelMonitorV2TrendPoint, now time.Time) (ChannelMonitorV2TrendPoint, string, float64, float64, bool) {
-	if len(buckets) == 0 {
-		return ChannelMonitorV2TrendPoint{}, "", 0, 0, false
+type freshClassifiedBucket struct {
+	bucket    ChannelMonitorV2TrendPoint
+	status    string
+	cachePct  float64
+	availPct  float64
+	platform  string
+	groupName string
+}
+
+type groupedFreshMonitorEntry struct {
+	groupID int64
+	buckets []freshClassifiedBucket
+}
+
+// groupFreshMonitorBuckets consolidates matrix rows by group_id so a group with
+// rows under multiple platforms (e.g. after a platform move) produces one
+// monotonic chronological timeline of fresh classified buckets.
+func groupFreshMonitorBuckets(items []ChannelMonitorV2MatrixRow, now time.Time) map[int64]groupedFreshMonitorEntry {
+	type rowLatest struct {
+		row        *ChannelMonitorV2MatrixRow
+		latestTime time.Time
+		buckets    []freshClassifiedBucket
 	}
-	sorted := append([]ChannelMonitorV2TrendPoint(nil), buckets...)
-	sort.Slice(sorted, func(i, j int) bool {
-		return sorted[i].BucketStart.Before(sorted[j].BucketStart)
-	})
-	for i := len(sorted) - 1; i >= 0; i-- {
-		b := sorted[i]
-		if b.BucketStart.IsZero() {
+	byGroupRows := make(map[int64][]rowLatest)
+	for i := range items {
+		row := &items[i]
+		if row.GroupID == nil || *row.GroupID <= 0 {
 			continue
 		}
-		if now.Sub(b.BucketStart.UTC()) > groupWatchFreshBucketMaxAge {
-			// Remaining earlier buckets are older still.
-			break
+		var fresh []freshClassifiedBucket
+		var latest time.Time
+		for _, b := range row.Buckets {
+			if b.BucketStart.IsZero() {
+				continue
+			}
+			bt := b.BucketStart.UTC()
+			if now.Sub(bt) > groupWatchFreshBucketMaxAge {
+				continue
+			}
+			status, cachePct, availPct, valid := ClassifyMonitorBucketStatus(b)
+			if !valid {
+				continue
+			}
+			b.BucketStart = bt
+			fresh = append(fresh, freshClassifiedBucket{
+				bucket:    b,
+				status:    status,
+				cachePct:  cachePct,
+				availPct:  availPct,
+				platform:  row.Platform,
+				groupName: row.GroupName,
+			})
+			if bt.After(latest) {
+				latest = bt
+			}
 		}
-		status, cachePct, availPct, valid := ClassifyMonitorBucketStatus(b)
-		if !valid {
+		if len(fresh) == 0 {
 			continue
 		}
-		return b, status, cachePct, availPct, true
+		gid := *row.GroupID
+		byGroupRows[gid] = append(byGroupRows[gid], rowLatest{
+			row:        row,
+			latestTime: latest,
+			buckets:    fresh,
+		})
 	}
-	return ChannelMonitorV2TrendPoint{}, "", 0, 0, false
+
+	out := make(map[int64]groupedFreshMonitorEntry, len(byGroupRows))
+	for gid, rows := range byGroupRows {
+		// Sort platform rows from oldest latest-bucket to newest so when two
+		// platforms have a bucket at the same timestamp, the newer platform wins.
+		sort.SliceStable(rows, func(i, j int) bool {
+			return rows[i].latestTime.Before(rows[j].latestTime)
+		})
+		byTime := make(map[int64]freshClassifiedBucket)
+		for _, rl := range rows {
+			for _, fb := range rl.buckets {
+				byTime[fb.bucket.BucketStart.UnixNano()] = fb
+			}
+		}
+		merged := make([]freshClassifiedBucket, 0, len(byTime))
+		for _, fb := range byTime {
+			merged = append(merged, fb)
+		}
+		sort.Slice(merged, func(i, j int) bool {
+			return merged[i].bucket.BucketStart.Before(merged[j].bucket.BucketStart)
+		})
+		out[gid] = groupedFreshMonitorEntry{
+			groupID: gid,
+			buckets: merged,
+		}
+	}
+	return out
 }
 
 type groupWatchDispatchEvent struct {
@@ -722,6 +813,15 @@ type groupWatchDispatchEvent struct {
 	EmailVariables map[string]string
 	ReminderKey    string
 	OccurredAt     time.Time
+}
+
+func priceEditDedupeHash(before, after GroupPricingSnapshot) string {
+	h := sha256.New()
+	_, _ = fmt.Fprintf(h, "group=%d|updated=%d|", after.ID, after.UpdatedAt.UTC().UnixNano())
+	if raw, err := json.Marshal([2]GroupPricingSnapshot{before, after}); err == nil {
+		_, _ = h.Write(raw)
+	}
+	return hex.EncodeToString(h.Sum(nil)[:8])
 }
 
 // NotifyGroupPriceChanged inspects before/after pricing snapshots and notifies
@@ -748,10 +848,7 @@ func (s *GroupWatchService) NotifyGroupPriceChanged(ctx context.Context, before,
 	}
 	platformLabel := groupWatchPlatformLabel(after.Platform)
 	changedAtStr := now.In(time.FixedZone("CST", 8*3600)).Format("2006-01-02 15:04:05")
-
-	hashInput := fmt.Sprintf("%d|%s|%d", after.ID, summaryText, now.Unix()/60)
-	sum := sha256.Sum256([]byte(hashInput))
-	shortHash := hex.EncodeToString(sum[:8])
+	shortHash := priceEditDedupeHash(before, after)
 
 	event := groupWatchDispatchEvent{
 		GroupID:    after.ID,
@@ -783,7 +880,7 @@ func (s *GroupWatchService) NotifyGroupPriceChanged(ctx context.Context, before,
 	}
 
 	if s.syncDispatch {
-		s.deliverEventToSubscribers(ctx, event)
+		_ = s.deliverEventToSubscribers(ctx, event)
 		return
 	}
 	go func() {
@@ -794,7 +891,7 @@ func (s *GroupWatchService) NotifyGroupPriceChanged(ctx context.Context, before,
 		}()
 		dispatchCtx, cancel := context.WithTimeout(context.Background(), groupWatchDeliveryTimeout)
 		defer cancel()
-		s.deliverEventToSubscribers(dispatchCtx, event)
+		_ = s.deliverEventToSubscribers(dispatchCtx, event)
 	}()
 }
 
@@ -839,141 +936,156 @@ func (s *GroupWatchService) EvaluateMonitorTransitions(ctx context.Context, now 
 		return
 	}
 
-	for i := range matrix.Items {
-		row := &matrix.Items[i]
-		if row.GroupID == nil || *row.GroupID <= 0 {
+	grouped := groupFreshMonitorBuckets(matrix.Items, now)
+	groupIDs := make([]int64, 0, len(grouped))
+	for gid := range grouped {
+		groupIDs = append(groupIDs, gid)
+	}
+	sort.Slice(groupIDs, func(i, j int) bool { return groupIDs[i] < groupIDs[j] })
+
+	// Shield transition delivery + state persistence from shutdown cancellation
+	// mid-step so a committed notification or state advance is not torn in half.
+	deliverCtx, deliverCancel := context.WithTimeout(context.WithoutCancel(ctx), groupWatchDeliveryTimeout)
+	defer deliverCancel()
+
+	for _, gid := range groupIDs {
+		entry := grouped[gid]
+		if len(entry.buckets) == 0 {
 			continue
 		}
-		gid := *row.GroupID
-		latestBucket, currStatus, cachePct, availPct, ok := latestFreshClassifiedBucket(row.Buckets, now)
-		if !ok {
-			// Insufficient samples ("unknown") or stale data never flips state.
-			continue
-		}
-		bucketStart := latestBucket.BucketStart.UTC()
 
 		prev, hasPrev := prevStates[gid]
 		if !hasPrev {
-			// First observation: seed quietly without alerting.
+			// First observation: seed quietly with the newest fresh bucket without alerting.
+			newest := entry.buckets[len(entry.buckets)-1]
 			seed := GroupMonitorWatchState{
 				GroupID:         gid,
-				Status:          currStatus,
-				BlackNotified:   currStatus == GroupWatchStatusBlack,
-				LastBucketStart: bucketStart,
-				CacheRate:       cachePct / 100.0,
-				AvailabilityPct: availPct,
+				Status:          newest.status,
+				BlackNotified:   newest.status == GroupWatchStatusBlack,
+				LastBucketStart: newest.bucket.BucketStart.UTC(),
+				CacheRate:       newest.cachePct / 100.0,
+				AvailabilityPct: newest.availPct,
 				UpdatedAt:       now,
 			}
-			if err := s.repo.UpsertGroupWatchState(ctx, seed); err != nil {
+			if err := s.repo.SeedGroupWatchStateIfMissing(deliverCtx, seed); err != nil {
 				logger.LegacyPrintf("service.group_watch", "[GroupWatch] seed state group=%d failed: %v", gid, err)
 			}
 			continue
 		}
 
-		if bucketStart.Before(prev.LastBucketStart) {
-			continue
-		}
-
-		nextState := GroupMonitorWatchState{
-			GroupID:         gid,
-			Status:          currStatus,
-			BlackNotified:   prev.BlackNotified,
-			LastBucketStart: bucketStart,
-			CacheRate:       cachePct / 100.0,
-			AvailabilityPct: availPct,
-			UpdatedAt:       now,
-		}
-
-		var event *groupWatchDispatchEvent
-		groupName := strings.TrimSpace(row.GroupName)
-		if groupName == "" {
-			groupName = fmt.Sprintf("分组 #%d", gid)
-		}
-		platformLabel := groupWatchPlatformLabel(row.Platform)
-		changedAtStr := now.In(time.FixedZone("CST", 8*3600)).Format("2006-01-02 15:04:05")
-		cacheStr := fmt.Sprintf("%.1f%%", cachePct)
-		availStr := fmt.Sprintf("%.1f%%", availPct)
-
-		switch {
-		case currStatus == GroupWatchStatusBlack && prev.Status != GroupWatchStatusBlack:
-			nextState.BlackNotified = true
-			reason := describeBlackReason(cachePct, availPct)
-			ev := groupWatchDispatchEvent{
-				GroupID:    gid,
-				GroupName:  groupName,
-				Platform:   row.Platform,
-				EventType:  GroupWatchEventStatusBlack,
-				EmailEvent: NotificationEmailEventGroupWatchStatusBlack,
-				DedupeKey:  fmt.Sprintf("group:%d:status_black:%d", gid, bucketStart.Unix()),
-				Title:      fmt.Sprintf("分组不可用（黑）：%s", groupName),
-				Content:    fmt.Sprintf("您订阅的分组「%s」（%s）已变为黑色不可用（%s；当前可用率 %s，缓存率 %s）。", groupName, platformLabel, reason, availStr, cacheStr),
-				BarkBody:   fmt.Sprintf("%s 变黑不可用：可用率 %s · 缓存率 %s", groupName, availStr, cacheStr),
-				Metadata: map[string]string{
-					"group_id":          strconv.FormatInt(gid, 10),
-					"group_name":        groupName,
-					"platform":          row.Platform,
-					"cache_rate":        cacheStr,
-					"availability_rate": availStr,
-					"reason":            reason,
-					"bucket_start":      bucketStart.Format(time.RFC3339),
-				},
-				EmailVariables: map[string]string{
-					"group_name":        groupName,
-					"platform":          platformLabel,
-					"cache_rate":        cacheStr,
-					"availability_rate": availStr,
-					"status_reason":     reason,
-					"changed_at":        changedAtStr,
-				},
-				ReminderKey: fmt.Sprintf("black-%d", bucketStart.Unix()),
-				OccurredAt:  now,
+		curr := prev
+		for _, fb := range entry.buckets {
+			bucketStart := fb.bucket.BucketStart.UTC()
+			if bucketStart.Before(curr.LastBucketStart.UTC()) {
+				continue
 			}
-			event = &ev
 
-		case currStatus == GroupWatchStatusGreen && (prev.Status == GroupWatchStatusBlack || prev.BlackNotified):
-			nextState.BlackNotified = false
-			ev := groupWatchDispatchEvent{
-				GroupID:    gid,
-				GroupName:  groupName,
-				Platform:   row.Platform,
-				EventType:  GroupWatchEventStatusGreen,
-				EmailEvent: NotificationEmailEventGroupWatchStatusGreen,
-				DedupeKey:  fmt.Sprintf("group:%d:status_green:%d", gid, bucketStart.Unix()),
-				Title:      fmt.Sprintf("分组已恢复（绿）：%s", groupName),
-				Content:    fmt.Sprintf("您订阅的分组「%s」（%s）已恢复绿色可用（当前可用率 %s，缓存率 %s）。", groupName, platformLabel, availStr, cacheStr),
-				BarkBody:   fmt.Sprintf("%s 已恢复绿色：可用率 %s · 缓存率 %s", groupName, availStr, cacheStr),
-				Metadata: map[string]string{
-					"group_id":          strconv.FormatInt(gid, 10),
-					"group_name":        groupName,
-					"platform":          row.Platform,
-					"cache_rate":        cacheStr,
-					"availability_rate": availStr,
-					"bucket_start":      bucketStart.Format(time.RFC3339),
-				},
-				EmailVariables: map[string]string{
-					"group_name":        groupName,
-					"platform":          platformLabel,
-					"cache_rate":        cacheStr,
-					"availability_rate": availStr,
-					"changed_at":        changedAtStr,
-				},
-				ReminderKey: fmt.Sprintf("green-%d", bucketStart.Unix()),
-				OccurredAt:  now,
+			nextState := GroupMonitorWatchState{
+				GroupID:         gid,
+				Status:          fb.status,
+				BlackNotified:   curr.BlackNotified,
+				LastBucketStart: bucketStart,
+				CacheRate:       fb.cachePct / 100.0,
+				AvailabilityPct: fb.availPct,
+				UpdatedAt:       now,
 			}
-			event = &ev
 
-		case currStatus == GroupWatchStatusBlack:
-			nextState.BlackNotified = true
-		case currStatus == GroupWatchStatusGreen:
-			nextState.BlackNotified = false
-		}
+			var event *groupWatchDispatchEvent
+			groupName := strings.TrimSpace(fb.groupName)
+			if groupName == "" {
+				groupName = fmt.Sprintf("分组 #%d", gid)
+			}
+			platformLabel := groupWatchPlatformLabel(fb.platform)
+			changedAtStr := now.In(time.FixedZone("CST", 8*3600)).Format("2006-01-02 15:04:05")
+			cacheStr := fmt.Sprintf("%.1f%%", fb.cachePct)
+			availStr := fmt.Sprintf("%.1f%%", fb.availPct)
 
-		if err := s.repo.UpsertGroupWatchState(ctx, nextState); err != nil {
-			logger.LegacyPrintf("service.group_watch", "[GroupWatch] update state group=%d failed: %v", gid, err)
-			continue
-		}
-		if event != nil {
-			s.deliverEventToSubscribers(ctx, *event)
+			switch {
+			case fb.status == GroupWatchStatusBlack && curr.Status != GroupWatchStatusBlack:
+				nextState.BlackNotified = true
+				reason := describeBlackReason(fb.cachePct, fb.availPct)
+				ev := groupWatchDispatchEvent{
+					GroupID:    gid,
+					GroupName:  groupName,
+					Platform:   fb.platform,
+					EventType:  GroupWatchEventStatusBlack,
+					EmailEvent: NotificationEmailEventGroupWatchStatusBlack,
+					DedupeKey:  fmt.Sprintf("group:%d:status_black:%d", gid, bucketStart.Unix()),
+					Title:      fmt.Sprintf("分组不可用（黑）：%s", groupName),
+					Content:    fmt.Sprintf("您订阅的分组「%s」（%s）已变为黑色不可用（%s；当前可用率 %s，缓存率 %s）。", groupName, platformLabel, reason, availStr, cacheStr),
+					BarkBody:   fmt.Sprintf("%s 变黑不可用：可用率 %s · 缓存率 %s", groupName, availStr, cacheStr),
+					Metadata: map[string]string{
+						"group_id":          strconv.FormatInt(gid, 10),
+						"group_name":        groupName,
+						"platform":          fb.platform,
+						"cache_rate":        cacheStr,
+						"availability_rate": availStr,
+						"reason":            reason,
+						"bucket_start":      bucketStart.Format(time.RFC3339),
+					},
+					EmailVariables: map[string]string{
+						"group_name":        groupName,
+						"platform":          platformLabel,
+						"cache_rate":        cacheStr,
+						"availability_rate": availStr,
+						"status_reason":     reason,
+						"changed_at":        changedAtStr,
+					},
+					ReminderKey: fmt.Sprintf("black-%d", bucketStart.Unix()),
+					OccurredAt:  now,
+				}
+				event = &ev
+
+			case fb.status == GroupWatchStatusGreen && (curr.Status == GroupWatchStatusBlack || curr.BlackNotified):
+				nextState.BlackNotified = false
+				ev := groupWatchDispatchEvent{
+					GroupID:    gid,
+					GroupName:  groupName,
+					Platform:   fb.platform,
+					EventType:  GroupWatchEventStatusGreen,
+					EmailEvent: NotificationEmailEventGroupWatchStatusGreen,
+					DedupeKey:  fmt.Sprintf("group:%d:status_green:%d", gid, bucketStart.Unix()),
+					Title:      fmt.Sprintf("分组已恢复（绿）：%s", groupName),
+					Content:    fmt.Sprintf("您订阅的分组「%s」（%s）已恢复绿色可用（当前可用率 %s，缓存率 %s）。", groupName, platformLabel, availStr, cacheStr),
+					BarkBody:   fmt.Sprintf("%s 已恢复绿色：可用率 %s · 缓存率 %s", groupName, availStr, cacheStr),
+					Metadata: map[string]string{
+						"group_id":          strconv.FormatInt(gid, 10),
+						"group_name":        groupName,
+						"platform":          fb.platform,
+						"cache_rate":        cacheStr,
+						"availability_rate": availStr,
+						"bucket_start":      bucketStart.Format(time.RFC3339),
+					},
+					EmailVariables: map[string]string{
+						"group_name":        groupName,
+						"platform":          platformLabel,
+						"cache_rate":        cacheStr,
+						"availability_rate": availStr,
+						"changed_at":        changedAtStr,
+					},
+					ReminderKey: fmt.Sprintf("green-%d", bucketStart.Unix()),
+					OccurredAt:  now,
+				}
+				event = &ev
+
+			case fb.status == GroupWatchStatusBlack:
+				nextState.BlackNotified = true
+			case fb.status == GroupWatchStatusGreen:
+				nextState.BlackNotified = false
+			}
+
+			if event != nil {
+				// Deliver/persist subscriber alerts BEFORE advancing monitor state so
+				// a crash or transient channel failure is retried cleanly on the next tick.
+				if !s.deliverEventToSubscribers(deliverCtx, *event) {
+					break
+				}
+			}
+			if err := s.repo.UpsertGroupWatchState(deliverCtx, nextState); err != nil {
+				logger.LegacyPrintf("service.group_watch", "[GroupWatch] update state group=%d failed: %v", gid, err)
+				break
+			}
+			curr = nextState
 		}
 	}
 }
@@ -1032,33 +1144,35 @@ func (s *GroupWatchService) resolveChannelStatusURL(ctx context.Context) string 
 	return "/monitor"
 }
 
-func (s *GroupWatchService) deliverEventToSubscribers(ctx context.Context, event groupWatchDispatchEvent) {
+func (s *GroupWatchService) deliverEventToSubscribers(ctx context.Context, event groupWatchDispatchEvent) bool {
 	subs, err := s.repo.ListSubscriberUsersByGroupID(ctx, event.GroupID)
 	if err != nil {
 		logger.LegacyPrintf("service.group_watch", "[GroupWatch] list subscribers group=%d failed: %v", event.GroupID, err)
-		return
+		return false
 	}
 	if len(subs) == 0 {
-		return
+		return true
 	}
 
 	statusURL := s.resolveChannelStatusURL(ctx)
 	pushNotifier := s.getPushNotifier()
 	sem := make(chan struct{}, groupWatchDeliveryConcurrency)
 	var wg sync.WaitGroup
+	var hadRetryableErr atomic.Bool
 
 	for _, sub := range subs {
 		sub := sub
 		allowed, accessErr := s.canUserAccessGroup(ctx, sub.UserID, sub.Role, event.GroupID)
 		if accessErr != nil {
 			logger.LegacyPrintf("service.group_watch", "[GroupWatch] access check failed user=%d group=%d: %v", sub.UserID, event.GroupID, accessErr)
+			hadRetryableErr.Store(true)
 			continue
 		}
 		if !allowed {
 			continue
 		}
 
-		inserted, _, insertErr := s.repo.InsertNotificationIfNew(ctx, UserGroupWatchNotification{
+		rec, upsertErr := s.repo.UpsertNotificationForDelivery(ctx, UserGroupWatchNotification{
 			UserID:    sub.UserID,
 			GroupID:   event.GroupID,
 			EventType: event.EventType,
@@ -1068,12 +1182,9 @@ func (s *GroupWatchService) deliverEventToSubscribers(ctx context.Context, event
 			Metadata:  event.Metadata,
 			CreatedAt: event.OccurredAt,
 		})
-		if insertErr != nil {
-			logger.LegacyPrintf("service.group_watch", "[GroupWatch] insert notification user=%d group=%d failed: %v", sub.UserID, event.GroupID, insertErr)
-			continue
-		}
-		if !inserted {
-			// Already delivered for this user + dedupe key.
+		if upsertErr != nil {
+			logger.LegacyPrintf("service.group_watch", "[GroupWatch] upsert notification user=%d group=%d failed: %v", sub.UserID, event.GroupID, upsertErr)
+			hadRetryableErr.Store(true)
 			continue
 		}
 
@@ -1083,15 +1194,24 @@ func (s *GroupWatchService) deliverEventToSubscribers(ctx context.Context, event
 					slog.Error("panic in group watch channel delivery", "user_id", sub.UserID, "group_id", event.GroupID, "recover", r)
 				}
 			}()
-			if pushNotifier != nil {
+			canRetry := rec.Attempts < groupWatchMaxDeliveryAttempts
+			if pushNotifier != nil && !rec.DeliveredChannels["bark"] {
 				pushCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-				if err := pushNotifier.PushToUser(pushCtx, sub.UserID, event.Title, event.BarkBody, groupWatchBarkGroup); err != nil {
-					slog.Warn("group watch bark push failed", "user_id", sub.UserID, "group_id", event.GroupID, "error", err)
-				}
+				err := pushNotifier.PushToUser(pushCtx, sub.UserID, event.Title, event.BarkBody, groupWatchBarkGroup)
 				cancel()
+				if err != nil {
+					slog.Warn("group watch bark push failed", "user_id", sub.UserID, "group_id", event.GroupID, "error", err)
+					if canRetry {
+						hadRetryableErr.Store(true)
+					}
+				} else {
+					_ = s.repo.MarkNotificationChannelDelivered(ctx, rec.ID, "bark")
+				}
 			}
 			if s.notificationEmailService != nil && event.EmailEvent != "" {
-				s.sendSubscriberEmails(ctx, sub, event, statusURL)
+				if !s.sendSubscriberEmails(ctx, sub, event, statusURL, rec) && canRetry {
+					hadRetryableErr.Store(true)
+				}
 			}
 		}
 
@@ -1108,6 +1228,7 @@ func (s *GroupWatchService) deliverEventToSubscribers(ctx context.Context, event
 		}()
 	}
 	wg.Wait()
+	return !hadRetryableErr.Load()
 }
 
 // collectGroupWatchEmailRecipients returns the deduplicated list of email
@@ -1141,10 +1262,16 @@ func collectGroupWatchEmailRecipients(sub GroupWatchSubscriber) []string {
 	return recipients
 }
 
-func (s *GroupWatchService) sendSubscriberEmails(ctx context.Context, sub GroupWatchSubscriber, event groupWatchDispatchEvent, statusURL string) {
+func (s *GroupWatchService) sendSubscriberEmails(
+	ctx context.Context,
+	sub GroupWatchSubscriber,
+	event groupWatchDispatchEvent,
+	statusURL string,
+	rec GroupWatchNotificationDeliveryRecord,
+) bool {
 	recipients := collectGroupWatchEmailRecipients(sub)
 	if len(recipients) == 0 {
-		return
+		return true
 	}
 	displayName := strings.TrimSpace(sub.Username)
 	if displayName == "" {
@@ -1156,7 +1283,12 @@ func (s *GroupWatchService) sendSubscriberEmails(ctx context.Context, sub GroupW
 	}
 	vars["channel_status_url"] = statusURL
 
+	allDelivered := true
 	for _, to := range recipients {
+		channelKey := "email:" + strings.ToLower(strings.TrimSpace(to))
+		if rec.DeliveredChannels[channelKey] {
+			continue
+		}
 		sendCtx, cancel := context.WithTimeout(ctx, emailSendTimeout)
 		err := s.notificationEmailService.Send(sendCtx, NotificationEmailSendInput{
 			Event:          event.EmailEvent,
@@ -1170,12 +1302,17 @@ func (s *GroupWatchService) sendSubscriberEmails(ctx context.Context, sub GroupW
 		})
 		cancel()
 		if err != nil {
-			// Expected skip when SMTP is unconfigured or user unsubscribed; log non-fatal.
+			// Expected skip when SMTP is unconfigured or user unsubscribed; non-retryable.
 			var cfgErr notificationEmailConfigError
 			if errors.As(err, &cfgErr) {
-				return
+				_ = s.repo.MarkNotificationChannelDelivered(ctx, rec.ID, channelKey)
+				continue
 			}
 			slog.Warn("group watch email delivery failed", "user_id", sub.UserID, "group_id", event.GroupID, "event", event.EmailEvent, "error", err)
+			allDelivered = false
+			continue
 		}
+		_ = s.repo.MarkNotificationChannelDelivered(ctx, rec.ID, channelKey)
 	}
+	return allDelivered
 }

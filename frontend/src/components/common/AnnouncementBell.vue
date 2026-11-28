@@ -40,32 +40,48 @@
           :aria-label="t('announcements.title')"
         >
           <button
+            id="bell-tab-announcements"
+            ref="announcementsTabRef"
             type="button"
             role="tab"
             :aria-selected="activeTab === 'announcements'"
+            aria-controls="bell-panel-announcements"
+            :tabindex="activeTab === 'announcements' ? 0 : -1"
             class="flex items-center justify-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors"
             :class="activeTab === 'announcements' ? 'bg-default text-highlighted shadow-xs ring-1 ring-default' : 'text-muted hover:text-highlighted'"
             data-test="bell-tab-announcements"
             @click="switchTab('announcements')"
+            @keydown="onTabKeydown"
           >
             <span>{{ t('announcements.tabAnnouncements') }}</span>
             <UBadge v-if="unreadCount > 0" color="error" variant="subtle" size="xs" class="tabular-nums">{{ unreadCount }}</UBadge>
           </button>
           <button
+            id="bell-tab-group-watch"
+            ref="groupWatchTabRef"
             type="button"
             role="tab"
             :aria-selected="activeTab === 'group_watch'"
+            aria-controls="bell-panel-group-watch"
+            :tabindex="activeTab === 'group_watch' ? 0 : -1"
             class="flex items-center justify-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors"
             :class="activeTab === 'group_watch' ? 'bg-default text-highlighted shadow-xs ring-1 ring-default' : 'text-muted hover:text-highlighted'"
             data-test="bell-tab-group-watch"
             @click="switchTab('group_watch')"
+            @keydown="onTabKeydown"
           >
             <span>{{ t('announcements.tabGroupWatch') }}</span>
             <UBadge v-if="groupWatchUnreadCount > 0" color="error" variant="subtle" size="xs" class="tabular-nums">{{ groupWatchUnreadCount }}</UBadge>
           </button>
         </div>
 
-        <template v-if="activeTab === 'announcements'">
+        <div
+          v-if="activeTab === 'announcements'"
+          id="bell-panel-announcements"
+          role="tabpanel"
+          aria-labelledby="bell-tab-announcements"
+          tabindex="0"
+        >
           <!-- Loading -->
           <div v-if="loading && announcements.length === 0" class="flex items-center justify-center py-16">
             <UIcon name="i-lucide-loader-circle" class="size-6 animate-spin text-muted" />
@@ -120,9 +136,15 @@
             :title="t('announcements.empty')"
             :description="t('announcements.emptyDescription')"
           />
-        </template>
+        </div>
 
-        <template v-else>
+        <div
+          v-else
+          id="bell-panel-group-watch"
+          role="tabpanel"
+          aria-labelledby="bell-tab-group-watch"
+          tabindex="0"
+        >
           <div v-if="groupWatchLoading && groupWatchNotifications.length === 0" class="flex items-center justify-center py-16">
             <UIcon name="i-lucide-loader-circle" class="size-6 animate-spin text-muted" />
           </div>
@@ -163,7 +185,7 @@
                   <span class="truncate font-medium text-highlighted">{{ item.title }}</span>
                   <time class="shrink-0 text-xs text-muted tabular-nums">{{ formatRelativeTime(item.created_at) }}</time>
                 </p>
-                <p class="mt-0.5 line-clamp-2 text-xs leading-relaxed text-muted">{{ item.content }}</p>
+                <p class="mt-0.5 whitespace-pre-line break-words text-xs leading-relaxed text-muted">{{ item.content }}</p>
               </div>
             </button>
 
@@ -195,7 +217,7 @@
               />
             </template>
           </EmptyState>
-        </template>
+        </div>
       </template>
     </USlideover>
 
@@ -305,6 +327,8 @@ const {
 // Local overlay state (the slideover / modal handle Escape, outside click and body scroll lock)
 const isModalOpen = ref(false)
 const activeTab = ref<'announcements' | 'group_watch'>('announcements')
+const announcementsTabRef = ref<HTMLButtonElement | null>(null)
+const groupWatchTabRef = ref<HTMLButtonElement | null>(null)
 const detailModalOpen = ref(false)
 const selectedAnnouncement = ref<AnnouncementListItem | null>(null)
 const detailId = ref<number | null>(null)
@@ -368,6 +392,25 @@ function switchTab(tab: 'announcements' | 'group_watch') {
     void announcementStore.ensureGroupWatchList()
   } else {
     void announcementStore.ensureList()
+  }
+}
+
+function onTabKeydown(event: KeyboardEvent) {
+  let nextTab: 'announcements' | 'group_watch' | null = null
+  if (event.key === 'ArrowRight' || event.key === 'ArrowLeft') {
+    nextTab = activeTab.value === 'announcements' ? 'group_watch' : 'announcements'
+  } else if (event.key === 'Home') {
+    nextTab = 'announcements'
+  } else if (event.key === 'End') {
+    nextTab = 'group_watch'
+  }
+  if (!nextTab) return
+  event.preventDefault()
+  switchTab(nextTab)
+  if (nextTab === 'announcements') {
+    announcementsTabRef.value?.focus()
+  } else {
+    groupWatchTabRef.value?.focus()
   }
 }
 

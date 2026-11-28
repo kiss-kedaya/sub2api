@@ -46,11 +46,17 @@ func (r *stubGroupWatchHandlerRepo) ListSubscriberUsersByGroupID(_ context.Conte
 func (r *stubGroupWatchHandlerRepo) GetGroupWatchStates(_ context.Context, _ []int64) (map[int64]service.GroupMonitorWatchState, error) {
 	return map[int64]service.GroupMonitorWatchState{}, nil
 }
+func (r *stubGroupWatchHandlerRepo) SeedGroupWatchStateIfMissing(_ context.Context, _ service.GroupMonitorWatchState) error {
+	return nil
+}
 func (r *stubGroupWatchHandlerRepo) UpsertGroupWatchState(_ context.Context, _ service.GroupMonitorWatchState) error {
 	return nil
 }
-func (r *stubGroupWatchHandlerRepo) InsertNotificationIfNew(_ context.Context, _ service.UserGroupWatchNotification) (bool, int64, error) {
-	return true, 1, nil
+func (r *stubGroupWatchHandlerRepo) UpsertNotificationForDelivery(_ context.Context, _ service.UserGroupWatchNotification) (service.GroupWatchNotificationDeliveryRecord, error) {
+	return service.GroupWatchNotificationDeliveryRecord{ID: 1, DeliveredChannels: map[string]bool{}, Attempts: 1}, nil
+}
+func (r *stubGroupWatchHandlerRepo) MarkNotificationChannelDelivered(_ context.Context, _ int64, _ string) error {
+	return nil
 }
 func (r *stubGroupWatchHandlerRepo) SummaryNotifications(_ context.Context, userID int64) (int, int, error) {
 	total, unread := 0, 0

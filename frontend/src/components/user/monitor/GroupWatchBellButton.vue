@@ -7,11 +7,12 @@
       {
         'is-subscribed': subscribed,
         'is-pending': pending,
+        'is-disabled': disabled && !pending,
         'is-ringing': motionPhase === 'ringing',
         'is-muting': motionPhase === 'muting',
       },
     ]"
-    :disabled="pending"
+    :disabled="pending || disabled"
     :aria-pressed="subscribed"
     :aria-label="buttonLabel"
     :title="tooltipText"
@@ -82,10 +83,12 @@ const props = withDefaults(defineProps<{
   platform: string
   subscribed?: boolean
   pending?: boolean
+  disabled?: boolean
   groupName?: string
 }>(), {
   subscribed: false,
   pending: false,
+  disabled: false,
   groupName: '',
 })
 
@@ -154,7 +157,7 @@ watch(
 )
 
 function handleClick() {
-  if (props.pending) return
+  if (props.pending || props.disabled) return
   emit('toggle')
 }
 
@@ -306,6 +309,11 @@ html.dark .group-watch-bell.is-subscribed {
 .group-watch-bell.is-pending {
   opacity: 0.7;
   cursor: progress;
+}
+
+.group-watch-bell.is-disabled {
+  opacity: 0.42;
+  cursor: not-allowed;
 }
 
 .group-watch-bell__svg {

@@ -31,5 +31,7 @@ export default {
     watchSubscribedToast: 'Subscribed to "{name}" email & Bark alerts for price, outage, and recovery',
     watchUnsubscribedToast: 'Unsubscribed from "{name}" alerts',
     watchToggleFailed: 'Failed to update group subscription',
+    watchSubscriptionsLoadFailed: 'Failed to load group watch subscriptions; toggles are paused until reloaded',
+    watchSubscriptionsRetry: 'Retry loading subscriptions',
   },
 }

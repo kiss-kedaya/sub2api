@@ -163,6 +163,26 @@ func (r *groupWatchRepository) GetGroupWatchStates(ctx context.Context, groupIDs
 	return out, nil
 }
 
+func (r *groupWatchRepository) SeedGroupWatchStateIfMissing(ctx context.Context, state service.GroupMonitorWatchState) error {
+	if r == nil || r.db == nil {
+		return errors.New("group watch repository unavailable")
+	}
+	updatedAt := state.UpdatedAt
+	if updatedAt.IsZero() {
+		updatedAt = time.Now().UTC()
+	}
+	_, err := r.db.ExecContext(ctx,
+		`INSERT INTO group_monitor_watch_states (
+			group_id, status, black_notified, last_bucket_start, cache_rate, availability_pct, updated_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7)
+		ON CONFLICT (group_id) DO NOTHING`,
+		state.GroupID, state.Status, state.BlackNotified, state.LastBucketStart.UTC(), state.CacheRate, state.AvailabilityPct, updatedAt.UTC())
+	if err != nil {
+		return fmt.Errorf("seed group watch state: %w", err)
+	}
+	return nil
+}
+
 func (r *groupWatchRepository) UpsertGroupWatchState(ctx context.Context, state service.GroupMonitorWatchState) error {
 	if r == nil || r.db == nil {
 		return errors.New("group watch repository unavailable")
@@ -181,7 +201,8 @@ func (r *groupWatchRepository) UpsertGroupWatchState(ctx context.Context, state 
 			last_bucket_start = EXCLUDED.last_bucket_start,
 			cache_rate = EXCLUDED.cache_rate,
 			availability_pct = EXCLUDED.availability_pct,
-			updated_at = EXCLUDED.updated_at`,
+			updated_at = EXCLUDED.updated_at
+		WHERE group_monitor_watch_states.last_bucket_start <= EXCLUDED.last_bucket_start`,
 		state.GroupID, state.Status, state.BlackNotified, state.LastBucketStart.UTC(), state.CacheRate, state.AvailabilityPct, updatedAt.UTC())
 	if err != nil {
 		return fmt.Errorf("upsert group watch state: %w", err)
@@ -189,9 +210,9 @@ func (r *groupWatchRepository) UpsertGroupWatchState(ctx context.Context, state 
 	return nil
 }
 
-func (r *groupWatchRepository) InsertNotificationIfNew(ctx context.Context, notif service.UserGroupWatchNotification) (bool, int64, error) {
+func (r *groupWatchRepository) UpsertNotificationForDelivery(ctx context.Context, notif service.UserGroupWatchNotification) (service.GroupWatchNotificationDeliveryRecord, error) {
 	if r == nil || r.db == nil {
-		return false, 0, errors.New("group watch repository unavailable")
+		return service.GroupWatchNotificationDeliveryRecord{}, errors.New("group watch repository unavailable")
 	}
 	metaBytes := []byte("{}")
 	if len(notif.Metadata) > 0 {
@@ -203,22 +224,40 @@ func (r *groupWatchRepository) InsertNotificationIfNew(ctx context.Context, noti
 	if createdAt.IsZero() {
 		createdAt = time.Now().UTC()
 	}
-	var id int64
+	var rec service.GroupWatchNotificationDeliveryRecord
+	var deliveredRaw []byte
 	err := r.db.QueryRowContext(ctx,
 		`INSERT INTO user_group_watch_notifications (
 			user_id, group_id, event_type, dedupe_key, title, content, metadata, created_at
 		) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8)
-		ON CONFLICT (user_id, dedupe_key) DO NOTHING
-		RETURNING id`,
+		ON CONFLICT (user_id, dedupe_key) DO UPDATE SET
+			delivery_attempts = LEAST(user_group_watch_notifications.delivery_attempts + 1, 32767)
+		RETURNING id, delivered_channels, delivery_attempts`,
 		notif.UserID, notif.GroupID, notif.EventType, notif.DedupeKey, notif.Title, notif.Content, string(metaBytes), createdAt.UTC(),
-	).Scan(&id)
-	if errors.Is(err, sql.ErrNoRows) {
-		return false, 0, nil
-	}
+	).Scan(&rec.ID, &deliveredRaw, &rec.Attempts)
 	if err != nil {
-		return false, 0, fmt.Errorf("insert group watch notification: %w", err)
+		return service.GroupWatchNotificationDeliveryRecord{}, fmt.Errorf("upsert group watch notification for delivery: %w", err)
 	}
-	return true, id, nil
+	rec.DeliveredChannels = make(map[string]bool)
+	if len(deliveredRaw) > 0 {
+		_ = json.Unmarshal(deliveredRaw, &rec.DeliveredChannels)
+	}
+	return rec, nil
+}
+
+func (r *groupWatchRepository) MarkNotificationChannelDelivered(ctx context.Context, notificationID int64, channelKey string) error {
+	if r == nil || r.db == nil || notificationID <= 0 || channelKey == "" {
+		return nil
+	}
+	_, err := r.db.ExecContext(ctx,
+		`UPDATE user_group_watch_notifications
+		    SET delivered_channels = jsonb_set(COALESCE(delivered_channels, '{}'::jsonb), ARRAY[$2::text], 'true'::jsonb, true)
+		  WHERE id = $1`,
+		notificationID, channelKey)
+	if err != nil {
+		return fmt.Errorf("mark group watch channel delivered: %w", err)
+	}
+	return nil
 }
 
 func (r *groupWatchRepository) SummaryNotifications(ctx context.Context, userID int64) (int, int, error) {

@@ -31,5 +31,7 @@ export default {
     watchSubscribedToast: '已订阅「{name}」：改价、变黑不可用或恢复绿色时将发送邮箱与 Bark 通知',
     watchUnsubscribedToast: '已取消订阅「{name}」通知',
     watchToggleFailed: '更新分组订阅状态失败',
+    watchSubscriptionsLoadFailed: '分组订阅状态加载失败，暂不可修改订阅',
+    watchSubscriptionsRetry: '重试加载订阅',
   },
 }

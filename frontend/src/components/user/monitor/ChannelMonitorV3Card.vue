@@ -18,6 +18,7 @@
         :platform="row.platform"
         :subscribed="subscribed"
         :pending="watchPending"
+        :disabled="watchDisabled"
         :group-name="groupLabel"
         @toggle="emit('toggle-watch', row.group_id)"
       />
@@ -80,12 +81,14 @@ const props = withDefaults(defineProps<{
   showWatchBell?: boolean
   subscribed?: boolean
   watchPending?: boolean
+  watchDisabled?: boolean
 }>(), {
   showPlatformBadge: true,
   signals: null,
   showWatchBell: true,
   subscribed: false,
   watchPending: false,
+  watchDisabled: false,
 })
 
 const emit = defineEmits<{

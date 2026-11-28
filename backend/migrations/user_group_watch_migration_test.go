@@ -19,6 +19,8 @@ func TestUserGroupWatchSubscriptionsMigration(t *testing.T) {
 	require.Contains(t, sql, "CREATE TABLE IF NOT EXISTS group_monitor_watch_states")
 	require.Contains(t, sql, "black_notified BOOLEAN NOT NULL DEFAULT FALSE")
 	require.Contains(t, sql, "CREATE TABLE IF NOT EXISTS user_group_watch_notifications")
+	require.Contains(t, sql, "delivered_channels JSONB NOT NULL DEFAULT '{}'::jsonb")
+	require.Contains(t, sql, "delivery_attempts SMALLINT NOT NULL DEFAULT 1")
 	require.Contains(t, sql, "CONSTRAINT uq_user_group_watch_notifs_user_dedupe UNIQUE (user_id, dedupe_key)")
 	require.Contains(t, sql, "idx_user_group_watch_notifs_user_unread")
 }

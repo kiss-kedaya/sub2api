@@ -55,6 +55,9 @@ export const useAnnouncementStore = defineStore('announcements', () => {
   let summaryGeneration = 0
   let listGeneration = 0
   let groupWatchListGeneration = 0
+  let groupWatchMutationVersion = 0
+  let locallyReadGroupWatchIds = new Set<number>()
+  let locallyMarkedAllReadAt: string | null = null
   let summaryLastFetch = 0
   let listLastFetch = 0
   let groupWatchLastFetch = 0
@@ -326,6 +329,7 @@ export const useAnnouncementStore = defineStore('announcements', () => {
     }
 
     const generation = ++groupWatchListGeneration
+    const mutationAtStart = groupWatchMutationVersion
     groupWatchLastFetch = Date.now()
     groupWatchAbort?.abort()
     const controller = new AbortController()
@@ -338,9 +342,25 @@ export const useAnnouncementStore = defineStore('announcements', () => {
           ? await groupWatchAPI.listNotifications(false, 30, { signal: controller.signal })
           : []
         if (generation !== groupWatchListGeneration) return
-        groupWatchNotifications.value = items
-        groupWatchTotalCount.value = items.length
-        groupWatchUnreadCount.value = items.filter((item) => !item.read_at).length
+        // Reapply any local read mutations that completed while this fetch was in flight
+        // so an older snapshot never reverts read rows back to unread.
+        const reconciled = groupWatchMutationVersion === mutationAtStart
+          ? items
+          : items.map((item) => {
+              if (item.read_at) return item
+              if (locallyMarkedAllReadAt) return { ...item, read_at: locallyMarkedAllReadAt }
+              if (locallyReadGroupWatchIds.has(item.id)) return { ...item, read_at: new Date().toISOString() }
+              return item
+            })
+        groupWatchNotifications.value = reconciled
+        // Keep global summary counts sourced from getNotificationSummary instead of
+        // overwriting them with the 30-item capped list length.
+        if (!summaryLoaded.value) {
+          groupWatchTotalCount.value = Math.max(groupWatchTotalCount.value, reconciled.length)
+          if (groupWatchUnreadCount.value === 0) {
+            groupWatchUnreadCount.value = reconciled.filter((item) => !item.read_at).length
+          }
+        }
         groupWatchLoaded.value = true
         groupWatchError.value = null
       } catch (err: unknown) {
@@ -363,9 +383,15 @@ export const useAnnouncementStore = defineStore('announcements', () => {
 
   async function markGroupWatchRead(id: number): Promise<void> {
     await groupWatchAPI.markNotificationRead(id)
+    groupWatchMutationVersion++
+    locallyReadGroupWatchIds.add(id)
     const row = groupWatchNotifications.value.find((item) => item.id === id)
-    if (row && !row.read_at) {
-      row.read_at = new Date().toISOString()
+    if (row) {
+      if (!row.read_at) {
+        row.read_at = new Date().toISOString()
+        groupWatchUnreadCount.value = Math.max(0, groupWatchUnreadCount.value - 1)
+      }
+    } else if (groupWatchUnreadCount.value > 0) {
       groupWatchUnreadCount.value = Math.max(0, groupWatchUnreadCount.value - 1)
     }
   }
@@ -378,6 +404,8 @@ export const useAnnouncementStore = defineStore('announcements', () => {
       groupWatchLoading.value = true
       await groupWatchAPI.markAllNotificationsRead()
       const nowISO = new Date().toISOString()
+      groupWatchMutationVersion++
+      locallyMarkedAllReadAt = nowISO
       for (const item of groupWatchNotifications.value) {
         if (!item.read_at) item.read_at = nowISO
       }
@@ -391,6 +419,9 @@ export const useAnnouncementStore = defineStore('announcements', () => {
     summaryGeneration++
     listGeneration++
     groupWatchListGeneration++
+    groupWatchMutationVersion++
+    locallyReadGroupWatchIds = new Set<number>()
+    locallyMarkedAllReadAt = null
     summaryAbort?.abort()
     listAbort?.abort()
     groupWatchAbort?.abort()

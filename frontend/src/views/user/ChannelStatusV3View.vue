@@ -30,6 +30,23 @@
         <span v-if="snapshot" class="ml-auto text-xs font-medium tabular-nums text-muted">{{ t('channelMonitorV3.summary', { success: formatPercent(1 - (latestSnapshotMetrics?.error_rate ?? 0)), cache: formatPercent(latestSnapshotMetrics?.cache_rate ?? 0) }) }}</span>
       </section>
 
+      <div
+        v-if="watchSubscriptionsState === 'error'"
+        class="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-500/25 bg-amber-500/[0.06] px-3.5 py-2 text-xs text-amber-800 dark:border-amber-400/25 dark:bg-amber-400/[0.08] dark:text-amber-200"
+        role="status"
+        data-testid="group-watch-load-error"
+      >
+        <span>{{ t('channelMonitorV3.watchSubscriptionsLoadFailed') }}</span>
+        <UButton
+          color="neutral"
+          variant="subtle"
+          size="xs"
+          icon="i-lucide-refresh-cw"
+          :label="t('channelMonitorV3.watchSubscriptionsRetry')"
+          @click="loadWatchSubscriptions()"
+        />
+      </div>
+
       <div v-if="loading && rows.length === 0" class="signal-channel-loading-grid grid grid-cols-1 gap-5 rounded-lg md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
         <div v-for="i in 8" :key="i" class="h-72 animate-pulse rounded-lg bg-elevated motion-reduce:animate-none" />
       </div>
@@ -55,6 +72,7 @@
                 :signals="groupSignals[row.group_id ?? 0] ?? null"
                 :subscribed="isGroupSubscribed(row.group_id)"
                 :watch-pending="isGroupWatchPending(row.group_id)"
+                :watch-disabled="watchSubscriptionsState !== 'ready'"
                 :countdown-seconds="countdownSeconds"
                 :timeline-length="timelineLength"
                 :anchor-bucket-start="timelineAnchorBucketStart"
@@ -79,6 +97,7 @@
                 :signals="groupSignals[item.row.group_id ?? 0] ?? null"
                 :subscribed="isGroupSubscribed(item.row.group_id)"
                 :watch-pending="isGroupWatchPending(item.row.group_id)"
+                :watch-disabled="watchSubscriptionsState !== 'ready'"
                 :countdown-seconds="countdownSeconds"
                 :timeline-length="timelineLength"
                 :anchor-bucket-start="timelineAnchorBucketStart"
@@ -132,6 +151,8 @@ const userGroupRates = ref<Record<number, number>>({})
 const groupSignals = ref<Record<number, GroupSignalSource>>({})
 const subscribedGroupIds = ref<Set<number>>(new Set())
 const watchPendingIds = ref<Set<number>>(new Set())
+const watchSubscriptionsState = ref<'loading' | 'ready' | 'error'>('loading')
+let watchLoadSeq = 0
 const countdownSeconds = ref(0)
 let controller: AbortController | null = null
 let refreshTimer: number | null = null
@@ -198,16 +219,22 @@ function resolveGroupName(groupId: number): string {
 }
 
 async function loadWatchSubscriptions() {
+  const seq = ++watchLoadSeq
+  watchSubscriptionsState.value = 'loading'
   try {
     const ids = await groupWatchAPI.listSubscriptions()
+    if (seq !== watchLoadSeq) return
     subscribedGroupIds.value = new Set(ids)
+    watchSubscriptionsState.value = 'ready'
   } catch (error) {
+    if (seq !== watchLoadSeq) return
+    watchSubscriptionsState.value = 'error'
     console.warn('Failed to load group watch subscriptions', error)
   }
 }
 
 async function toggleGroupWatch(groupId: number) {
-  if (!groupId || watchPendingIds.value.has(groupId)) return
+  if (!groupId || watchSubscriptionsState.value !== 'ready' || watchPendingIds.value.has(groupId)) return
   const wasSubscribed = subscribedGroupIds.value.has(groupId)
   const nextSubscribed = !wasSubscribed
 
@@ -261,6 +288,9 @@ async function loadUserGroupRates() {
 }
 
 async function reload(silent = true) {
+  if (!silent && watchSubscriptionsState.value === 'error') {
+    void loadWatchSubscriptions()
+  }
   controller?.abort()
   const request = new AbortController()
   controller = request
