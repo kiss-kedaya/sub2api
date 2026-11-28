@@ -260,7 +260,11 @@ func (d *PgDumper) Restore(ctx context.Context, data io.Reader) error {
 		return fmt.Errorf("unsafe backup SQL: %w", scanErr)
 	}
 	if err != nil {
-		return fmt.Errorf("%v: %s", err, string(output))
+		detail := pgDumpFailureDetail(output, d.cfg.Password)
+		if detail != "" {
+			return fmt.Errorf("%v: %s", err, detail)
+		}
+		return err
 	}
 	return nil
 }
@@ -298,7 +302,7 @@ func safeRestoreSQLReaderWithCancel(data io.Reader, onReject func()) (*io.PipeRe
 					done <- scanErr
 					return
 				}
-				if _, writeErr := io.WriteString(pw, line); writeErr != nil {
+				if _, writeErr := io.WriteString(pw, scanLine); writeErr != nil {
 					if errors.Is(writeErr, io.ErrClosedPipe) {
 						done <- nil
 						return
@@ -362,11 +366,14 @@ const (
 )
 
 type restoreSQLScanner struct {
-	state             restoreSQLLexState
-	blockCommentDepth int
-	escapeNext        bool
-	dollarTag         string
-	restrictKey       string
+	state                   restoreSQLLexState
+	blockCommentDepth       int
+	escapeNext              bool
+	singleQuoteOddBackslash bool
+	afterEscapeQuote        bool
+	escapeQuoteSawEOL       bool
+	dollarTag               string
+	restrictKey             string
 
 	// Current top-level statement state (reset at each top-level ';').
 	stmtStarted            bool
@@ -375,17 +382,20 @@ type restoreSQLScanner struct {
 	copyPhase              restoreCopyPhase
 	pendingCopyIn          bool
 	stmtMentionsStdStrings bool
+	stmtHasUnicodeIdent    bool
 	stmtTokens             []string
 
 	// Capturing current quoted literal/identifier when needed for policy checks.
-	captureBuf  strings.Builder
-	capturing   bool
-	captureKind restoreTokenKind
+	captureBuf       strings.Builder
+	capturing        bool
+	captureTruncated bool
+	captureKind      restoreTokenKind
 
 	// Tracks top-level set_config(...) first argument to block obfuscated
 	// set_config('standard_conforming_strings', ...) downgrades.
-	setConfigState restoreSetConfigState
-	setConfigParen int
+	setConfigState       restoreSetConfigState
+	setConfigParen       int
+	setConfigUnicodeCall bool
 }
 
 type restoreTokenKind int
@@ -393,6 +403,7 @@ type restoreTokenKind int
 const (
 	restoreTokIdent restoreTokenKind = iota
 	restoreTokQuotedIdent
+	restoreTokUnicodeQuotedIdent
 	restoreTokPlainString
 	restoreTokString
 	restoreTokOther
@@ -404,9 +415,13 @@ func (s *restoreSQLScanner) resetStatement() {
 	s.parenDepth = 0
 	s.copyPhase = restoreCopyNone
 	s.stmtMentionsStdStrings = false
+	s.stmtHasUnicodeIdent = false
 	s.stmtTokens = s.stmtTokens[:0]
 	s.setConfigState = restoreSetConfigNone
 	s.setConfigParen = 0
+	s.setConfigUnicodeCall = false
+	s.afterEscapeQuote = false
+	s.escapeQuoteSawEOL = false
 }
 
 func (s *restoreSQLScanner) finalize() error {
@@ -471,21 +486,33 @@ func (s *restoreSQLScanner) scanLine(line string) error {
 
 		case restoreLexSingleQuote:
 			if line[i] == '\'' {
+				// Reject an odd run of backslashes immediately before a quote
+				// inside a plain '...' literal: that is the exact sequence
+				// where standard_conforming_strings=on vs off diverges in psql.
+				if s.singleQuoteOddBackslash {
+					return errors.New("backslash before quote in plain string literal is not allowed")
+				}
 				if i+1 < len(line) && line[i+1] == '\'' {
-					if s.capturing && s.captureBuf.Len() < 64 {
-						_ = s.captureBuf.WriteByte('\'')
+					if s.capturing {
+						s.appendCapture('\'')
 					}
 					i += 2
 				} else {
 					s.state = restoreLexSQL
+					s.singleQuoteOddBackslash = false
 					i++
 					if err := s.finishCapturedToken(); err != nil {
 						return err
 					}
 				}
 			} else {
-				if s.capturing && s.captureBuf.Len() < 64 {
-					_ = s.captureBuf.WriteByte(line[i])
+				if line[i] == '\\' {
+					s.singleQuoteOddBackslash = !s.singleQuoteOddBackslash
+				} else {
+					s.singleQuoteOddBackslash = false
+				}
+				if s.capturing {
+					s.appendCapture(line[i])
 				}
 				i++
 			}
@@ -493,8 +520,8 @@ func (s *restoreSQLScanner) scanLine(line string) error {
 		case restoreLexEscapeQuote:
 			if s.escapeNext {
 				s.escapeNext = false
-				if s.capturing && s.captureBuf.Len() < 64 {
-					_ = s.captureBuf.WriteByte(line[i])
+				if s.capturing {
+					s.appendCapture(line[i])
 				}
 				i++
 			} else if line[i] == '\\' {
@@ -502,8 +529,8 @@ func (s *restoreSQLScanner) scanLine(line string) error {
 				i++
 			} else if line[i] == '\'' {
 				if i+1 < len(line) && line[i+1] == '\'' {
-					if s.capturing && s.captureBuf.Len() < 64 {
-						_ = s.captureBuf.WriteByte('\'')
+					if s.capturing {
+						s.appendCapture('\'')
 					}
 					i += 2
 				} else {
@@ -512,10 +539,15 @@ func (s *restoreSQLScanner) scanLine(line string) error {
 					if err := s.finishCapturedToken(); err != nil {
 						return err
 					}
+					// In PostgreSQL psqlscan.l, <xe>{quote}{quotecontinue}
+					// continues escape-string mode across whitespace/comments
+					// containing a CR/LF followed by another single quote.
+					s.afterEscapeQuote = true
+					s.escapeQuoteSawEOL = false
 				}
 			} else {
-				if s.capturing && s.captureBuf.Len() < 64 {
-					_ = s.captureBuf.WriteByte(line[i])
+				if s.capturing {
+					s.appendCapture(line[i])
 				}
 				i++
 			}
@@ -523,8 +555,8 @@ func (s *restoreSQLScanner) scanLine(line string) error {
 		case restoreLexDoubleQuote:
 			if line[i] == '"' {
 				if i+1 < len(line) && line[i+1] == '"' {
-					if s.capturing && s.captureBuf.Len() < 64 {
-						_ = s.captureBuf.WriteByte('"')
+					if s.capturing {
+						s.appendCapture('"')
 					}
 					i += 2
 				} else {
@@ -535,8 +567,8 @@ func (s *restoreSQLScanner) scanLine(line string) error {
 					}
 				}
 			} else {
-				if s.capturing && s.captureBuf.Len() < 64 {
-					_ = s.captureBuf.WriteByte(line[i])
+				if s.capturing {
+					s.appendCapture(line[i])
 				}
 				i++
 			}
@@ -550,8 +582,8 @@ func (s *restoreSQLScanner) scanLine(line string) error {
 					return err
 				}
 			} else {
-				if s.capturing && s.captureBuf.Len() < 64 {
-					_ = s.captureBuf.WriteByte(line[i])
+				if s.capturing {
+					s.appendCapture(line[i])
 				}
 				i++
 			}
@@ -559,16 +591,25 @@ func (s *restoreSQLScanner) scanLine(line string) error {
 		case restoreLexSQL:
 			b := line[i]
 			if isASCIIWhitespace(b) {
+				if s.afterEscapeQuote && (b == '\n' || b == '\r') {
+					s.escapeQuoteSawEOL = true
+				}
 				i++
 				continue
 			}
-			// Line comment: ignore until end of line.
+			// Line comment: in PostgreSQL psqlscan.l ("--"[^\r\n]*), either CR
+			// or LF ends the comment. Never skip past an embedded bare '\r'.
 			if b == '-' && i+1 < len(line) && line[i+1] == '-' {
-				i = len(line)
+				i += 2
+				for i < len(line) && line[i] != '\r' && line[i] != '\n' {
+					i++
+				}
 				continue
 			}
 			// Nested block comment.
 			if b == '/' && i+1 < len(line) && line[i+1] == '*' {
+				s.afterEscapeQuote = false
+				s.escapeQuoteSawEOL = false
 				s.state = restoreLexBlockComment
 				s.blockCommentDepth = 1
 				i += 2
@@ -589,7 +630,24 @@ func (s *restoreSQLScanner) scanLine(line string) error {
 				return errors.New("unexpected token after COPY FROM stdin on the same line is not allowed")
 			}
 
-			// Identifier / keyword (or E'...' escape string literal).
+			// Escape-string literal continuation across CR/LF (<xe>{quote}{quotecontinue}).
+			if b == '\'' && s.afterEscapeQuote && s.escapeQuoteSawEOL {
+				s.afterEscapeQuote = false
+				s.escapeQuoteSawEOL = false
+				i++
+				s.state = restoreLexEscapeQuote
+				s.escapeNext = false
+				s.startCapture(restoreTokString)
+				if err := s.onStringStart(); err != nil {
+					return err
+				}
+				continue
+			}
+
+			s.afterEscapeQuote = false
+			s.escapeQuoteSawEOL = false
+
+			// Identifier / keyword, E'...' escape string, or U&'...' / U&"..." Unicode literal.
 			if isPGIdentStart(b) {
 				start := i
 				i++
@@ -607,6 +665,24 @@ func (s *restoreSQLScanner) scanLine(line string) error {
 					}
 					continue
 				}
+				if (ident == "U" || ident == "u") && i+1 < len(line) && line[i] == '&' {
+					if line[i+1] == '"' {
+						i += 2
+						s.state = restoreLexDoubleQuote
+						s.startCapture(restoreTokUnicodeQuotedIdent)
+						continue
+					}
+					if line[i+1] == '\'' {
+						i += 2
+						s.state = restoreLexSingleQuote
+						s.singleQuoteOddBackslash = false
+						s.startCapture(restoreTokString)
+						if err := s.onStringStart(); err != nil {
+							return err
+						}
+						continue
+					}
+				}
 				if err := s.onSQLToken(restoreTokIdent, strings.ToLower(ident)); err != nil {
 					return err
 				}
@@ -616,6 +692,7 @@ func (s *restoreSQLScanner) scanLine(line string) error {
 			if b == '\'' {
 				i++
 				s.state = restoreLexSingleQuote
+				s.singleQuoteOddBackslash = false
 				s.startCapture(restoreTokPlainString)
 				if err := s.onStringStart(); err != nil {
 					return err
@@ -681,12 +758,26 @@ func (s *restoreSQLScanner) scanLine(line string) error {
 				continue
 			}
 
-			// Numbers or punctuation/operators.
-			if b >= '0' && b <= '9' {
+			// Numeric literals (including leading-dot decimals like .5e, hex/oct/bin
+			// like 0x1e, underscored numbers like 1_0e, and realfail/numeric_junk
+			// like 0e/1.e) without consuming `..` range operators so a trailing `e'`
+			// can never diverge from PostgreSQL's psqlscan.l into E'...'.
+			if (b >= '0' && b <= '9') || (b == '.' && i+1 < len(line) && line[i+1] >= '0' && line[i+1] <= '9') {
 				start := i
+				hasDot := b == '.'
 				i++
-				for i < len(line) && ((line[i] >= '0' && line[i] <= '9') || line[i] == '.') {
-					i++
+				for i < len(line) {
+					c := line[i]
+					if (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_' || c >= 0x80 {
+						i++
+						continue
+					}
+					if c == '.' && !hasDot && (i+1 >= len(line) || line[i+1] != '.') {
+						hasDot = true
+						i++
+						continue
+					}
+					break
 				}
 				if err := s.onSQLToken(restoreTokOther, line[start:i]); err != nil {
 					return err
@@ -715,7 +806,16 @@ func (s *restoreSQLScanner) scanLine(line string) error {
 func (s *restoreSQLScanner) startCapture(kind restoreTokenKind) {
 	s.captureBuf.Reset()
 	s.capturing = true
+	s.captureTruncated = false
 	s.captureKind = kind
+}
+
+func (s *restoreSQLScanner) appendCapture(b byte) {
+	if s.captureBuf.Len() < 64 {
+		_ = s.captureBuf.WriteByte(b)
+	} else {
+		s.captureTruncated = true
+	}
 }
 
 func (s *restoreSQLScanner) finishCapturedToken() error {
@@ -724,9 +824,11 @@ func (s *restoreSQLScanner) finishCapturedToken() error {
 	}
 	text := strings.ToLower(s.captureBuf.String())
 	kind := s.captureKind
+	truncated := s.captureTruncated
 	s.capturing = false
+	s.captureTruncated = false
 	s.captureBuf.Reset()
-	return s.onSQLToken(kind, text)
+	return s.onSQLTokenWithTruncated(kind, text, truncated)
 }
 
 func (s *restoreSQLScanner) onStringStart() error {
@@ -744,6 +846,10 @@ func (s *restoreSQLScanner) onStringStart() error {
 }
 
 func (s *restoreSQLScanner) onSQLToken(kind restoreTokenKind, value string) error {
+	return s.onSQLTokenWithTruncated(kind, value, false)
+}
+
+func (s *restoreSQLScanner) onSQLTokenWithTruncated(kind restoreTokenKind, value string, truncated bool) error {
 	if !s.stmtStarted {
 		s.stmtStarted = true
 		if kind == restoreTokIdent {
@@ -754,6 +860,10 @@ func (s *restoreSQLScanner) onSQLToken(kind restoreTokenKind, value string) erro
 		} else {
 			s.stmtFirstWord = "<other>"
 		}
+	}
+
+	if kind == restoreTokUnicodeQuotedIdent {
+		s.stmtHasUnicodeIdent = true
 	}
 
 	if (kind == restoreTokIdent || kind == restoreTokQuotedIdent) && value == "standard_conforming_strings" {
@@ -772,16 +882,24 @@ func (s *restoreSQLScanner) onSQLToken(kind restoreTokenKind, value string) erro
 	case restoreSetConfigNone:
 		if (kind == restoreTokIdent || kind == restoreTokQuotedIdent) && value == "set_config" {
 			s.setConfigState = restoreSetConfigExpectOpenParen
+			s.setConfigUnicodeCall = false
+		} else if kind == restoreTokUnicodeQuotedIdent {
+			s.setConfigState = restoreSetConfigExpectOpenParen
+			s.setConfigUnicodeCall = true
 		}
 	case restoreSetConfigExpectOpenParen:
 		if kind == restoreTokOther && value == "(" {
+			if s.setConfigUnicodeCall {
+				return errors.New("unicode-escaped function call is not allowed")
+			}
 			s.setConfigState = restoreSetConfigExpectFirstArg
 			s.setConfigParen = s.parenDepth
 		} else {
 			s.setConfigState = restoreSetConfigNone
+			s.setConfigUnicodeCall = false
 		}
 	case restoreSetConfigExpectFirstArg:
-		if kind != restoreTokPlainString {
+		if kind != restoreTokPlainString || truncated {
 			return errors.New("dynamic set_config parameter name is not allowed")
 		}
 		if strings.TrimSpace(value) == "standard_conforming_strings" {
@@ -834,6 +952,15 @@ func (s *restoreSQLScanner) validateStatementEnd() error {
 		if s.copyPhase != restoreCopyFromStdin || s.parenDepth != 0 {
 			return errors.New("unsupported COPY statement is not allowed")
 		}
+	}
+	if s.stmtFirstWord == "do" {
+		return errors.New("anonymous DO block in backup SQL is not allowed")
+	}
+	if s.stmtFirstWord == "discard" {
+		return errors.New("DISCARD statement in backup SQL is not allowed")
+	}
+	if s.stmtHasUnicodeIdent && (s.stmtFirstWord == "set" || s.stmtFirstWord == "alter" || s.stmtFirstWord == "reset") {
+		return errors.New("unicode-escaped identifier in SET/ALTER/RESET is not allowed")
 	}
 	if s.stmtFirstWord == "reset" && len(s.stmtTokens) >= 2 {
 		if s.stmtTokens[1] == "all" || s.stmtTokens[1] == "standard_conforming_strings" {

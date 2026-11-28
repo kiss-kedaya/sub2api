@@ -1406,4 +1406,30 @@ func TestUpstreamBillingProbeMarksRequestsPublicHostsOnlyAndNoRedirects(t *testi
 	reqCtx := upstream.requests[0].Context()
 	require.True(t, HTTPUpstreamPublicHostsOnly(reqCtx), "billing probe requests must enforce public-hosts-only dial/redirect checks")
 	require.True(t, HTTPUpstreamRedirectsDisabled(reqCtx), "billing probe requests must disable redirects")
+
+	// Redirect sanitizer must reject userinfo and control characters even on same-host targets.
+	for _, badLoc := range []string{
+		"https://attacker@relay.example.com/api/usage/token/",
+		"https://relay.example.com/api/usage/token/\r\nX-Inject: 1",
+		`https://relay.example.com\evil`,
+	} {
+		redirectUpstream := &contextCapturingBillingProbeUpstream{}
+		redirectSvc := newUpstreamBillingProbeTestService(repo, redirectUpstream, settingsRepo)
+		res := redirectSvc.fetchUpstreamProbeBodyFollowingRedirects(
+			context.Background(),
+			account,
+			upstreamBillingProbeTarget{apiKey: "test-probe-token"},
+			"https://relay.example.com/api/usage/token",
+			4096,
+		)
+		require.Empty(t, res.failure)
+		parsedCur, parseErr := http.NewRequest(http.MethodGet, "https://relay.example.com/api/usage/token", nil)
+		require.NoError(t, parseErr)
+		next, ok := upstreamProbeRedirectTarget(parsedCur.URL, upstreamBillingProbeHTTPResult{
+			statusCode: http.StatusFound,
+			header:     http.Header{"Location": []string{badLoc}},
+		})
+		require.False(t, ok, "redirect Location %q must be rejected", badLoc)
+		require.Nil(t, next)
+	}
 }

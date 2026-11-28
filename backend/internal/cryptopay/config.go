@@ -17,6 +17,7 @@ import (
 	"net/netip"
 	"net/url"
 	"slices"
+	"strconv"
 	"strings"
 	"sync/atomic"
 
@@ -343,7 +344,7 @@ func normalizeNativeScan(cfg *CryptoConfig, def CryptoConfig) error {
 	}
 	for chain, root := range cfg.ExplorerAPIURL {
 		key := strings.ToLower(strings.TrimSpace(chain))
-		root = strings.TrimSpace(root)
+		root = strings.Trim(root, " ")
 		if _, ok := explorerChainIDs()[key]; !ok {
 			continue
 		}
@@ -385,6 +386,35 @@ func rpcEndpointKey(endpoint string) string {
 // local httptest feeds; production always stays false.
 var allowPrivateNativePriceForTest atomic.Bool
 
+func isNonCanonicalIPv4Host(host string) bool {
+	if host == "" {
+		return false
+	}
+	parts := strings.Split(host, ".")
+	if len(parts) < 1 || len(parts) > 4 {
+		return false
+	}
+	for _, part := range parts {
+		if part == "" {
+			return false
+		}
+		if _, err := strconv.ParseUint(part, 0, 64); err == nil {
+			continue
+		}
+		allDigits := true
+		for i := 0; i < len(part); i++ {
+			if part[i] < '0' || part[i] > '9' {
+				allDigits = false
+				break
+			}
+		}
+		if !allDigits {
+			return false
+		}
+	}
+	return true
+}
+
 func validPublicOutboundURL(endpoint string, allowPrivate bool) bool {
 	for i := 0; i < len(endpoint); i++ {
 		b := endpoint[i]
@@ -411,7 +441,11 @@ func validPublicOutboundURL(endpoint string, allowPrivate bool) bool {
 		if urlvalidator.IsBlockedHost(host) || host == "metadata.google.internal" || host == "metadata.goog" || host == "instance-data" {
 			return false
 		}
-		if ip, parseErr := netip.ParseAddr(host); parseErr == nil && !urlvalidator.IsPublicResolvedIP(ip) {
+		if ip, parseErr := netip.ParseAddr(host); parseErr == nil {
+			if !urlvalidator.IsPublicResolvedIP(ip) {
+				return false
+			}
+		} else if isNonCanonicalIPv4Host(host) {
 			return false
 		}
 	}
@@ -534,7 +568,7 @@ func NormalizeConfig(cfg CryptoConfig) (CryptoConfig, error) {
 	// empty value means "use the public default"; anything else must be an
 	// absolute http(s) endpoint so a typo fails at config load, not silently
 	// at every native deposit.
-	cfg.NativePriceURL = strings.TrimSpace(cfg.NativePriceURL)
+	cfg.NativePriceURL = strings.Trim(cfg.NativePriceURL, " ")
 	if cfg.NativePriceURL == "" {
 		cfg.NativePriceURL = def.NativePriceURL
 	}
@@ -626,7 +660,7 @@ func isZeroAddress(address string) bool {
 // template carrying {symbol}. It runs at config load so a typo or SSRF target
 // fails immediately instead of silently at every native deposit.
 func validateNativePriceURL(raw string) error {
-	candidate := strings.TrimSpace(raw)
+	candidate := strings.Trim(raw, " ")
 	if strings.Contains(candidate, "{symbol}") {
 		candidate = strings.ReplaceAll(candidate, "{symbol}", "ETHUSDT")
 	}

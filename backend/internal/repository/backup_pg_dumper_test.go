@@ -120,6 +120,28 @@ func TestSafeRestoreSQLReaderRejectsAllPSQLBypassVectors(t *testing.T) {
 		// NUL byte & BOM + metacommand
 		{"nul byte in sql", "SELECT 1;\x00\\! id\n"},
 		{"bom before metacommand", "\xef\xbb\xbf\\!id\n"},
+		// Bare CR ending -- line comment in psqlscan.l ("--"[^\r\n]*)
+		{"bare cr breaks line comment into metacommand", "-- harmless comment\r\\! id\n"},
+		{"bare cr after copy line comment into metacommand", "COPY users FROM stdin; -- ok\r\\! id\n\\.\n"},
+		// Numeric + e' lexer differential (psql lexes 0e/.5e/1.e/0x1e/1_0e as one numeric token, then plain quote!)
+		{"numeric 0e before quote differential", "SELECT 0e'a\\' \\! id\n'\n"},
+		{"numeric leading dot .5e differential", "SELECT .5e'a\\' \\! id\n'\n"},
+		{"numeric trailing dot 1.e differential", "SELECT 1.e'a\\' \\! id\n'\n"},
+		{"numeric hex 0x1e differential", "SELECT 0x1e'a\\' \\! id\n'\n"},
+		{"numeric underscore 1_0e differential", "SELECT 1_0e'a\\' \\! id\n'\n"},
+		{"range operator 1..e escape quote differential", "SELECT 1..e'\\'' \\! id\n'\n"},
+		// Multi-line E'...' continuation (<xe>{quote}{quotecontinue}) differential
+		{"multiline escape string continuation differential", "SELECT E'a'\n'\\'' \\! id\n'\n"},
+		{"multiline escape string continuation after line comment", "SELECT E'a' -- comment\n'\\'' \\! id\n'\n"},
+		// Unicode-escaped identifiers, DO blocks, DISCARD, and ambiguous \' inside plain strings
+		{"unicode escaped SET standard_conforming_strings", "SET U&\"\\0073tandard_conforming_strings\" = off;\n"},
+		{"unicode escaped set_config call", "SELECT U&\"\\0073et_config\"('standard_conforming_strings', 'off', false);\n"},
+		{"unicode escaped set_config arg", "SELECT set_config(U&'\\0073tandard_conforming_strings', 'off', false);\n"},
+		{"set_config oversized padded first arg", "SELECT set_config('" + strings.Repeat(" ", 70) + "standard_conforming_strings', 'off', false);\n"},
+		{"anonymous DO block toggling guc", "DO $$ BEGIN PERFORM set_config('standard_conforming_strings', 'off', false); END $$;\n"},
+		{"discard all resets session gucs", "DISCARD ALL;\n"},
+		{"ambiguous backslash before quote in plain string", "SELECT 'a\\'; SELECT '; \\! id\n"},
+		{"ambiguous backslash double quote in plain string", "SELECT '\\''; \\! id\n'\n"},
 	}
 
 	for _, tc := range cases {
@@ -172,6 +194,15 @@ func TestSafeRestoreSQLReaderAllowsLegitimatePgDump(t *testing.T) {
 	require.NoError(t, readErr)
 	require.NoError(t, <-done)
 	require.Equal(t, dump, string(output))
+
+	// UTF-8 BOM must be stripped identically from output forwarded to psql so
+	// scanner and psql cannot diverge on BOM-prefixed tokens (e.g. BOM + E'...').
+	bomInput := "\xef\xbb\xbfSELECT 'ok\\\\';\n"
+	bomReader, bomDone := safeRestoreSQLReader(strings.NewReader(bomInput))
+	bomOut, bomReadErr := io.ReadAll(bomReader)
+	require.NoError(t, bomReadErr)
+	require.NoError(t, <-bomDone)
+	require.Equal(t, "SELECT 'ok\\\\';\n", string(bomOut))
 }
 
 func TestPgDumperRestoreRejectsUnsafeSQLWithoutDeadlock(t *testing.T) {

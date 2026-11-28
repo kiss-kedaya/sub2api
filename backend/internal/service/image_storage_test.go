@@ -414,6 +414,14 @@ func TestImageResultUploaderRejectsSVGAndNonImagesAcrossAllPaths(t *testing.T) {
 	htmlPayload := []byte(`<!DOCTYPE html><html><body><script>alert(1)</script></body></html>`)
 	jsonPayload := []byte(`{"secret":"aws-metadata-token"}`)
 	polyglotPNG := append([]byte("\x89PNG\r\n\x1a\n"), htmlPayload...)
+	// Valid PNG signature + 1x1 IHDR chunk (passes DecodeConfig) followed by HTML, with no IDAT/IEND.
+	headerOnlyPNGPolyglot := append(append([]byte(nil), pngBytes[:33]...), htmlPayload...)
+	// Valid GIF89a 1x1 logical screen descriptor (passes DecodeConfig) followed by HTML, with no image data.
+	headerOnlyGIFPolyglot := append([]byte("GIF89a\x01\x00\x01\x00\x00\x00\x00"), htmlPayload...)
+	// Valid PNG signature + IHDR declaring 65535x65535 pixels (4.29B pixel decompression bomb).
+	bombPNG := append([]byte(nil), pngBytes[:33]...)
+	bombPNG[16], bombPNG[17], bombPNG[18], bombPNG[19] = 0, 0, 0xff, 0xff
+	bombPNG[20], bombPNG[21], bombPNG[22], bombPNG[23] = 0, 0, 0xff, 0xff
 
 	t.Run("data URL rejects SVG and spoofed non-images", func(t *testing.T) {
 		cases := []struct {
@@ -425,6 +433,9 @@ func TestImageResultUploaderRejectsSVGAndNonImagesAcrossAllPaths(t *testing.T) {
 			{"html disguised as png data url", "data:image/png;base64," + base64.StdEncoding.EncodeToString(htmlPayload)},
 			{"json disguised as png data url", "data:image/png;base64," + base64.StdEncoding.EncodeToString(jsonPayload)},
 			{"png magic prefix polyglot", "data:image/png;base64," + base64.StdEncoding.EncodeToString(polyglotPNG)},
+			{"png header-only ihdr polyglot", "data:image/png;base64," + base64.StdEncoding.EncodeToString(headerOnlyPNGPolyglot)},
+			{"gif header-only polyglot", "data:image/gif;base64," + base64.StdEncoding.EncodeToString(headerOnlyGIFPolyglot)},
+			{"png 65535x65535 decompression bomb", "data:image/png;base64," + base64.StdEncoding.EncodeToString(bombPNG)},
 		}
 		for _, tc := range cases {
 			t.Run(tc.name, func(t *testing.T) {
@@ -441,10 +452,13 @@ func TestImageResultUploaderRejectsSVGAndNonImagesAcrossAllPaths(t *testing.T) {
 
 	t.Run("b64_json rejects SVG, HTML, JSON, polyglot and oversized payloads", func(t *testing.T) {
 		for name, payload := range map[string][]byte{
-			"svg":      svgPayload,
-			"html":     htmlPayload,
-			"json":     jsonPayload,
-			"polyglot": polyglotPNG,
+			"svg":                svgPayload,
+			"html":               htmlPayload,
+			"json":               jsonPayload,
+			"polyglot":           polyglotPNG,
+			"header-only png":    headerOnlyPNGPolyglot,
+			"header-only gif":    headerOnlyGIFPolyglot,
+			"decompression bomb": bombPNG,
 		} {
 			t.Run(name, func(t *testing.T) {
 				storage := &fakeImageStorage{}
@@ -478,6 +492,9 @@ func TestImageResultUploaderRejectsSVGAndNonImagesAcrossAllPaths(t *testing.T) {
 			{"html with spoofed png header", "image/png", htmlPayload},
 			{"json with text/plain header", "application/json", jsonPayload},
 			{"png magic polyglot", "image/png", polyglotPNG},
+			{"png header-only polyglot", "image/png", headerOnlyPNGPolyglot},
+			{"gif header-only polyglot", "image/gif", headerOnlyGIFPolyglot},
+			{"png decompression bomb", "image/png", bombPNG},
 		}
 		for _, tc := range cases {
 			t.Run(tc.name, func(t *testing.T) {

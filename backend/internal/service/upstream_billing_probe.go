@@ -1239,12 +1239,12 @@ func upstreamProbeRedirectTarget(current *url.URL, result upstreamBillingProbeHT
 	if current == nil || result.failure != "" || result.statusCode < 300 || result.statusCode >= 400 {
 		return nil, false
 	}
-	location := strings.TrimSpace(result.header.Get("Location"))
-	if location == "" {
+	location := strings.Trim(result.header.Get("Location"), " ")
+	if location == "" || containsControlOrBackslash(location) {
 		return nil, false
 	}
 	next, err := current.Parse(location)
-	if err != nil || next.Host == "" {
+	if err != nil || next.Host == "" || next.User != nil {
 		return nil, false
 	}
 	if !strings.EqualFold(next.Scheme, current.Scheme) || !strings.EqualFold(next.Host, current.Host) {

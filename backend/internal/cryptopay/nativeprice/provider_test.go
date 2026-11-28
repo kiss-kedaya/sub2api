@@ -158,6 +158,11 @@ func TestDefaultProviderBlocksSSRFRedirectsAndInvalidTemplateScheme(t *testing.T
 		"cgnat metadata":    "http://100.100.100.200/ticker/{symbol}",
 		"rfc1918":           "https://10.0.0.1/ticker",
 		"ipv6 loopback":     "http://[::1]:8080/ticker",
+		"decimal ip":        "http://2130706433/ticker",
+		"short ip":          "http://127.1/ticker",
+		"hex metadata ip":   "http://0xa9fea9fe/ticker",
+		"octal ip":          "http://0177.0.0.1/ticker",
+		"trailing crlf":     "https://api.binance.com/api/v3/ticker/price\r\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			p := New(target, WithBackoff(time.Millisecond))
@@ -187,5 +192,36 @@ func TestDefaultProviderBlocksSSRFRedirectsAndInvalidTemplateScheme(t *testing.T
 		require.NotNil(t, p.client.CheckRedirect)
 		err := p.client.CheckRedirect(httptest.NewRequest(http.MethodGet, "https://evil.example.test", nil), nil)
 		require.ErrorIs(t, err, http.ErrUseLastResponse)
+	})
+
+	t.Run("blocked 302 redirect fails immediately without retries or echoing html", func(t *testing.T) {
+		var redirectHits atomic.Int32
+		redirector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			redirectHits.Add(1)
+			w.Header().Set("Location", "http://169.254.169.254/latest/meta-data")
+			w.WriteHeader(http.StatusFound)
+			_, _ = w.Write([]byte("<html>secret-internal-redirect-body</html>"))
+		}))
+		defer redirector.Close()
+
+		c := redirector.Client()
+		c.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+		p := New(redirector.URL, WithHTTPClient(c), WithBackoff(time.Millisecond))
+		_, err := p.Quote(t.Context(), "ethereum")
+		require.ErrorIs(t, err, ErrUnavailable)
+		require.Equal(t, int32(1), redirectHits.Load(), "blocked redirect must not retry")
+		require.NotContains(t, err.Error(), "secret-internal-redirect-body")
+	})
+
+	t.Run("transport error does not leak mirror query token", func(t *testing.T) {
+		closed := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+		closedURL := closed.URL
+		closedClient := closed.Client()
+		closed.Close()
+
+		p := New(closedURL+"?api_key=test-mirror-secret-token", WithHTTPClient(closedClient), WithBackoff(time.Millisecond))
+		_, err := p.Quote(t.Context(), "ethereum")
+		require.ErrorIs(t, err, ErrUnavailable)
+		require.NotContains(t, err.Error(), "test-mirror-secret-token")
 	})
 }

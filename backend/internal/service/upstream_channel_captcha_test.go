@@ -26,6 +26,12 @@ func TestNewUpstreamCaptchaSolverRejectsUnsafeEndpointsAndProxies(t *testing.T) 
 		"file scheme":      "file:///etc/passwd",
 		"control chars":    "https://api.capsolver.com\r\nX-Inject: 1",
 		"backslash in url": `https://api.capsolver.com\evil`,
+		"decimal ip":       "https://2130706433",
+		"short ip":         "https://127.1",
+		"hex metadata ip":  "https://0xa9fea9fe",
+		"octal ip":         "https://0177.0.0.1",
+		"query string":     "https://api.capsolver.com?x=1",
+		"userinfo":         "https://user:pass@api.capsolver.com",
 	} {
 		t.Run("endpoint/"+name, func(t *testing.T) {
 			_, err := NewUpstreamCaptchaSolver(UpstreamCaptchaConfig{
@@ -52,6 +58,12 @@ func TestNewUpstreamCaptchaSolverRejectsUnsafeEndpointsAndProxies(t *testing.T) 
 		"invalid port":     "http://proxy.example.com:99999",
 		"control chars":    "http://proxy.example.com:8080\n",
 		"backslash in url": `http://proxy.example.com\evil:8080`,
+		"decimal ip":       "http://2130706433:8080",
+		"short ip":         "http://127.1:8080",
+		"hex metadata ip":  "http://0xa9fea9fe:80",
+		"octal ip":         "http://0177.0.0.1:8080",
+		"query string":     "http://proxy.example.com:8080?x=1",
+		"non-root path":    "http://proxy.example.com:8080/secret",
 	} {
 		t.Run("proxy/"+name, func(t *testing.T) {
 			_, err := NewUpstreamCaptchaSolver(UpstreamCaptchaConfig{
@@ -135,6 +147,27 @@ func TestUpstreamCaptchaSolverHardensTransportAndBlocksRedirectsAndDNSRebinding(
 		_, err = impl.post(context.Background(), "/createTask", map[string]any{"clientKey": "secret"})
 		require.ErrorContains(t, err, "HTTP 302")
 		require.Zero(t, redirectTargetHits.Load(), "redirect target must never receive captcha POST")
+	})
+
+	t.Run("transport errors redact proxy credentials", func(t *testing.T) {
+		closed := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+		closedAddr := closed.Listener.Addr().String()
+		closed.Close()
+
+		solver, err := NewUpstreamCaptchaSolver(UpstreamCaptchaConfig{
+			Provider:          UpstreamCaptchaProviderCapSolver,
+			APIKey:            "test-captcha-token",
+			Endpoint:          "http://127.0.0.1:9",
+			ProxyURL:          "http://proxyuser:super-secret-proxy-pass@" + closedAddr,
+			AllowPrivate:      true,
+			AllowInsecureHTTP: true,
+		})
+		require.NoError(t, err)
+		impl, ok := solver.(*upstreamCaptchaTaskSolver)
+		require.True(t, ok)
+		_, err = impl.post(context.Background(), "/createTask", map[string]any{"k": "v"})
+		require.Error(t, err)
+		require.NotContains(t, err.Error(), "super-secret-proxy-pass")
 	})
 }
 

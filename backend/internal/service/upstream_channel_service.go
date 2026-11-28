@@ -169,7 +169,7 @@ func (s *UpstreamChannelService) SetOutboundURLPolicy(cfg *config.Config) {
 	})
 	// 只有管理员显式打开开关时才允许连私网；否则拨号前按解析后的 IP 校验。
 	s.allowPrivate = outboundPolicyAllowsPrivateTargets(cfg)
-	s.allowInsecureHTTP = cfg != nil && cfg.Security.URLAllowlist.AllowInsecureHTTP
+	s.allowInsecureHTTP = cfg != nil && !cfg.Security.URLAllowlist.Enabled && cfg.Security.URLAllowlist.AllowInsecureHTTP
 	s.client.SetPrivateTargetsAllowed(s.allowPrivate)
 }
 

@@ -228,6 +228,10 @@ func TestWebhookSinkBlocksSSRFAndDisablesRedirects(t *testing.T) {
 		"cgnat metadata":    "http://100.100.100.200/latest/meta-data",
 		"rfc1918":           "https://10.0.0.5/push",
 		"ipv6 loopback":     "http://[::1]:8080/push",
+		"decimal ip":        "http://2130706433/push",
+		"short ip":          "http://127.1/push",
+		"hex metadata ip":   "http://0xa9fea9fe/push",
+		"octal ip":          "http://0177.0.0.1/push",
 	} {
 		t.Run(name, func(t *testing.T) {
 			err := sink.Send(context.Background(), Config{Enabled: true, WebhookURL: target}, Event{Event: "signer.setup"})
@@ -235,6 +239,11 @@ func TestWebhookSinkBlocksSSRFAndDisablesRedirects(t *testing.T) {
 		})
 	}
 	require.Zero(t, hits.Load())
+
+	t.Run("trailing control characters are rejected rather than trimmed", func(t *testing.T) {
+		err := sink.Send(context.Background(), Config{Enabled: true, WebhookURL: "https://hook.example.test/push\r\n"}, Event{Event: "signer.setup"})
+		require.ErrorContains(t, err, "invalid characters")
+	})
 
 	t.Run("dns resolving to private ip is blocked", func(t *testing.T) {
 		ctx := urlvalidator.WithResolver(context.Background(), func(context.Context, string) ([]netip.Addr, error) {

@@ -146,6 +146,38 @@ func isBlockedMetadataHostname(host string) bool {
 	}
 }
 
+// isNonCanonicalIPv4Host rejects shorthand/integer/octal/hex IPv4 literals
+// (e.g. 2130706433, 127.1, 0x7f000001, 0177.0.0.1, 0xa9fea9fe) that bypass
+// canonical net.ParseIP / netip.ParseAddr literal checks.
+func isNonCanonicalIPv4Host(host string) bool {
+	if host == "" {
+		return false
+	}
+	parts := strings.Split(host, ".")
+	if len(parts) < 1 || len(parts) > 4 {
+		return false
+	}
+	for _, part := range parts {
+		if part == "" {
+			return false
+		}
+		if _, err := strconv.ParseUint(part, 0, 64); err == nil {
+			continue
+		}
+		allDigits := true
+		for i := 0; i < len(part); i++ {
+			if part[i] < '0' || part[i] > '9' {
+				allDigits = false
+				break
+			}
+		}
+		if !allDigits {
+			return false
+		}
+	}
+	return true
+}
+
 func validateUpstreamCaptchaEndpointLiteral(raw string, allowInsecureHTTP, allowPrivate bool) (string, error) {
 	if containsControlOrBackslash(raw) {
 		return "", errors.New("invalid captcha endpoint url")
@@ -161,7 +193,7 @@ func validateUpstreamCaptchaEndpointLiteral(raw string, allowInsecureHTTP, allow
 		return "", fmt.Errorf("captcha endpoint target rejected by URL security policy: %w", urlvalidator.ErrOutboundTargetNotAllowed)
 	}
 	parsed, err := url.Parse(normalized)
-	if err != nil || parsed.Hostname() == "" || parsed.Opaque != "" || parsed.Fragment != "" {
+	if err != nil || parsed.Hostname() == "" || parsed.Opaque != "" || parsed.Fragment != "" || parsed.RawQuery != "" || parsed.User != nil {
 		return "", fmt.Errorf("captcha endpoint target rejected by URL security policy: %w", urlvalidator.ErrOutboundTargetNotAllowed)
 	}
 	if !allowPrivate {
@@ -169,7 +201,11 @@ func validateUpstreamCaptchaEndpointLiteral(raw string, allowInsecureHTTP, allow
 		if urlvalidator.IsBlockedHost(host) || isBlockedMetadataHostname(host) {
 			return "", fmt.Errorf("captcha endpoint target rejected by URL security policy: %w", urlvalidator.ErrOutboundTargetNotAllowed)
 		}
-		if ip, parseErr := netip.ParseAddr(host); parseErr == nil && !urlvalidator.IsPublicResolvedIP(ip) {
+		if ip, parseErr := netip.ParseAddr(host); parseErr == nil {
+			if !urlvalidator.IsPublicResolvedIP(ip) {
+				return "", fmt.Errorf("captcha endpoint target rejected by URL security policy: %w", urlvalidator.ErrOutboundTargetNotAllowed)
+			}
+		} else if isNonCanonicalIPv4Host(host) {
 			return "", fmt.Errorf("captcha endpoint target rejected by URL security policy: %w", urlvalidator.ErrOutboundTargetNotAllowed)
 		}
 	}
@@ -187,8 +223,11 @@ func validateUpstreamProxyURLLiteral(raw string, allowPrivate bool) (string, err
 		return "", nil
 	}
 	parsed, err := url.Parse(trimmed)
-	if err != nil || parsed.Scheme == "" || parsed.Host == "" || parsed.Opaque != "" || parsed.Fragment != "" {
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" || parsed.Opaque != "" || parsed.Fragment != "" || parsed.RawQuery != "" {
 		return "", errors.New("invalid proxy url")
+	}
+	if parsed.Path != "" && parsed.Path != "/" {
+		return "", errors.New("invalid proxy url: unexpected path")
 	}
 	scheme := strings.ToLower(parsed.Scheme)
 	switch scheme {
@@ -210,7 +249,11 @@ func validateUpstreamProxyURLLiteral(raw string, allowPrivate bool) (string, err
 		if urlvalidator.IsBlockedHost(host) || isBlockedMetadataHostname(host) {
 			return "", fmt.Errorf("proxy url target rejected by URL security policy: %w", urlvalidator.ErrOutboundTargetNotAllowed)
 		}
-		if ip, parseErr := netip.ParseAddr(host); parseErr == nil && !urlvalidator.IsPublicResolvedIP(ip) {
+		if ip, parseErr := netip.ParseAddr(host); parseErr == nil {
+			if !urlvalidator.IsPublicResolvedIP(ip) {
+				return "", fmt.Errorf("proxy url target rejected by URL security policy: %w", urlvalidator.ErrOutboundTargetNotAllowed)
+			}
+		} else if isNonCanonicalIPv4Host(host) {
 			return "", fmt.Errorf("proxy url target rejected by URL security policy: %w", urlvalidator.ErrOutboundTargetNotAllowed)
 		}
 	}
@@ -357,7 +400,7 @@ func (s *upstreamCaptchaTaskSolver) post(ctx context.Context, path string, paylo
 	req.Header.Set("Accept", "application/json")
 	resp, err := s.client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("%s http: %w", s.provider, err)
+		return nil, fmt.Errorf("%s http: %w", s.provider, sanitizeCaptchaTransportError(err, s.proxyURL))
 	}
 	defer func() { _ = resp.Body.Close() }()
 	body, readErr := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
@@ -368,4 +411,36 @@ func (s *upstreamCaptchaTaskSolver) post(ctx context.Context, path string, paylo
 		return nil, fmt.Errorf("%s HTTP %d", s.provider, resp.StatusCode)
 	}
 	return body, nil
+}
+
+func sanitizeCaptchaTransportError(err error, proxyURL string) error {
+	if err == nil {
+		return nil
+	}
+	var urlErr *url.Error
+	if errors.As(err, &urlErr) && urlErr.Err != nil {
+		err = urlErr.Err
+	}
+	msg := err.Error()
+	redacted := false
+	if proxyURL != "" {
+		if parsed, parseErr := url.Parse(proxyURL); parseErr == nil && parsed.User != nil {
+			if pwd, ok := parsed.User.Password(); ok && pwd != "" && strings.Contains(msg, pwd) {
+				msg = strings.ReplaceAll(msg, pwd, "[REDACTED]")
+				redacted = true
+			}
+			if userInfo := parsed.User.String(); userInfo != "" && strings.Contains(msg, userInfo) {
+				msg = strings.ReplaceAll(msg, userInfo, "[REDACTED]")
+				redacted = true
+			}
+		}
+		if strings.Contains(msg, proxyURL) {
+			msg = strings.ReplaceAll(msg, proxyURL, "[REDACTED]")
+			redacted = true
+		}
+	}
+	if redacted {
+		return errors.New(msg)
+	}
+	return err
 }

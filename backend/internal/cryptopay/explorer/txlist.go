@@ -115,8 +115,47 @@ func defaultExplorerHTTPClient() *http.Client {
 	}
 }
 
+func containsControlOrBackslash(raw string) bool {
+	for i := 0; i < len(raw); i++ {
+		b := raw[i]
+		if b < 0x20 || b == 0x7f || b == '\\' {
+			return true
+		}
+	}
+	return false
+}
+
+func isNonCanonicalIPv4Host(host string) bool {
+	if host == "" {
+		return false
+	}
+	parts := strings.Split(host, ".")
+	if len(parts) < 1 || len(parts) > 4 {
+		return false
+	}
+	for _, part := range parts {
+		if part == "" {
+			return false
+		}
+		if _, err := strconv.ParseUint(part, 0, 64); err == nil {
+			continue
+		}
+		allDigits := true
+		for i := 0; i < len(part); i++ {
+			if part[i] < '0' || part[i] > '9' {
+				allDigits = false
+				break
+			}
+		}
+		if !allDigits {
+			return false
+		}
+	}
+	return true
+}
+
 func isPublicExplorerRoot(root string) bool {
-	if strings.ContainsAny(root, "\r\n\x00\\") {
+	if containsControlOrBackslash(root) {
 		return false
 	}
 	validated, err := urlvalidator.ValidateHTTPURL(root, true, urlvalidator.ValidationOptions{})
@@ -131,7 +170,11 @@ func isPublicExplorerRoot(root string) bool {
 	if urlvalidator.IsBlockedHost(host) || host == "metadata.google.internal" || host == "metadata.goog" || host == "instance-data" {
 		return false
 	}
-	if ip, parseErr := netip.ParseAddr(host); parseErr == nil && !urlvalidator.IsPublicResolvedIP(ip) {
+	if ip, parseErr := netip.ParseAddr(host); parseErr == nil {
+		if !urlvalidator.IsPublicResolvedIP(ip) {
+			return false
+		}
+	} else if isNonCanonicalIPv4Host(host) {
 		return false
 	}
 	return true
@@ -144,9 +187,12 @@ func NewClient(cfg Config) (*Client, error) {
 	customClient := cfg.HTTPClient != nil
 	endpoints := make(map[string]Endpoint, len(cfg.Endpoints))
 	for chain, endpoint := range cfg.Endpoints {
-		root := strings.TrimSpace(endpoint.BaseURL)
+		root := strings.Trim(endpoint.BaseURL, " ")
 		if root == "" {
 			continue
+		}
+		if containsControlOrBackslash(root) {
+			return nil, fmt.Errorf("explorer: invalid endpoint for chain %q", chain)
 		}
 		parsed, err := url.Parse(root)
 		if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {

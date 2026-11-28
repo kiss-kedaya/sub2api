@@ -16,7 +16,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/netip"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -52,6 +54,8 @@ var (
 	ErrUnavailable = errors.New("native price unavailable")
 	// ErrStale means a quote exists but is older than MaxQuoteAge.
 	ErrStale = errors.New("native price quote is stale")
+	// errRedirectNotAllowed marks a 3xx redirect rejected by CheckRedirect.
+	errRedirectNotAllowed = errors.New("redirects are not allowed")
 )
 
 // Quote is one USD price observation.
@@ -172,7 +176,7 @@ func defaultNativePriceHTTPClient() *http.Client {
 
 // New builds a provider. An empty baseURL uses DefaultBaseURL.
 func New(baseURL string, opts ...Option) *Provider {
-	baseURL = strings.TrimSpace(baseURL)
+	baseURL = strings.Trim(baseURL, " ")
 	if baseURL == "" {
 		baseURL = DefaultBaseURL
 	}
@@ -214,7 +218,7 @@ func (p *Provider) Quote(ctx context.Context, chain string) (Quote, error) {
 			return quote, nil
 		}
 		lastErr = err
-		if errors.Is(err, urlvalidator.ErrOutboundTargetNotAllowed) || ctx.Err() != nil {
+		if errors.Is(err, urlvalidator.ErrOutboundTargetNotAllowed) || errors.Is(err, errRedirectNotAllowed) || ctx.Err() != nil {
 			break
 		}
 	}
@@ -251,15 +255,63 @@ type tickerResponse struct {
 	Price  string `json:"price"`
 }
 
+func containsControlOrBackslash(raw string) bool {
+	for i := 0; i < len(raw); i++ {
+		b := raw[i]
+		if b < 0x20 || b == 0x7f || b == '\\' {
+			return true
+		}
+	}
+	return false
+}
+
+func isNonCanonicalIPv4Host(host string) bool {
+	if host == "" {
+		return false
+	}
+	parts := strings.Split(host, ".")
+	if len(parts) < 1 || len(parts) > 4 {
+		return false
+	}
+	for _, part := range parts {
+		if part == "" {
+			return false
+		}
+		if _, err := strconv.ParseUint(part, 0, 64); err == nil {
+			continue
+		}
+		allDigits := true
+		for i := 0; i < len(part); i++ {
+			if part[i] < '0' || part[i] > '9' {
+				allDigits = false
+				break
+			}
+		}
+		if !allDigits {
+			return false
+		}
+	}
+	return true
+}
+
 func (p *Provider) fetch(ctx context.Context, symbol string) (Quote, error) {
 	endpoint, err := p.endpoint(symbol)
 	if err != nil {
 		return Quote{}, err
 	}
 	if !p.customClient {
+		allowPrivate := allowPrivateForTest.Load()
+		if !allowPrivate {
+			if parsed, parseErr := url.Parse(endpoint); parseErr == nil {
+				host := strings.TrimSuffix(strings.ToLower(strings.TrimSpace(parsed.Hostname())), ".")
+				if _, ipErr := netip.ParseAddr(host); ipErr != nil && isNonCanonicalIPv4Host(host) {
+					return Quote{}, urlvalidator.ErrOutboundTargetNotAllowed
+				}
+			}
+		}
 		if _, err := urlvalidator.ValidateOutboundURL(ctx, endpoint, urlvalidator.OutboundPolicy{
 			AllowInsecureHTTP: true,
-			AllowPrivate:      allowPrivateForTest.Load(),
+			AllowPrivate:      allowPrivate,
 		}); err != nil {
 			return Quote{}, err
 		}
@@ -273,6 +325,11 @@ func (p *Provider) fetch(ctx context.Context, symbol string) (Quote, error) {
 	req.Header.Set("Accept", "application/json")
 	resp, err := p.client.Do(req)
 	if err != nil {
+		// Unwrap *url.Error so private mirror query-string tokens never leak in errors.
+		var urlErr *url.Error
+		if errors.As(err, &urlErr) && urlErr.Err != nil {
+			return Quote{}, fmt.Errorf("request: %w", urlErr.Err)
+		}
 		return Quote{}, fmt.Errorf("request: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
@@ -282,8 +339,15 @@ func (p *Provider) fetch(ctx context.Context, symbol string) (Quote, error) {
 	if err != nil {
 		return Quote{}, fmt.Errorf("read body: %w", err)
 	}
+	if resp.StatusCode >= 300 && resp.StatusCode < 400 {
+		return Quote{}, fmt.Errorf("status %d: %w", resp.StatusCode, errRedirectNotAllowed)
+	}
 	if resp.StatusCode != http.StatusOK {
-		return Quote{}, fmt.Errorf("status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		snippet := strings.TrimSpace(string(body))
+		if len(snippet) > 200 {
+			snippet = snippet[:200] + "..."
+		}
+		return Quote{}, fmt.Errorf("status %d: %s", resp.StatusCode, snippet)
 	}
 	var decoded tickerResponse
 	if err := json.Unmarshal(body, &decoded); err != nil {
@@ -300,13 +364,16 @@ func (p *Provider) fetch(ctx context.Context, symbol string) (Quote, error) {
 // otherwise the symbol is added as Binance's symbol query parameter, which is
 // what mirrors of the public endpoint expect.
 func (p *Provider) endpoint(symbol string) (string, error) {
+	if containsControlOrBackslash(p.baseURL) {
+		return "", fmt.Errorf("price url contains invalid characters")
+	}
 	if strings.Contains(p.baseURL, "{symbol}") {
 		expanded := strings.ReplaceAll(p.baseURL, "{symbol}", url.QueryEscape(symbol))
 		parsed, err := url.Parse(expanded)
 		if err != nil {
 			return "", fmt.Errorf("parse price url: %w", err)
 		}
-		if (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
+		if (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" || parsed.Opaque != "" || parsed.Fragment != "" {
 			return "", fmt.Errorf("price url must be absolute http(s)")
 		}
 		return expanded, nil
@@ -315,7 +382,7 @@ func (p *Provider) endpoint(symbol string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("parse price url: %w", err)
 	}
-	if (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
+	if (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" || parsed.Opaque != "" || parsed.Fragment != "" {
 		return "", fmt.Errorf("price url must be absolute http(s)")
 	}
 	query := parsed.Query()

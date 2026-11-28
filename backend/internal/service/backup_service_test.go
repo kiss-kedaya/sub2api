@@ -1548,6 +1548,20 @@ func TestBackupService_SingleFileRestoreVerifiesSHA256AndSizeBeforePsql(t *testi
 		err := svc.RestoreBackup(context.Background(), "single-size")
 		require.ErrorContains(t, err, "size mismatch")
 		require.Empty(t, dumper.restored)
+
+		// Oversized stream from tampered object store must fail early via LimitReader.
+		oversizedKey := "backups/single-oversized.sql.gz"
+		store.objects[oversizedKey] = append(append([]byte(nil), goodArchive...), make([]byte, 4096)...)
+		require.NoError(t, svc.saveRecord(context.Background(), &BackupRecord{
+			ID:        "single-oversized",
+			Status:    "completed",
+			S3Key:     oversizedKey,
+			SizeBytes: int64(len(goodArchive)),
+			SHA256:    goodHash,
+		}))
+		err = svc.RestoreBackup(context.Background(), "single-oversized")
+		require.ErrorContains(t, err, "size mismatch")
+		require.Empty(t, dumper.restored)
 	})
 
 	t.Run("RestoreBackup accepts valid SHA256 single-file backup", func(t *testing.T) {

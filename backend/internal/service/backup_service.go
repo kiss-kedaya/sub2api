@@ -1951,7 +1951,11 @@ func (s *BackupService) downloadSingleBackupArchive(ctx context.Context, objectS
 	}
 
 	hash := sha256.New()
-	written, copyErr := io.Copy(io.MultiWriter(archive, hash), body)
+	var src io.Reader = body
+	if record.SizeBytes > 0 {
+		src = io.LimitReader(body, record.SizeBytes+1)
+	}
+	written, copyErr := io.Copy(io.MultiWriter(archive, hash), src)
 	closeErr := body.Close()
 	if copyErr != nil {
 		cleanup()
@@ -2019,7 +2023,7 @@ func (s *BackupService) downloadBackupPartsWithDigest(ctx context.Context, objec
 			return "", fmt.Errorf("download backup part %d: %w", part.Index, downloadErr)
 		}
 		hash := sha256.New()
-		written, copyErr := io.Copy(io.MultiWriter(archive, hash, totalHash), body)
+		written, copyErr := io.Copy(io.MultiWriter(archive, hash, totalHash), io.LimitReader(body, part.SizeBytes+1))
 		closeErr := body.Close()
 		if copyErr != nil {
 			cleanup()

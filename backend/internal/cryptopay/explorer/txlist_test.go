@@ -208,6 +208,11 @@ func TestExplorerClientBlocksSSRFRedirectsAndNeverLeaksAPIKey(t *testing.T) {
 		"https://10.0.0.1/api",
 		"http://[::1]:8080/api",
 		"https://metadata.google.internal/api",
+		"http://2130706433/api",
+		"http://127.1/api",
+		"http://0xa9fea9fe/api",
+		"http://0177.0.0.1/api",
+		"https://api.bscscan.com/v2/api\r\n",
 	} {
 		if _, err := NewClient(Config{Endpoints: map[string]Endpoint{"bsc": {BaseURL: bad}}}); err == nil {
 			t.Fatalf("unsafe explorer endpoint %q was accepted", bad)

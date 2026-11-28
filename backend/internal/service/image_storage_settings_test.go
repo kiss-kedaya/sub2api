@@ -275,15 +275,24 @@ func TestImageStorageSettingsUpdateAndResolveRejectPrivateEndpoints(t *testing.T
 		})
 	}
 
-	t.Run("update rejects javascript public_base_url", func(t *testing.T) {
+	t.Run("update rejects unsafe public_base_url", func(t *testing.T) {
 		stubOutboundResolver(t, "93.184.216.34")
-		_, err := svc.Update(ctx, ImageStorageSettings{
-			Enabled: true, Bucket: "images", Endpoint: "https://s3.example.com",
-			PublicBaseURL: "javascript:alert(1)",
-			AccessKeyID:   "ak", SecretAccessKey: "sk",
-		})
-		require.Error(t, err)
-		require.Contains(t, err.Error(), "public_base_url")
+		for _, bad := range []string{
+			"javascript:alert(1)",
+			"https://cdn.example.com?token=1",
+			"https://cdn.example.com#frag",
+			"https://user:pass@cdn.example.com",
+			`https://cdn.example.com\evil`,
+			"https://cdn.example.com\r\n",
+		} {
+			_, err := svc.Update(ctx, ImageStorageSettings{
+				Enabled: true, Bucket: "images", Endpoint: "https://s3.example.com",
+				PublicBaseURL: bad,
+				AccessKeyID:   "ak", SecretAccessKey: "sk",
+			})
+			require.Error(t, err, "public_base_url %q must be rejected", bad)
+			require.Contains(t, err.Error(), "public_base_url")
+		}
 	})
 
 	t.Run("resolve blocks private endpoint even if written directly to settings", func(t *testing.T) {

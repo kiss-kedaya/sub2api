@@ -269,6 +269,11 @@ func TestNormalizeConfigNativePriceFeed(t *testing.T) {
 		"https://10.0.0.5/ticker",
 		"http://[::1]:8080/{symbol}",
 		"http://metadata.google.internal/{symbol}",
+		"http://2130706433/ticker",
+		"http://127.1/ticker",
+		"http://0xa9fea9fe/latest/meta-data",
+		"http://0177.0.0.1/ticker",
+		"https://prices.example/ticker\r\n",
 	} {
 		if _, err := NormalizeConfig(CryptoConfig{NativePriceURL: bad}); err == nil {
 			t.Fatalf("unsafe native price url %q was accepted", bad)
@@ -286,6 +291,11 @@ func TestNormalizeConfigRejectsPrivateExplorerAndWebhookURLs(t *testing.T) {
 		"http://[::1]:8080/api",
 		"https://metadata.google.internal/api",
 		"https://api.bscscan.com/v2/api?apikey=oops",
+		"http://2130706433/api",
+		"http://127.1/api",
+		"http://0xa9fea9fe/api",
+		"http://0177.0.0.1/api",
+		"https://api.bscscan.com/v2/api\r\n",
 	} {
 		if _, err := NormalizeConfig(CryptoConfig{
 			ExplorerAPIURL: map[string]string{ChainBSC: bad},
@@ -302,6 +312,11 @@ func TestNormalizeConfigRejectsPrivateExplorerAndWebhookURLs(t *testing.T) {
 		"https://10.0.0.1/push",
 		"http://[::1]:8080/push",
 		"http://metadata.google.internal/push",
+		"http://2130706433/push",
+		"http://127.1/push",
+		"http://0xa9fea9fe/push",
+		"http://0177.0.0.1/push",
+		"https://hook.example.com/push\r\n",
 	} {
 		if _, err := NormalizeConfig(CryptoConfig{
 			Notify: &CryptoNotifyConfig{Enabled: true, WebhookURL: bad},

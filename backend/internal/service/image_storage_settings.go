@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"strings"
 	"sync"
 
@@ -123,6 +124,14 @@ func (s *ImageStorageSettingService) resolve() (*ImageResultUploader, bool) {
 		}
 		cfg.Endpoint = normalized
 	}
+	if publicBase := strings.Trim(cfg.PublicBaseURL, " "); publicBase != "" {
+		normalized, err := validateImagePublicBaseURL(publicBase)
+		if err != nil {
+			logger.L().Warn("image_storage.public_base_url_rejected; async image tasks stay disabled", zap.Error(err))
+			return nil, false
+		}
+		cfg.PublicBaseURL = normalized
+	}
 
 	factoryCtx := ctx
 	if ObjectStoreHTTPClientFromContext(factoryCtx) == nil {
@@ -178,10 +187,11 @@ func (s *ImageStorageSettingService) SecretConfigured(ctx context.Context) bool 
 
 // Update 保存设置并立即生效。SecretAccessKey 留空表示沿用已保存的值。
 func (s *ImageStorageSettingService) Update(ctx context.Context, in ImageStorageSettings) (*ImageStorageSettings, error) {
+	rawPublicBaseURL := strings.Trim(in.PublicBaseURL, " ")
 	normalizeImageStorageSettings(&in)
 
-	if in.PublicBaseURL != "" {
-		normalized, err := urlvalidator.ValidateURLFormat(in.PublicBaseURL, true)
+	if rawPublicBaseURL != "" {
+		normalized, err := validateImagePublicBaseURL(rawPublicBaseURL)
 		if err != nil {
 			return nil, fmt.Errorf("invalid public_base_url: %w", err)
 		}
@@ -360,6 +370,22 @@ func settingsFromConfig(cfg config.ImageStorageConfig) *ImageStorageSettings {
 		SecretAccessKey:  cfg.SecretAccessKey,
 		ForcePathStyle:   cfg.ForcePathStyle,
 	}
+}
+
+func validateImagePublicBaseURL(raw string) (string, error) {
+	if containsControlOrBackslash(raw) {
+		return "", errors.New("contains control characters or backslash")
+	}
+	trimmed := strings.TrimRight(strings.Trim(raw, " "), "/")
+	normalized, err := urlvalidator.ValidateURLFormat(trimmed, true)
+	if err != nil {
+		return "", err
+	}
+	parsed, err := url.Parse(normalized)
+	if err != nil || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" || parsed.Opaque != "" {
+		return "", errors.New("must be a plain http(s) base URL without userinfo, query, or fragment")
+	}
+	return normalized, nil
 }
 
 func normalizeImageStorageSettings(in *ImageStorageSettings) {

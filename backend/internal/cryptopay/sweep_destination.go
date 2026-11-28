@@ -140,7 +140,7 @@ func normalizeNotifyConfig(cfg *CryptoConfig) error {
 		return nil
 	}
 	notifyCfg := *cfg.Notify
-	notifyCfg.WebhookURL = strings.TrimSpace(notifyCfg.WebhookURL)
+	notifyCfg.WebhookURL = strings.Trim(notifyCfg.WebhookURL, " ")
 	notifyCfg.Email = strings.TrimSpace(notifyCfg.Email)
 	if len(notifyCfg.WebhookURL) > maxNotifyURLBytes {
 		return fmt.Errorf("crypto config: notify.webhook_url is too long")

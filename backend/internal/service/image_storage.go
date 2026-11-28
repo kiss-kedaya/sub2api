@@ -25,7 +25,11 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/util/urlvalidator"
 )
 
-const defaultImageMaxDownloadBytes int64 = 32 << 20 // 32 MiB
+const (
+	defaultImageMaxDownloadBytes int64 = 32 << 20 // 32 MiB
+	maxUploadedImageDimension          = 16384
+	maxUploadedImagePixels       int64 = 64 * 1024 * 1024 // 64 megapixels (e.g. 8192x8192)
+)
 
 // ImageStorage 把图片字节写入对象存储并返回可访问 URL。
 //
@@ -247,6 +251,9 @@ func (u *ImageResultUploader) decodeImageDataURL(rawURL string) ([]byte, string,
 }
 
 func (u *ImageResultUploader) download(ctx context.Context, rawURL string) ([]byte, string, error) {
+	if containsControlOrBackslash(rawURL) {
+		return nil, "", fmt.Errorf("download image: %w", urlvalidator.ErrOutboundTargetNotAllowed)
+	}
 	if !u.customHTTPClient {
 		if _, err := urlvalidator.ValidateOutboundURL(ctx, rawURL, urlvalidator.OutboundPolicy{AllowInsecureHTTP: true}); err != nil {
 			return nil, "", fmt.Errorf("download image: %w", err)
@@ -316,9 +323,10 @@ func detectedImageContentType(data []byte) string {
 	}
 }
 
-// validateImageBytes verifies real bitmap bytes using both magic-byte sniffing
-// and image.DecodeConfig. Only PNG, JPEG, WebP, and GIF are permitted; SVG,
-// HTML, JSON, and corrupted/polyglot payloads are rejected.
+// validateImageBytes verifies real bitmap bytes using magic-byte sniffing,
+// header dimension/pixel bounds, and full image.Decode. Only PNG, JPEG, WebP,
+// and GIF are permitted; SVG, HTML, JSON, decompression bombs, and header-only
+// or corrupted/polyglot payloads are rejected.
 func validateImageBytes(data []byte) (string, error) {
 	if len(data) == 0 {
 		return "", errors.New("image payload is empty")
@@ -346,6 +354,14 @@ func validateImageBytes(data []byte) (string, error) {
 	}
 	if decodedMIME != sniffed {
 		return "", fmt.Errorf("image format mismatch: sniffed %q, decoded %q", sniffed, decodedMIME)
+	}
+	if cfg.Width > maxUploadedImageDimension || cfg.Height > maxUploadedImageDimension ||
+		int64(cfg.Width)*int64(cfg.Height) > maxUploadedImagePixels {
+		return "", fmt.Errorf("image dimensions %dx%d exceed allowed bounds", cfg.Width, cfg.Height)
+	}
+	img, decodedFormat, err := image.Decode(bytes.NewReader(data))
+	if err != nil || img == nil || !strings.EqualFold(decodedFormat, format) || img.Bounds().Empty() {
+		return "", errors.New("invalid or undecodable image payload")
 	}
 	return decodedMIME, nil
 }
