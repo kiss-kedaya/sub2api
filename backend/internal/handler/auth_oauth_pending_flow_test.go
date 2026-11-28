@@ -2652,18 +2652,16 @@ CREATE TABLE IF NOT EXISTS user_affiliates (
 		nil,
 	)
 	userSvc := service.NewUserService(userRepo, nil, nil, nil)
-	var totpSvc *service.TotpService
-	if options.totpCache != nil || options.totpEncryptor != nil {
-		totpCache := options.totpCache
-		if totpCache == nil {
-			totpCache = &oauthPendingFlowTotpCacheStub{}
-		}
-		totpEncryptor := options.totpEncryptor
-		if totpEncryptor == nil {
-			totpEncryptor = oauthPendingFlowTotpEncryptorStub{}
-		}
-		totpSvc = service.NewTotpService(userRepo, totpEncryptor, totpCache, settingSvc, nil, nil)
+	totpCache := options.totpCache
+	if totpCache == nil {
+		totpCache = &oauthPendingFlowTotpCacheStub{}
 	}
+	totpEncryptor := options.totpEncryptor
+	if totpEncryptor == nil {
+		totpEncryptor = oauthPendingFlowTotpEncryptorStub{}
+	}
+	totpSvc := service.NewTotpService(userRepo, totpEncryptor, totpCache, settingSvc, nil, nil)
+	authSvc.SetLoginTwoFactorPolicy(totpSvc)
 
 	return &AuthHandler{
 		authService:  authSvc,

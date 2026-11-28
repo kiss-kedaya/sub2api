@@ -908,3 +908,46 @@ func TestApiKeyAuthWithSubscriptionGoogle_SubscriptionLimitExceededReturns429(t 
 	require.Equal(t, "RESOURCE_EXHAUSTED", resp.Error.Status)
 	require.Contains(t, resp.Error.Message, "daily usage limit exceeded")
 }
+
+func TestGoogleAPIKeyAuthRejectsExpiredKeyInSimpleMode(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	past := time.Now().Add(-time.Hour)
+	for _, tc := range []struct {
+		name   string
+		status string
+		exp    *time.Time
+	}{
+		{name: "expired_status", status: service.StatusAPIKeyExpired},
+		{name: "runtime_expired", status: service.StatusActive, exp: &past},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			user := &service.User{ID: 7, Role: service.RoleUser, Status: service.StatusActive, Balance: 100}
+			apiKey := &service.APIKey{
+				ID:        77,
+				UserID:    user.ID,
+				Key:       "google-expired-simple",
+				Status:    tc.status,
+				ExpiresAt: tc.exp,
+				User:      user,
+			}
+			svc := newTestAPIKeyService(fakeAPIKeyRepo{
+				getByKey: func(context.Context, string) (*service.APIKey, error) {
+					clone := *apiKey
+					return &clone, nil
+				},
+			})
+			cfg := &config.Config{RunMode: config.RunModeSimple}
+			r := gin.New()
+			r.Use(APIKeyAuthGoogle(svc, cfg))
+			r.GET("/v1beta/models", func(c *gin.Context) { c.Status(http.StatusOK) })
+
+			req := httptest.NewRequest(http.MethodGet, "/v1beta/models", nil)
+			req.Header.Set("x-goog-api-key", apiKey.Key)
+			rec := httptest.NewRecorder()
+			r.ServeHTTP(rec, req)
+
+			require.Equal(t, http.StatusForbidden, rec.Code)
+			require.Contains(t, rec.Body.String(), "API key 已过期")
+		})
+	}
+}

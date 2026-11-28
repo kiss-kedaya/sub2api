@@ -36,6 +36,14 @@ func (h *TotpHandler) SetTwoFactorRateLimiter(limiter twoFactorRateLimiter) {
 	h.twoFactorLimiter = limiter
 }
 
+// SetPersonalAPIKeyRevoker 注入个人接口密钥吊销器并透传给 TotpService（由路由装配）。
+func (h *TotpHandler) SetPersonalAPIKeyRevoker(revoker service.PersonalAPIKeyRevoker) {
+	if h == nil || h.totpService == nil {
+		return
+	}
+	h.totpService.SetPersonalAPIKeyRevoker(revoker)
+}
+
 // GetStatus returns the TOTP status for the current user
 // GET /api/v1/user/totp/status
 func (h *TotpHandler) GetStatus(c *gin.Context) {

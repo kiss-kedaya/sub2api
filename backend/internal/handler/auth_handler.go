@@ -36,6 +36,8 @@ type AuthHandler struct {
 	passkeys *service.PasskeyService
 	// twoFactorLimiter 按账号维度限制 2FA 校验尝试（60s 滚动窗口 5 次）。
 	twoFactorLimiter twoFactorRateLimiter
+	// bindLoginLimiter 统一限制 OAuth bind-login 的 IP+邮箱 维度尝试，防止跨 provider 分桶绕过。
+	bindLoginLimiter OAuthBindLoginRateLimitFunc
 	// disguise 为登录首步「凭据无效」挑战提供按邮箱稳定的伪装素材（审计 A-P1-02）。
 	// 没有可用密钥时为 nil；是否启用由 SettingKeyLoginShapeDisguiseEnabled 决定（默认关闭）。
 	disguise *service.LoginDisguise
@@ -54,6 +56,9 @@ func NewAuthHandler(cfg *config.Config, authService *service.AuthService, userSe
 	if cfg != nil {
 		disguise = service.NewLoginDisguise(cfg.JWT.Secret)
 	}
+	if authService != nil && totpService != nil {
+		authService.SetLoginTwoFactorPolicy(totpService)
+	}
 	return &AuthHandler{
 		cfg:                  cfg,
 		authService:          authService,
@@ -65,6 +70,14 @@ func NewAuthHandler(cfg *config.Config, authService *service.AuthService, userSe
 		userAttributeService: userAttributeService,
 		disguise:             disguise,
 	}
+}
+
+// PersonalAPIKeyRevoker 返回 AuthService 已装配的个人接口密钥吊销器，供路由层同步给 TotpHandler/TotpService。
+func (h *AuthHandler) PersonalAPIKeyRevoker() service.PersonalAPIKeyRevoker {
+	if h == nil || h.authService == nil {
+		return nil
+	}
+	return h.authService.PersonalAPIKeyRevoker()
 }
 
 // RegisterRequest represents the registration request payload
@@ -145,6 +158,17 @@ func (h *AuthHandler) SetPasskeyService(passkeys *service.PasskeyService) {
 		return
 	}
 	h.passkeys = passkeys
+}
+
+// OAuthBindLoginRateLimitFunc 是 OAuth bind-login 统一限流回调（避免 handler 反向依赖 internal/middleware）。
+type OAuthBindLoginRateLimitFunc func(ctx context.Context, key string, limit int, window time.Duration) (allowed bool, retryAfter time.Duration, err error)
+
+// SetBindLoginRateLimiter 注入 OAuth bind-login 统一限流器（由 routes/auth.go 装配）。
+func (h *AuthHandler) SetBindLoginRateLimiter(limiter OAuthBindLoginRateLimitFunc) {
+	if h == nil {
+		return
+	}
+	h.bindLoginLimiter = limiter
 }
 
 // respondWithTokenPair 生成 Token 对并返回认证响应。
@@ -667,64 +691,15 @@ func (h *AuthHandler) Login2FA(c *gin.Context) {
 		return
 	}
 
+	// 只读预检 pending OAuth 会话是否仍有效（严禁在此处提前落库绑定或消费会话！
+	// 若账号同时绑定了 TOTP + Passkey，必须等全部因子通过后才执行绑定与消费）。
 	if session.PendingOAuthBind != nil {
-		pendingSvc, err := h.pendingIdentityService()
-		if err != nil {
-			response.ErrorFrom(c, err)
-			return
-		}
-
-		pendingSession, err := pendingSvc.GetBrowserSession(
-			c.Request.Context(),
-			session.PendingOAuthBind.PendingSessionToken,
-			session.PendingOAuthBind.BrowserSessionKey,
-		)
-		if err != nil {
-			response.ErrorFrom(c, err)
-			return
-		}
-
-		decision, err := h.ensurePendingOAuthAdoptionDecision(c, pendingSession.ID, oauthAdoptionDecisionRequest{})
-		if err != nil {
-			response.ErrorFrom(c, err)
-			return
-		}
-		if err := applyPendingOAuthBinding(
-			c.Request.Context(),
-			h.entClient(),
-			h.authService,
-			h.userService,
-			pendingSession,
-			decision,
-			&user.ID,
-			true,
-			true,
-		); err != nil {
-			response.ErrorFrom(c, infraerrors.InternalServer("PENDING_AUTH_BIND_APPLY_FAILED", "failed to bind pending oauth identity").WithCause(err))
-			return
-		}
-		if _, err := pendingSvc.ConsumeBrowserSession(
-			c.Request.Context(),
-			pendingSession.SessionToken,
-			pendingSession.BrowserSessionKey,
-		); err != nil {
-			response.ErrorFrom(c, err)
-			return
-		}
-
-		secureCookie := h.isRequestHTTPS(c)
-		clearOAuthPendingSessionCookie(c, secureCookie)
-		clearOAuthPendingBrowserCookie(c, secureCookie)
-		h.recordSuccessfulLogin(c, user.ID)
-
-		user, err = h.userService.GetByID(c.Request.Context(), session.UserID)
-		if err != nil {
-			response.ErrorFrom(c, err)
+		if !h.validatePendingOAuthBindSession(c, session.PendingOAuthBind) {
 			return
 		}
 	}
 
-	// Consume only after every login/binding check has passed.
+	// Consume only after every pre-check has passed.
 	if err := h.totpService.ConsumeLoginCode(c.Request.Context(), session.UserID, counter, req.TotpCode); err != nil {
 		// 重放的动态码同样属于「码不正确」，对外与密码错误同码。
 		if isLogin2FACredentialOrCodeFailure(err) {
@@ -741,9 +716,14 @@ func (h *AuthHandler) Login2FA(c *gin.Context) {
 		resetTwoFactorRateLimit(c.Request.Context(), h.twoFactorLimiter, ipBucket)
 	}
 
-	// 因子编排：TOTP 通过后，若账号还绑定了 Passkey，必须继续完成 Passkey
-	// 断言才签发令牌。漏一个因子一律 fail-closed（不下发令牌、不降级）。
-	if session.PendingOAuthBind == nil && len(session.RequiredFactors) > 0 {
+	// 任一次动态码校验成功都要下发 TOTP 因子的 5 分钟不透明凭证（scope=login）：
+	// 完成 Passkey 期间/之后同客户端的登录与密码校验可免重复 TOTP。
+	issueTwoFactorGrant(c, h.totpService, session.UserID, service.TwoFactorGrantScopeLogin, service.FactorTOTP)
+
+	// 统一因子编排（同时覆盖密码登录与 PendingOAuthBind）：
+	// TOTP 通过后若还缺 Passkey 因子，保持登录会话与 pending OAuth 会话不消费，
+	// 返回 next_factor=passkey 挑战；全部因子满足后才执行 OAuth 绑定、消费会话并签发令牌。
+	if len(session.RequiredFactors) > 0 {
 		updated, err := h.totpService.MarkLoginFactorPassed(
 			c.Request.Context(), req.TempToken, service.FactorTOTP)
 		if err != nil {
@@ -751,12 +731,9 @@ func (h *AuthHandler) Login2FA(c *gin.Context) {
 			response.ErrorFrom(c, service.ErrTwoFactorPolicyUnavailable)
 			return
 		}
-		// TOTP 验证成功也要下发该因子的 5 分钟不透明凭证（scope=login）：
-		// 完成 Passkey 期间/之后同客户端的登录与密码校验可免重复 TOTP。
-		issueTwoFactorGrant(c, h.totpService, session.UserID, service.TwoFactorGrantScopeLogin, service.FactorTOTP)
 		missing := service.LoginSessionMissingFactors(updated)
 		if len(missing) > 0 {
-			// 还缺 Passkey：保持登录会话（不删除），返回下一因子的挑战。
+			// 还缺 Passkey：保持登录会话（不删除、不绑定、不消费 pending OAuth），返回下一因子的挑战。
 			if user, err = h.userService.GetByID(c.Request.Context(), session.UserID); err != nil {
 				response.ErrorFrom(c, err)
 				return
@@ -765,26 +742,104 @@ func (h *AuthHandler) Login2FA(c *gin.Context) {
 				c, req.TempToken, user, session.Email, updated.RequiredFactors, updated.PassedFactors, missing)
 			return
 		}
-		_ = h.totpService.DeleteLoginSession(c.Request.Context(), req.TempToken)
-		h.recordSuccessfulLogin(c, user.ID)
-		h.respondWithTokenPair(c, user)
-		return
 	}
 
-	// 历史流程（OAuth pending bind 兑换 / 没有因子状态的旧会话）：保持原行为，
-	// 只校验 TOTP。新登录一律走上面的因子编排。
+	if session.PendingOAuthBind != nil {
+		var finalized bool
+		user, finalized = h.finalizePendingOAuthBindOn2FAComplete(c, session, user)
+		if !finalized {
+			return
+		}
+	}
+
 	_ = h.totpService.DeleteLoginSession(c.Request.Context(), req.TempToken)
+	h.recordSuccessfulLogin(c, user.ID)
+	h.respondWithTokenPair(c, user)
+}
 
-	if session.PendingOAuthBind == nil {
-		h.recordSuccessfulLogin(c, user.ID)
+func (h *AuthHandler) validatePendingOAuthBindSession(c *gin.Context, bind *service.PendingOAuthBindLoginSession) bool {
+	if bind == nil {
+		return true
+	}
+	pendingSvc, err := h.pendingIdentityService()
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return false
+	}
+	if _, err := pendingSvc.GetBrowserSession(
+		c.Request.Context(),
+		bind.PendingSessionToken,
+		bind.BrowserSessionKey,
+	); err != nil {
+		response.ErrorFrom(c, err)
+		return false
+	}
+	return true
+}
+
+// finalizePendingOAuthBindOn2FAComplete 仅在全部必需 2FA 因子均已验证通过后调用，
+// 负责执行待定 OAuth 身份绑定、首次绑定默认配置发放、钉钉同步与消费 pending 浏览器会话。
+func (h *AuthHandler) finalizePendingOAuthBindOn2FAComplete(
+	c *gin.Context,
+	session *service.TotpLoginSession,
+	user *service.User,
+) (*service.User, bool) {
+	if session == nil || session.PendingOAuthBind == nil || user == nil {
+		return user, true
+	}
+	pendingSvc, err := h.pendingIdentityService()
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return nil, false
+	}
+	pendingSession, err := pendingSvc.GetBrowserSession(
+		c.Request.Context(),
+		session.PendingOAuthBind.PendingSessionToken,
+		session.PendingOAuthBind.BrowserSessionKey,
+	)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return nil, false
+	}
+	decision, err := h.ensurePendingOAuthAdoptionDecision(c, pendingSession.ID, oauthAdoptionDecisionRequest{})
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return nil, false
+	}
+	if err := applyPendingOAuthBinding(
+		c.Request.Context(),
+		h.entClient(),
+		h.authService,
+		h.userService,
+		pendingSession,
+		decision,
+		&user.ID,
+		true,
+		true,
+	); err != nil {
+		response.ErrorFrom(c, infraerrors.InternalServer("PENDING_AUTH_BIND_APPLY_FAILED", "failed to bind pending oauth identity").WithCause(err))
+		return nil, false
+	}
+	h.maybeSyncDingTalkAfterLogin(c.Request.Context(), pendingSession, user.ID)
+	if _, err := pendingSvc.ConsumeBrowserSession(
+		c.Request.Context(),
+		pendingSession.SessionToken,
+		pendingSession.BrowserSessionKey,
+	); err != nil {
+		response.ErrorFrom(c, err)
+		return nil, false
 	}
 
-	// 任一次动态码校验成功都要下发 TOTP 因子的 5 分钟不透明凭证：之后同客户端
-	// 5 分钟内的密码登录 / 密码校验不再要求动态码。Cookie 由服务端 HttpOnly
-	// 下发，响应 body 不回显 token。
-	issueTwoFactorGrant(c, h.totpService, user.ID, service.TwoFactorGrantScopeLogin, service.FactorTOTP)
+	secureCookie := h.isRequestHTTPS(c)
+	clearOAuthPendingSessionCookie(c, secureCookie)
+	clearOAuthPendingBrowserCookie(c, secureCookie)
 
-	h.respondWithTokenPair(c, user)
+	reloaded, err := h.userService.GetByID(c.Request.Context(), session.UserID)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return nil, false
+	}
+	return reloaded, true
 }
 
 // Login2FAPasskeyFinishRequest 是密码登录第二步 Passkey 因子完成请求。
@@ -822,9 +877,9 @@ func (h *AuthHandler) Login2FAPasskeyFinish(c *gin.Context) {
 		response.BadRequest(c, "Invalid or expired 2FA session")
 		return
 	}
-	// 只有「密码登录 + 需要 Passkey 因子」的会话能走本接口：
-	// OAuth pending bind 会话 / 没要求 Passkey 的会话一律拒绝（fail-closed）。
-	if session.PendingOAuthBind != nil || !service.HasFactor(session.RequiredFactors, service.FactorPasskey) {
+	// 只有「需要 Passkey 因子」的会话（含密码登录与 OAuth/PendingOAuthBind 登录）能走本接口；
+	// 没要求 Passkey 的会话一律拒绝（fail-closed）。
+	if !service.HasFactor(session.RequiredFactors, service.FactorPasskey) {
 		response.BadRequest(c, "No passkey step is required for this login session")
 		return
 	}
@@ -859,13 +914,18 @@ func (h *AuthHandler) Login2FAPasskeyFinish(c *gin.Context) {
 		response.ErrorFrom(c, err)
 		return
 	}
+	if session.PendingOAuthBind != nil {
+		if !h.validatePendingOAuthBindSession(c, session.PendingOAuthBind) {
+			return
+		}
+	}
 	updated, err := h.totpService.MarkLoginFactorPassed(
 		c.Request.Context(), req.TempToken, service.FactorPasskey)
 	if err != nil {
 		response.ErrorFrom(c, service.ErrTwoFactorPolicyUnavailable)
 		return
 	}
-	// TOTP 因子必须在同一会话里已经完成；任何缺失都不签发令牌。
+	// TOTP 因子必须在同一会话里已经完成；任何缺失都不签发令牌也不落库绑定。
 	if missing := service.LoginSessionMissingFactors(updated); len(missing) > 0 {
 		_ = h.totpService.DeleteLoginSession(c.Request.Context(), req.TempToken)
 		markAuthAuditFailureFromError(c, service.ErrInvalidCredentials)
@@ -876,6 +936,13 @@ func (h *AuthHandler) Login2FAPasskeyFinish(c *gin.Context) {
 	resetTwoFactorRateLimit(c.Request.Context(), h.twoFactorLimiter, session.UserID)
 	if ipBucket != 0 {
 		resetTwoFactorRateLimit(c.Request.Context(), h.twoFactorLimiter, ipBucket)
+	}
+	if session.PendingOAuthBind != nil {
+		var finalized bool
+		user, finalized = h.finalizePendingOAuthBindOn2FAComplete(c, session, user)
+		if !finalized {
+			return
+		}
 	}
 	_ = h.totpService.DeleteLoginSession(c.Request.Context(), req.TempToken)
 	issueTwoFactorGrant(c, h.totpService, user.ID, service.TwoFactorGrantScopeLogin, service.FactorPasskey)
@@ -1131,6 +1198,7 @@ type ResetPasswordResponse struct {
 // ResetPassword 重置密码
 // POST /api/v1/auth/reset-password
 func (h *AuthHandler) ResetPassword(c *gin.Context) {
+	c.Header("Cache-Control", "no-store")
 	var req ResetPasswordRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.BadRequest(c, "Invalid request: "+err.Error())
@@ -1138,10 +1206,20 @@ func (h *AuthHandler) ResetPassword(c *gin.Context) {
 	}
 
 	// Reset password
-	if err := h.authService.ResetPassword(c.Request.Context(), req.Email, req.Token, req.NewPassword); err != nil {
+	userID, err := h.authService.ResetPasswordForUser(c.Request.Context(), req.Email, req.Token, req.NewPassword)
+	if err != nil {
 		response.ErrorFrom(c, err)
 		return
 	}
+
+	// 密码重置与改密同口径：立即吊销该用户全部未过期的 2FA 凭证并清掉当前浏览器 Cookie。
+	if h.totpService != nil && userID > 0 {
+		if err := h.totpService.RevokeTwoFactorGrantsForUser(c.Request.Context(), userID); err != nil {
+			slog.Warn("revoke two-factor grants after password reset failed",
+				"user_id", userID, "error", err)
+		}
+	}
+	clearAllTwoFactorGrantCookies(c)
 
 	response.Success(c, ResetPasswordResponse{
 		Message: "Your password has been reset successfully. You can now log in with your new password.",

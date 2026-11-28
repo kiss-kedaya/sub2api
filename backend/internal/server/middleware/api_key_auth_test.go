@@ -1393,7 +1393,6 @@ func TestAPIKeyAuthBillingInfoSkipsBillingAndSideEffects(t *testing.T) {
 		Balance:     0,
 		Concurrency: 3,
 	}
-	expiredAt := time.Now().Add(-time.Hour)
 	apiKey := &service.APIKey{
 		ID:        100,
 		UserID:    user.ID,
@@ -1404,7 +1403,6 @@ func TestAPIKeyAuthBillingInfoSkipsBillingAndSideEffects(t *testing.T) {
 		Group:     group,
 		Quota:     1,
 		QuotaUsed: 1,
-		ExpiresAt: &expiredAt,
 	}
 
 	touchCalls := 0
@@ -1726,6 +1724,11 @@ func newAuthTestRouter(apiKeyService *service.APIKeyService, subscriptionService
 	router.GET("/v1/models", ok)
 	router.GET("/v1beta/models", ok)
 	router.GET("/v1/sub2api/billing", ok)
+	router.GET("/v1/sub2api/key", ok)
+	router.GET("/v1/sub2api/groups", ok)
+	router.GET("/v1/sub2api/usage", ok)
+	router.GET("/v1/sub2api/account", ok)
+	router.GET("/v1/images/tasks/task_1", ok)
 	return router
 }
 
@@ -2033,4 +2036,105 @@ func (r *stubUserSubscriptionRepo) IncrementUsage(ctx context.Context, id int64,
 
 func (r *stubUserSubscriptionRepo) BatchUpdateExpiredStatus(ctx context.Context) (int64, error) {
 	return 0, errors.New("not implemented")
+}
+
+func TestAPIKeyAuthRejectsExpiredKeysAcrossAllEndpointsAndSimpleMode(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	past := time.Now().Add(-time.Hour)
+	paths := []string{
+		"/v1/sub2api/key",
+		"/v1/sub2api/account",
+		"/v1/sub2api/groups",
+		"/v1/sub2api/usage",
+		"/v1/sub2api/billing",
+		"/v1/models",
+		"/v1/usage",
+		"/v1/images/tasks/task_1",
+	}
+	for _, runMode := range []string{config.RunModeStandard, config.RunModeSimple} {
+		for _, tc := range []struct {
+			name   string
+			status string
+			exp    *time.Time
+		}{
+			{name: "status_expired", status: service.StatusAPIKeyExpired},
+			{name: "runtime_expired", status: service.StatusActive, exp: &past},
+		} {
+			t.Run(runMode+"/"+tc.name, func(t *testing.T) {
+				user := &service.User{ID: 7, Role: service.RoleUser, Status: service.StatusActive, Balance: 100}
+				apiKey := &service.APIKey{
+					ID:        201,
+					UserID:    user.ID,
+					Key:       "expired-key-check",
+					Status:    tc.status,
+					ExpiresAt: tc.exp,
+					User:      user,
+				}
+				repo := &stubApiKeyRepo{
+					getByKey: func(context.Context, string) (*service.APIKey, error) {
+						clone := *apiKey
+						return &clone, nil
+					},
+				}
+				cfg := &config.Config{RunMode: runMode}
+				router := newAuthTestRouter(service.NewAPIKeyService(repo, nil, nil, nil, nil, nil, cfg), nil, cfg)
+				for _, p := range paths {
+					w := httptest.NewRecorder()
+					req := httptest.NewRequest(http.MethodGet, p, nil)
+					req.Header.Set("x-api-key", apiKey.Key)
+					router.ServeHTTP(w, req)
+					require.Equal(t, http.StatusForbidden, w.Code, "mode=%s path=%s", runMode, p)
+					requireAPIKeyAuthError(t, w, "API_KEY_EXPIRED", "API key 已过期")
+				}
+			})
+		}
+	}
+}
+
+func TestAPIKeyAuthQuotaExhaustedDeniedOnAccountButAllowedOnKeyAndUsage(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, tc := range []struct {
+		name   string
+		mutate func(*service.APIKey)
+	}{
+		{name: "status_quota_exhausted", mutate: func(k *service.APIKey) { k.Status = service.StatusAPIKeyQuotaExhausted }},
+		{name: "runtime_quota_exhausted", mutate: func(k *service.APIKey) { k.Status = service.StatusActive; k.Quota = 10; k.QuotaUsed = 10 }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			user := &service.User{ID: 7, Role: service.RoleUser, Status: service.StatusActive, Balance: 100}
+			apiKey := &service.APIKey{
+				ID:     202,
+				UserID: user.ID,
+				Key:    "quota-exhausted-key",
+				Status: service.StatusActive,
+				User:   user,
+			}
+			tc.mutate(apiKey)
+			repo := &stubApiKeyRepo{
+				getByKey: func(context.Context, string) (*service.APIKey, error) {
+					clone := *apiKey
+					return &clone, nil
+				},
+			}
+			cfg := &config.Config{RunMode: config.RunModeStandard}
+			router := newAuthTestRouter(service.NewAPIKeyService(repo, nil, nil, nil, nil, nil, cfg), nil, cfg)
+
+			// /v1/sub2api/account must reject quota-exhausted keys
+			wAcc := httptest.NewRecorder()
+			reqAcc := httptest.NewRequest(http.MethodGet, "/v1/sub2api/account", nil)
+			reqAcc.Header.Set("x-api-key", apiKey.Key)
+			router.ServeHTTP(wAcc, reqAcc)
+			require.Equal(t, http.StatusTooManyRequests, wAcc.Code)
+			requireAPIKeyAuthError(t, wAcc, "API_KEY_QUOTA_EXHAUSTED", "API key 额度已用完")
+
+			// /v1/sub2api/key and /v1/usage remain readable for quota-exhausted keys
+			for _, p := range []string{"/v1/sub2api/key", "/v1/usage"} {
+				w := httptest.NewRecorder()
+				req := httptest.NewRequest(http.MethodGet, p, nil)
+				req.Header.Set("x-api-key", apiKey.Key)
+				router.ServeHTTP(w, req)
+				require.Equal(t, http.StatusOK, w.Code, "path=%s", p)
+			}
+		})
+	}
 }

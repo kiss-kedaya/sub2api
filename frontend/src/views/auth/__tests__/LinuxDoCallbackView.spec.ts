@@ -11,8 +11,11 @@ const setPendingAuthSession = vi.fn()
 const clearPendingAuthSession = vi.fn()
 const exchangePendingOAuthCompletion = vi.fn()
 const completeLinuxDoOAuthRegistration = vi.fn()
+const exchangeOAuthLoginCode = vi.fn()
 const getPublicSettings = vi.fn()
 const login2FA = vi.fn()
+const login2FAPasskeyFinish = vi.fn()
+const acceptLoginChallenge = vi.fn()
 const apiClientPost = vi.fn()
 const sendVerifyCode = vi.fn()
 const sendPendingOAuthVerifyCode = vi.fn()
@@ -63,14 +66,23 @@ vi.mock('@/api/auth', async () => {
   const actual = await vi.importActual<typeof import('@/api/auth')>('@/api/auth')
   return {
     ...actual,
+    exchangeOAuthLoginCode: (...args: any[]) => exchangeOAuthLoginCode(...args),
     exchangePendingOAuthCompletion: (...args: any[]) => exchangePendingOAuthCompletion(...args),
     completeLinuxDoOAuthRegistration: (...args: any[]) => completeLinuxDoOAuthRegistration(...args),
     getPublicSettings: (...args: any[]) => getPublicSettings(...args),
     login2FA: (...args: any[]) => login2FA(...args),
+    login2FAPasskeyFinish: (...args: any[]) => login2FAPasskeyFinish(...args),
     sendVerifyCode: (...args: any[]) => sendVerifyCode(...args),
     sendPendingOAuthVerifyCode: (...args: any[]) => sendPendingOAuthVerifyCode(...args)
   }
 })
+
+vi.mock('@/api/passkey', () => ({
+  passkeyAPI: {
+    isSupported: () => true,
+    acceptLoginChallenge: (...args: any[]) => acceptLoginChallenge(...args)
+  }
+}))
 
 describe('LinuxDoCallbackView', () => {
   beforeEach(() => {
@@ -80,10 +92,13 @@ describe('LinuxDoCallbackView', () => {
     setToken.mockReset()
     setPendingAuthSession.mockReset()
     clearPendingAuthSession.mockReset()
+    exchangeOAuthLoginCode.mockReset()
     exchangePendingOAuthCompletion.mockReset()
     completeLinuxDoOAuthRegistration.mockReset()
     getPublicSettings.mockReset()
     login2FA.mockReset()
+    login2FAPasskeyFinish.mockReset()
+    acceptLoginChallenge.mockReset()
     apiClientPost.mockReset()
     sendVerifyCode.mockReset()
     sendPendingOAuthVerifyCode.mockReset()
@@ -736,5 +751,89 @@ describe('LinuxDoCallbackView', () => {
     })
     expect(setToken).toHaveBeenCalledWith('2fa-access-token')
     expect(replace).toHaveBeenCalledWith('/profile')
+  })
+
+  it('exchanges one-time fragment code for token pair without pending exchange', async () => {
+    window.location.hash = '#code=linuxdo-one-time-code&redirect=%2Fsettings'
+    exchangeOAuthLoginCode.mockResolvedValue({
+      access_token: 'exchanged-ld-access',
+      refresh_token: 'exchanged-ld-refresh',
+      expires_in: 3600,
+      redirect: '/settings'
+    })
+    setToken.mockResolvedValue({})
+
+    mount(LinuxDoCallbackView, {
+      global: {
+        stubs: {
+          AuthLayout: { template: '<div><slot /></div>' },
+          Icon: true,
+          RouterLink: { template: '<a><slot /></a>' },
+          transition: false
+        }
+      }
+    })
+    await flushPromises()
+
+    expect(exchangeOAuthLoginCode).toHaveBeenCalledWith('linuxdo-one-time-code')
+    expect(exchangePendingOAuthCompletion).not.toHaveBeenCalled()
+    expect(setToken).toHaveBeenCalledWith('exchanged-ld-access')
+    expect(replace).toHaveBeenCalledWith('/settings')
+  })
+
+  it('progresses from TOTP to passkey during bind-login dual-factor challenge', async () => {
+    const pkOptions = { publicKey: { challenge: 'ld-pk-chal' } }
+    exchangePendingOAuthCompletion.mockResolvedValue({
+      requires_2fa: true,
+      temp_token: 'ld-dual-temp',
+      user_email_masked: 'd***l@example.com',
+      required_factors: ['totp', 'passkey'],
+      passed_factors: [],
+      next_factor: 'totp',
+      redirect: '/dashboard'
+    })
+    login2FA.mockResolvedValue({
+      requires_2fa: true,
+      temp_token: 'ld-dual-temp',
+      user_email_masked: 'd***l@example.com',
+      required_factors: ['totp', 'passkey'],
+      passed_factors: ['totp'],
+      next_factor: 'passkey',
+      passkey_session_token: 'ld-pk-sess',
+      passkey_options: pkOptions
+    })
+    acceptLoginChallenge.mockResolvedValue({ id: 'ld-cred', type: 'public-key' })
+    login2FAPasskeyFinish.mockResolvedValue({ access_token: 'ld-dual-token' })
+    setToken.mockResolvedValue({})
+
+    const wrapper = mount(LinuxDoCallbackView, {
+      global: {
+        stubs: {
+          AuthLayout: { template: '<div><slot /></div>' },
+          Icon: true,
+          RouterLink: { template: '<a><slot /></a>' },
+          transition: false
+        }
+      }
+    })
+    await flushPromises()
+
+    await wrapper.get('[data-testid="linuxdo-bind-login-totp"]').setValue('123456')
+    await wrapper.get('[data-testid="linuxdo-bind-login-totp-submit"]').trigger('click')
+    await flushPromises()
+
+    expect(setToken).not.toHaveBeenCalled()
+    expect(wrapper.find('[data-testid="login-passkey-pane"]').exists()).toBe(true)
+
+    await wrapper.get('[data-testid="passkey-login-verify"]').trigger('click')
+    await flushPromises()
+
+    expect(login2FAPasskeyFinish).toHaveBeenCalledWith({
+      temp_token: 'ld-dual-temp',
+      session_token: 'ld-pk-sess',
+      credential: { id: 'ld-cred', type: 'public-key' }
+    })
+    expect(setToken).toHaveBeenCalledWith('ld-dual-token')
+    expect(replace).toHaveBeenCalledWith('/dashboard')
   })
 })

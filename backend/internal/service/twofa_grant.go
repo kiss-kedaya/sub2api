@@ -368,12 +368,14 @@ func (s *TotpService) ConsumeTwoFactorGrant(
 	return result, nil
 }
 
-// RevokeTwoFactorGrantsForUser 删除该用户全部未过期的 2FA 凭证。
-// 密码修改、关闭/重置 2FA、账号禁用、强制下线、登出等场景调用。
+// RevokeTwoFactorGrantsForUser 删除该用户全部未过期的 2FA 凭证，并同步吊销个人接口密钥（uak_）。
+// 密码修改、密码重置、关闭/重置 2FA、账号禁用、强制下线等高危安全变更场景调用。
 func (s *TotpService) RevokeTwoFactorGrantsForUser(ctx context.Context, userID int64) error {
 	if userID <= 0 {
 		return nil
 	}
+	// 个人接口密钥吊销独立于 Redis 2FA grant 存储，即使 Redis 抖动也要立即执行。
+	s.revokePersonalAPIKeyQuietly(ctx, userID, "two-factor grants revoke")
 	store, err := s.twoFactorGrantStore()
 	if err != nil {
 		return err

@@ -18,9 +18,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// GET /v1/sub2api/account end to end through the real API key authentication. Like the other self-service
-// endpoints it must answer for a key that is expired, out of quota or whose owner has an empty wallet (a key must be
-// able to say so), refuse a key that is simply wrong or switched off, and never count as the key having been used.
+// GET /v1/sub2api/account end to end through the real API key authentication. It must answer for an active key
+// (including when the owner's wallet is empty), refuse keys that are expired (403), quota-exhausted (429),
+// wrong or switched off (401), and never count as the key having been used.
 // It carries the owner's money, so it also must never answer anything for a caller that is not authenticated.
 
 const keyAccountRoutePath = "/v1/sub2api/account"
@@ -89,10 +89,10 @@ func TestKeyAccountRouteAnswersForExpiredExhaustedAndEmptyWalletKeysButNotSwitch
 		status int
 		wallet float64
 	}{
-		{"expired by status", func(k *service.APIKey, _ *service.User) { k.Status = service.StatusAPIKeyExpired }, http.StatusOK, 777.25},
-		{"expired by clock", func(k *service.APIKey, _ *service.User) { past := time.Now().Add(-time.Hour); k.ExpiresAt = &past }, http.StatusOK, 777.25},
-		{"quota exhausted by status", func(k *service.APIKey, _ *service.User) { k.Status = service.StatusAPIKeyQuotaExhausted }, http.StatusOK, 777.25},
-		{"quota exhausted by counter", func(k *service.APIKey, _ *service.User) { k.Quota, k.QuotaUsed = 5, 5 }, http.StatusOK, 777.25},
+		{"expired by status", func(k *service.APIKey, _ *service.User) { k.Status = service.StatusAPIKeyExpired }, http.StatusForbidden, 0},
+		{"expired by clock", func(k *service.APIKey, _ *service.User) { past := time.Now().Add(-time.Hour); k.ExpiresAt = &past }, http.StatusForbidden, 0},
+		{"quota exhausted by status", func(k *service.APIKey, _ *service.User) { k.Status = service.StatusAPIKeyQuotaExhausted }, http.StatusTooManyRequests, 0},
+		{"quota exhausted by counter", func(k *service.APIKey, _ *service.User) { k.Quota, k.QuotaUsed = 5, 5 }, http.StatusTooManyRequests, 0},
 		// An empty wallet is exactly when the owner wants to look: the answer is a wallet of 0, read, not refused.
 		{"wallet empty", func(_ *service.APIKey, u *service.User) { u.Balance = 0 }, http.StatusOK, 0},
 		{"switched off", func(k *service.APIKey, _ *service.User) { k.Status = "inactive" }, http.StatusUnauthorized, 0},

@@ -276,15 +276,19 @@ func (h *AuthHandler) LinuxDoOAuthCallback(c *gin.Context) {
 	// 审计：只登记被尝试账号的邮箱指纹（LinuxDo 用合成邮箱，不落明文）。
 	markAuthAuditEmail(c, email)
 	if intent == oauthIntentBindCurrentUser {
-		targetUserID, err := h.readOAuthBindUserIDFromCookie(c, linuxDoOAuthBindUserCookieName)
+		bindMeta, err := h.readOAuthBindUserMetaFromCookie(c, linuxDoOAuthBindUserCookieName)
 		if err != nil {
 			redirectOAuthError(c, frontendCallback, "invalid_state", "invalid oauth bind target", "")
 			return
 		}
+		targetUserID := bindMeta.UserID
 		if err := h.createOAuthPendingSession(c, oauthPendingSessionPayload{
 			Intent:                 oauthIntentBindCurrentUser,
 			Identity:               identityKey,
 			TargetUserID:           &targetUserID,
+			BindTokenIssuedAt:      bindMeta.TokenIssuedAt,
+			BindTokenVersion:       bindMeta.TokenVersion,
+			HasBindTokenVersion:    bindMeta.HasTokenVersion,
 			ResolvedEmail:          email,
 			RedirectTo:             redirectTo,
 			BrowserSessionKey:      browserSessionKey,
@@ -347,6 +351,13 @@ func (h *AuthHandler) LinuxDoOAuthCallback(c *gin.Context) {
 			"linuxdo",
 		)
 		if err == nil {
+			if modeErr := h.ensureBackendModeAllowsUser(c.Request.Context(), user); modeErr != nil {
+				if tokenPair != nil {
+					_ = h.authService.RevokeRefreshToken(c.Request.Context(), tokenPair.RefreshToken)
+				}
+				redirectOAuthError(c, frontendCallback, "login_blocked", infraerrors.Reason(modeErr), infraerrors.Message(modeErr))
+				return
+			}
 			subjectPlaintext, subjectHash, subjectPrefix := pendingSessionSubjectFields(identityKey.ProviderType, identityKey.ProviderSubject)
 			if err := applyPendingOAuthBinding(
 				c.Request.Context(),
@@ -375,7 +386,24 @@ func (h *AuthHandler) LinuxDoOAuthCallback(c *gin.Context) {
 			markAuthAuditSuccess(c, user.ID, user.Email)
 			clearOAuthPendingSessionCookie(c, secureCookie)
 			clearOAuthPendingBrowserCookie(c, secureCookie)
-			redirectOAuthTokenPair(c, frontendCallback, tokenPair, redirectTo)
+			h.redirectEmailOAuthSession(c, "linuxdo", frontendCallback, redirectTo, tokenPair, user)
+			return
+		}
+		if errors.Is(err, service.ErrLoginTOTPRequired) {
+			if user == nil {
+				redirectOAuthError(c, frontendCallback, "two_factor_unavailable", "two-factor verification is unavailable", "")
+				return
+			}
+			h.redirectEmailOAuthPending2FAChallenge(c, user, "linuxdo", service.EmailOAuthIdentityInput{
+				ProviderType:     identityKey.ProviderType,
+				ProviderKey:      identityKey.ProviderKey,
+				ProviderSubject:  identityKey.ProviderSubject,
+				Email:            email,
+				Username:         username,
+				DisplayName:      displayName,
+				AvatarURL:        avatarURL,
+				UpstreamMetadata: upstreamClaims,
+			}, frontendCallback, redirectTo)
 			return
 		}
 		if !errors.Is(err, service.ErrOAuthInvitationRequired) {
@@ -830,35 +858,6 @@ func redirectOAuthError(c *gin.Context, frontendCallback string, code string, me
 	redirectWithFragment(c, frontendCallback, fragment)
 }
 
-func redirectOAuthTokenPair(c *gin.Context, frontendCallback string, tokenPair *service.TokenPair, redirectTo string) {
-	fragment := url.Values{}
-	if tokenPair != nil {
-		fragment.Set("access_token", truncateFragmentValue(tokenPair.AccessToken))
-		fragment.Set("refresh_token", truncateFragmentValue(tokenPair.RefreshToken))
-		fragment.Set("expires_in", strconv.Itoa(tokenPair.ExpiresIn))
-		fragment.Set("token_type", "Bearer")
-	}
-	if redirect := strings.TrimSpace(redirectTo); redirect != "" {
-		originalRedirect := redirect
-		for range 2 {
-			decoded, err := url.QueryUnescape(redirect)
-			if err != nil || decoded == redirect {
-				break
-			}
-			redirect = decoded
-		}
-		if redirect != originalRedirect {
-			if sanitized := sanitizeFrontendRedirectPath(redirect); sanitized != "" {
-				redirect = sanitized
-			} else {
-				redirect = originalRedirect
-			}
-		}
-		fragment.Set("redirect", truncateFragmentValue(redirect))
-	}
-	redirectWithFragment(c, frontendCallback, fragment)
-}
-
 func redirectWithFragment(c *gin.Context, frontendCallback string, fragment url.Values) {
 	u, err := url.Parse(frontendCallback)
 	if err != nil {
@@ -1186,12 +1185,65 @@ func normalizeOAuthIntent(raw string) string {
 	}
 }
 
+type oauthBindTargetMeta struct {
+	UserID          int64
+	TokenIssuedAt   int64
+	TokenVersion    int64
+	HasTokenVersion bool
+}
+
+func (h *AuthHandler) checkOAuthBindStepUp(c *gin.Context, user *service.User, sessionKey string) error {
+	if user == nil {
+		return infraerrors.Unauthorized("UNAUTHORIZED", "authentication required")
+	}
+	if h == nil || h.totpService == nil {
+		return service.ErrTwoFactorPolicyUnavailable
+	}
+	factors, err := h.totpService.RequiredFactorsForUser(c.Request.Context(), user)
+	if err != nil {
+		return service.ErrTwoFactorPolicyUnavailable
+	}
+	if len(factors) == 0 {
+		return nil
+	}
+
+	verified := make([]service.Factor, 0, len(factors))
+	for _, factor := range factors {
+		if sessionKey != "" {
+			granted, grantErr := h.totpService.HasStepUpGrant(c.Request.Context(), user.ID, sessionKey, factor)
+			if grantErr != nil {
+				return service.ErrTwoFactorPolicyUnavailable
+			}
+			if granted {
+				verified = append(verified, factor)
+				continue
+			}
+		}
+		if consumeTwoFactorGrant(c, h.totpService, user.ID, factor) != nil {
+			verified = append(verified, factor)
+		}
+	}
+	satisfied := service.StepUpSatisfiedFactors(factors, verified)
+	if len(satisfied) > 0 {
+		servermiddleware.SetAuditExtra(c, map[string]any{
+			"two_factor_satisfied_factors": strings.Join(service.FactorStrings(satisfied), ","),
+		})
+		return nil
+	}
+	return infraerrors.Forbidden("STEP_UP_REQUIRED", "This operation requires recent two-factor verification").
+		WithMetadata(service.StepUpChallengeMetadata(factors))
+}
+
 func (h *AuthHandler) buildOAuthBindUserCookieFromContext(c *gin.Context) (string, error) {
-	userID, err := h.resolveOAuthBindTargetUserID(c)
-	if err != nil || userID == nil || *userID <= 0 {
+	meta, err := h.resolveOAuthBindTarget(c)
+	if err != nil || meta == nil || meta.UserID <= 0 {
+		var appErr *infraerrors.ApplicationError
+		if errors.As(err, &appErr) && appErr != nil {
+			return "", appErr
+		}
 		return "", infraerrors.Unauthorized("UNAUTHORIZED", "authentication required")
 	}
-	return buildOAuthBindUserCookieValue(*userID, h.oauthBindCookieSecret())
+	return buildOAuthBindUserCookieValueWithMeta(*meta, h.oauthBindCookieSecret())
 }
 
 func (h *AuthHandler) PrepareOAuthBindAccessTokenCookie(c *gin.Context) {
@@ -1209,14 +1261,68 @@ func (h *AuthHandler) PrepareOAuthBindAccessTokenCookie(c *gin.Context) {
 		return
 	}
 
+	if subject, ok := servermiddleware.GetAuthSubjectFromContext(c); ok && subject.UserID > 0 {
+		if h == nil || h.userService == nil || h.totpService == nil {
+			response.ErrorFrom(c, service.ErrTwoFactorPolicyUnavailable)
+			return
+		}
+		user, err := h.userService.GetByID(c.Request.Context(), subject.UserID)
+		if err != nil {
+			response.ErrorFrom(c, err)
+			return
+		}
+		if err := ensureLoginUserActive(user); err != nil {
+			response.ErrorFrom(c, err)
+			return
+		}
+		if err := h.ensureBackendModeAllowsUser(c.Request.Context(), user); err != nil {
+			response.ErrorFrom(c, err)
+			return
+		}
+		if err := h.checkOAuthBindStepUp(c, user, servermiddleware.StepUpSessionKey(c, subject.UserID)); err != nil {
+			response.ErrorFrom(c, err)
+			return
+		}
+	}
+
 	setOAuthBindAccessTokenCookie(c, token, h.isRequestHTTPS(c))
 	c.Status(http.StatusNoContent)
 	c.Writer.WriteHeaderNow()
 }
 
 func (h *AuthHandler) resolveOAuthBindTargetUserID(c *gin.Context) (*int64, error) {
+	meta, err := h.resolveOAuthBindTarget(c)
+	if err != nil || meta == nil || meta.UserID <= 0 {
+		return nil, err
+	}
+	id := meta.UserID
+	return &id, nil
+}
+
+func (h *AuthHandler) resolveOAuthBindTarget(c *gin.Context) (*oauthBindTargetMeta, error) {
 	if subject, ok := servermiddleware.GetAuthSubjectFromContext(c); ok && subject.UserID > 0 {
-		return &subject.UserID, nil
+		if h != nil && h.userService != nil {
+			user, err := h.userService.GetByID(c.Request.Context(), subject.UserID)
+			if err != nil {
+				return nil, err
+			}
+			if err := ensureLoginUserActive(user); err != nil {
+				return nil, err
+			}
+			if err := h.ensureBackendModeAllowsUser(c.Request.Context(), user); err != nil {
+				return nil, err
+			}
+			if err := h.checkOAuthBindStepUp(c, user, servermiddleware.StepUpSessionKey(c, subject.UserID)); err != nil {
+				return nil, err
+			}
+			return &oauthBindTargetMeta{
+				UserID:          user.ID,
+				TokenIssuedAt:   time.Now().Unix(),
+				TokenVersion:    user.TokenVersion,
+				HasTokenVersion: true,
+			}, nil
+		}
+		return &oauthBindTargetMeta{UserID: subject.UserID}, nil
 	}
 	if h == nil || h.authService == nil || h.userService == nil {
 		return nil, service.ErrInvalidToken
@@ -1247,15 +1353,59 @@ func (h *AuthHandler) resolveOAuthBindTargetUserID(c *gin.Context) (*int64, erro
 	if user == nil || !user.IsActive() || claims.TokenVersion != user.TokenVersion {
 		return nil, service.ErrInvalidToken
 	}
-	return &user.ID, nil
+	// 与 jwt_auth.go 对齐：revoke-all-sessions / logout 吊销的 access token 不得继续发起 OAuth 绑定。
+	if claims.IssuedAt == nil || h.authService.IsAccessTokenRevoked(c.Request.Context(), user.ID, claims.IssuedAt.Time) {
+		return nil, infraerrors.Unauthorized("TOKEN_REVOKED", "Token has been revoked")
+	}
+	if err := h.ensureBackendModeAllowsUser(c.Request.Context(), user); err != nil {
+		return nil, err
+	}
+	// 与 jwt_auth.go 对齐：开启会话绑定时校验 IP/UA 指纹，防止跨端重放偷来的 access token 绑定第三方身份。
+	if h.settingSvc != nil && h.settingSvc.IsSessionBindingEnabled(c.Request.Context()) &&
+		claims.BindingHash != "" && claims.BindingVersion > 0 {
+		binding := service.SessionBindingFromContext(c.Request.Context())
+		if binding == nil {
+			binding = &service.SessionBinding{
+				IP:        ip.GetTrustedClientIP(c),
+				UserAgent: strings.TrimSpace(c.Request.UserAgent()),
+			}
+		}
+		match := h.settingSvc.SessionBindingMatch(binding, claims.BindingHash, claims.BindingCoarse)
+		if match == service.BindingMismatch {
+			revoke := h.settingSvc.SessionBindingRevokesOnMismatch()
+			if revoke {
+				_ = h.authService.RevokeSessionFamily(c.Request.Context(), claims.SessionID)
+			}
+			h.authService.NoteAccessBindingMismatch(claims.UserID, revoke)
+			return nil, infraerrors.Unauthorized("SESSION_BINDING_MISMATCH", "Session network fingerprint changed, please login again")
+		}
+		if match == service.BindingMatchedAcrossIPFamily {
+			h.authService.NoteAccessIPFamilySwitch()
+		}
+	}
+
+	sessionKey := strings.TrimSpace(claims.SessionID)
+	if sessionKey == "" {
+		sessionKey = fmt.Sprintf("u%d", user.ID)
+	}
+	if err := h.checkOAuthBindStepUp(c, user, sessionKey); err != nil {
+		return nil, err
+	}
+
+	return &oauthBindTargetMeta{
+		UserID:          user.ID,
+		TokenIssuedAt:   claims.IssuedAt.Unix(),
+		TokenVersion:    user.TokenVersion,
+		HasTokenVersion: true,
+	}, nil
 }
 
-func (h *AuthHandler) readOAuthBindUserIDFromCookie(c *gin.Context, cookieName string) (int64, error) {
+func (h *AuthHandler) readOAuthBindUserMetaFromCookie(c *gin.Context, cookieName string) (oauthBindTargetMeta, error) {
 	value, err := readCookieDecoded(c, cookieName)
 	if err != nil {
-		return 0, err
+		return oauthBindTargetMeta{}, err
 	}
-	return parseOAuthBindUserCookieValue(value, h.oauthBindCookieSecret())
+	return parseOAuthBindUserCookieMeta(value, h.oauthBindCookieSecret())
 }
 
 func (h *AuthHandler) oauthBindCookieSecret() string {
@@ -1266,11 +1416,18 @@ func (h *AuthHandler) oauthBindCookieSecret() string {
 }
 
 func buildOAuthBindUserCookieValue(userID int64, secret string) (string, error) {
+	return buildOAuthBindUserCookieValueWithMeta(oauthBindTargetMeta{UserID: userID}, secret)
+}
+
+func buildOAuthBindUserCookieValueWithMeta(meta oauthBindTargetMeta, secret string) (string, error) {
 	secret = strings.TrimSpace(secret)
-	if userID <= 0 || secret == "" {
+	if meta.UserID <= 0 || secret == "" {
 		return "", errors.New("invalid oauth bind cookie input")
 	}
-	payload := strconv.FormatInt(userID, 10)
+	payload := strconv.FormatInt(meta.UserID, 10)
+	if meta.HasTokenVersion || meta.TokenIssuedAt > 0 {
+		payload = fmt.Sprintf("%d:%d:%d", meta.UserID, meta.TokenIssuedAt, meta.TokenVersion)
+	}
 	mac := hmac.New(sha256.New, []byte(secret))
 	_, _ = mac.Write([]byte(payload))
 	signature := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
@@ -1278,23 +1435,56 @@ func buildOAuthBindUserCookieValue(userID int64, secret string) (string, error) 
 }
 
 func parseOAuthBindUserCookieValue(value string, secret string) (int64, error) {
+	meta, err := parseOAuthBindUserCookieMeta(value, secret)
+	if err != nil {
+		return 0, err
+	}
+	return meta.UserID, nil
+}
+
+func parseOAuthBindUserCookieMeta(value string, secret string) (oauthBindTargetMeta, error) {
 	secret = strings.TrimSpace(secret)
 	if secret == "" {
-		return 0, errors.New("missing oauth bind cookie secret")
+		return oauthBindTargetMeta{}, errors.New("missing oauth bind cookie secret")
 	}
 	payload, signature, ok := strings.Cut(strings.TrimSpace(value), ".")
 	if !ok || payload == "" || signature == "" {
-		return 0, errors.New("invalid oauth bind cookie")
+		return oauthBindTargetMeta{}, errors.New("invalid oauth bind cookie")
 	}
 	mac := hmac.New(sha256.New, []byte(secret))
 	_, _ = mac.Write([]byte(payload))
 	expectedSignature := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
 	if !hmac.Equal([]byte(signature), []byte(expectedSignature)) {
-		return 0, errors.New("invalid oauth bind cookie signature")
+		return oauthBindTargetMeta{}, errors.New("invalid oauth bind cookie signature")
 	}
-	userID, err := strconv.ParseInt(payload, 10, 64)
-	if err != nil || userID <= 0 {
-		return 0, errors.New("invalid oauth bind cookie user")
+	parts := strings.Split(payload, ":")
+	switch len(parts) {
+	case 1:
+		userID, err := strconv.ParseInt(parts[0], 10, 64)
+		if err != nil || userID <= 0 {
+			return oauthBindTargetMeta{}, errors.New("invalid oauth bind cookie user")
+		}
+		return oauthBindTargetMeta{UserID: userID}, nil
+	case 3:
+		userID, err := strconv.ParseInt(parts[0], 10, 64)
+		if err != nil || userID <= 0 {
+			return oauthBindTargetMeta{}, errors.New("invalid oauth bind cookie user")
+		}
+		iat, err := strconv.ParseInt(parts[1], 10, 64)
+		if err != nil || iat < 0 {
+			return oauthBindTargetMeta{}, errors.New("invalid oauth bind cookie iat")
+		}
+		ver, err := strconv.ParseInt(parts[2], 10, 64)
+		if err != nil || ver < 0 {
+			return oauthBindTargetMeta{}, errors.New("invalid oauth bind cookie token version")
+		}
+		return oauthBindTargetMeta{
+			UserID:          userID,
+			TokenIssuedAt:   iat,
+			TokenVersion:    ver,
+			HasTokenVersion: true,
+		}, nil
+	default:
+		return oauthBindTargetMeta{}, errors.New("invalid oauth bind cookie payload")
 	}
-	return userID, nil
 }

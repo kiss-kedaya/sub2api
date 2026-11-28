@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
@@ -196,7 +197,7 @@ func TestPersonalAPIKeyHandler_ZeroFactorOAuthUserAllowedWithoutPayload(t *testi
 	require.Contains(t, w.Body.String(), `"key":"uak_`)
 }
 
-func TestKeyVerificationGuard_PersonalAPIKeyCreateAndOwnershipCheck(t *testing.T) {
+func TestKeyVerificationGuard_PersonalAPIKeyForbidden(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	keys := &handlerSecretRepo{keys: map[int64]*service.APIKey{
 		1: {ID: 1, UserID: 88, KeyPrefix: "sk-owner", Status: service.StatusAPIKeyActive},
@@ -214,30 +215,24 @@ func TestKeyVerificationGuard_PersonalAPIKeyCreateAndOwnershipCheck(t *testing.T
 		return c
 	}
 
-	// 1. 创建路径（apiKeyID=0）免交互验证。
+	// 1. 即使绕过路由中间件，个人接口密钥（uak_）在创建推理密钥门禁也必须 403 拒绝。
 	cCreate := newCtx(http.MethodPost, "/api/v1/keys")
-	method, err := h.keyVerificationGuard(cCreate, 88, 0, nil)
-	require.NoError(t, err)
-	require.Equal(t, service.AuditAuthMethodUserAPIKey, method)
-	require.True(t, cCreate.GetBool(service.ApiKeyVerificationGuardPassedKey))
+	_, err := h.keyVerificationGuard(cCreate, 88, 0, nil)
+	require.Error(t, err)
+	require.Equal(t, "PERSONAL_API_KEY_FORBIDDEN", infraerrors.Reason(err))
+	require.False(t, cCreate.GetBool(service.ApiKeyVerificationGuardPassedKey))
 
-	// 2. 轮换本人 Key（apiKeyID=1）通过归属校验。
+	// 2. 轮换本人 Key（apiKeyID=1）同样必须被拒绝。
 	cOwn := newCtx(http.MethodPut, "/api/v1/keys/1")
-	method, err = h.keyVerificationGuard(cOwn, 88, 1, nil)
-	require.NoError(t, err)
-	require.Equal(t, service.AuditAuthMethodUserAPIKey, method)
-	require.True(t, cOwn.GetBool(service.ApiKeyVerificationGuardPassedKey))
+	_, err = h.keyVerificationGuard(cOwn, 88, 1, nil)
+	require.Error(t, err)
+	require.Equal(t, "PERSONAL_API_KEY_FORBIDDEN", infraerrors.Reason(err))
+	require.False(t, cOwn.GetBool(service.ApiKeyVerificationGuardPassedKey))
 
-	// 3. 轮换他人 Key（apiKeyID=2）必须被拒绝（ErrAPIKeyNotFound），不标 passed。
+	// 3. 轮换他人 Key（apiKeyID=2）同样必须被拒绝。
 	cForeign := newCtx(http.MethodPut, "/api/v1/keys/2")
 	_, err = h.keyVerificationGuard(cForeign, 88, 2, nil)
-	require.ErrorIs(t, err, service.ErrAPIKeyNotFound)
+	require.Error(t, err)
+	require.Equal(t, "PERSONAL_API_KEY_FORBIDDEN", infraerrors.Reason(err))
 	require.False(t, cForeign.GetBool(service.ApiKeyVerificationGuardPassedKey))
-
-	// 4. apiKeyRepo 未装配时必须 fail-closed 返回 ErrAPIKeyVerificationUnavailable。
-	hNilRepo := NewAPIKeyHandler(nil, nil)
-	hNilRepo.SetVerificationService(service.NewAPIKeyVerificationService(nil, nil, nil, nil, nil, nil))
-	cNil := newCtx(http.MethodPut, "/api/v1/keys/1")
-	_, err = hNilRepo.keyVerificationGuard(cNil, 88, 1, nil)
-	require.ErrorIs(t, err, service.ErrAPIKeyVerificationUnavailable)
 }

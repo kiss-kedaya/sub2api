@@ -414,11 +414,12 @@ func (h *AuthHandler) DingTalkOAuthCallback(c *gin.Context) {
 
 	// ─── S1 主动绑定分支（PR-3 才走到这里）───
 	if intent == oauthIntentBindCurrentUser {
-		targetUserID, err := h.readOAuthBindUserIDFromCookie(c, dingTalkOAuthBindUserCookieName)
+		bindMeta, err := h.readOAuthBindUserMetaFromCookie(c, dingTalkOAuthBindUserCookieName)
 		if err != nil {
 			redirectOAuthError(c, frontendCallback, "invalid_state", "invalid bind user cookie", "")
 			return
 		}
+		targetUserID := bindMeta.UserID
 		// policy=none 跨组织用户绑定时 staff.Email=""，用合成邮箱占位（用于 audit log，不用于注册）
 		bindResolvedEmail := staff.Email
 		if bindResolvedEmail == "" {
@@ -426,8 +427,12 @@ func (h *AuthHandler) DingTalkOAuthCallback(c *gin.Context) {
 		}
 		if err := h.createOAuthPendingSession(c, oauthPendingSessionPayload{
 			Intent: oauthIntentBindCurrentUser, Identity: identityKey,
-			TargetUserID: &targetUserID, ResolvedEmail: bindResolvedEmail,
-			RedirectTo: redirectTo, BrowserSessionKey: browserSessionKey,
+			TargetUserID:        &targetUserID,
+			BindTokenIssuedAt:   bindMeta.TokenIssuedAt,
+			BindTokenVersion:    bindMeta.TokenVersion,
+			HasBindTokenVersion: bindMeta.HasTokenVersion,
+			ResolvedEmail:       bindResolvedEmail,
+			RedirectTo:          redirectTo, BrowserSessionKey: browserSessionKey,
 			UpstreamIdentityClaims: upstreamClaims,
 			CompletionResponse:     map[string]any{"redirect": redirectTo},
 		}); err != nil {

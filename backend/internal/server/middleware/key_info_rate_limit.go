@@ -76,11 +76,10 @@ func keyInfoRateLimit(limiter panelRateLimitAllower, limit int, endpoint string)
 }
 
 // isKeySelfServicePath reports whether path is one of the endpoints an API key uses to read information about
-// itself. They only need the key to be recognised: a key that is expired or out of quota must still be able to
-// say so, no billing check applies, and reading them must not count as "the key was used" (a status poll would
-// otherwise keep refreshing last_used_at and hide real activity). A new key self-service endpoint must be listed
-// here, or a key that is expired, out of quota or whose owner has an empty wallet would be refused by the billing
-// checks before the endpoint can answer.
+// itself. They skip balance/subscription enforcement and reading them must not count as "the key was used"
+// (a status poll would otherwise keep refreshing last_used_at and hide real activity). Expired keys are always
+// rejected in base authentication before reaching these endpoints, and quota-exhausted keys are denied
+// account-wide /v1/sub2api/account while remaining allowed on key-scoped self-service endpoints (/key, /usage).
 func isKeySelfServicePath(path string) bool {
 	switch path {
 	case "/v1/sub2api/billing", "/v1/sub2api/key", "/v1/sub2api/groups", "/v1/sub2api/usage", "/v1/sub2api/account":

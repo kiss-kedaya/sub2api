@@ -347,17 +347,13 @@ func (h *APIKeyHandler) keyVerificationGuard(
 	if userID <= 0 {
 		return "", service.ErrAPIKeyVerificationUnavailable
 	}
-	// 个人接口密钥（uak_）本身是在交互式会话中通过严格身份校验后签发的长期管理凭据，
-	// 供远程服务器/上游渠道管理无感调用创建/轮换 API Key 接口；此处仍严格 fail-closed 校验归属权（防越权探测），
-	// 并将审计因子记为 user_api_key，受面板与 KeyVerification 限流约束。
+	// 纵深防御：即使路由中间件被绕过，个人接口密钥（uak_）也不得通过创建/修改/轮换推理密钥的身份校验门禁。
 	if c != nil && c.GetString("auth_method") == service.AuditAuthMethodUserAPIKey {
-		if apiKeyID > 0 {
-			if err := h.verificationService.VerifyAPIKeyOwnership(c.Request.Context(), userID, apiKeyID); err != nil {
-				return "", err
-			}
-		}
-		c.Set(service.ApiKeyVerificationGuardPassedKey, true)
-		return service.AuditAuthMethodUserAPIKey, nil
+		setVerificationAudit(c, nil, auditVerificationRejected, "PERSONAL_API_KEY_FORBIDDEN")
+		return "", infraerrors.Forbidden(
+			"PERSONAL_API_KEY_FORBIDDEN",
+			"Personal API key cannot create, modify, or rotate API keys",
+		)
 	}
 	var (
 		result *service.APIKeyVerificationResult

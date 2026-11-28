@@ -261,11 +261,29 @@
                 :disabled="isSubmitting"
                 @keyup.enter="handleBindLogin"
               />
+              <div v-if="bindCaptchaEnabled" class="space-y-2">
+                <CaptchaChallenge
+                  ref="bindCaptchaRef"
+                  :site-key="bindTurnstileSiteKey"
+                  :turnstile-enabled="bindTurnstileEnabled"
+                  :turnstile-site-key="bindTurnstileSiteKey"
+                  :tencent-enabled="bindTencentCaptchaEnabled"
+                  :tencent-app-id="bindTencentCaptchaAppId"
+                  :tencent-region="bindTencentCaptchaRegion"
+                  :aliyun-enabled="bindAliyunCaptchaEnabled"
+                  :aliyun-scene-id="bindAliyunCaptchaSceneId"
+                  :aliyun-prefix="bindAliyunCaptchaPrefix"
+                  :aliyun-region="bindAliyunCaptchaRegion"
+                  @verify="onBindCaptchaVerify"
+                  @expire="onBindCaptchaExpire"
+                  @error="onBindCaptchaError"
+                />
+              </div>
               <button
                 type="button"
                 data-testid="wechat-bind-login-submit"
                 class="btn btn-primary w-full"
-                :disabled="isSubmitting || !bindLoginEmail.trim() || !bindLoginPassword"
+                :disabled="isSubmitting || !bindLoginEmail.trim() || !bindLoginPassword || (bindTurnstileEnabled && !bindCaptchaToken)"
                 @click="handleBindLogin"
               >
                 {{ isSubmitting ? t('common.processing') : t('auth.oauthFlow.logInAndBind') }}
@@ -283,36 +301,46 @@
           </template>
 
           <template v-else-if="needsTotpChallenge">
-            <p class="text-sm text-default">
-              {{
-                t('auth.oauthFlow.totpHint', {
-                  providerName,
-                  account: totpUserEmailMasked || t('auth.oauthFlow.yourAccount')
-                })
-              }}
-            </p>
-            <div class="space-y-3">
-              <input
-                v-model="totpCode"
-                data-testid="wechat-bind-login-totp"
-                type="text"
-                inputmode="numeric"
-                maxlength="6"
-                class="input w-full"
-                placeholder="123456"
-                :disabled="isSubmitting"
-                @keyup.enter="handleSubmitTotpChallenge"
+            <template v-if="twoFactorNextFactor === 'passkey'">
+              <PasskeyFactorPane
+                :supported="passkeySupported"
+                :verifying="passkeyVerifying"
+                :user-email-masked="totpUserEmailMasked"
+                @verify="handlePasskeyFactorVerify"
               />
-              <button
-                type="button"
-                data-testid="wechat-bind-login-totp-submit"
-                class="btn btn-primary w-full"
-                :disabled="isSubmitting || totpCode.trim().length !== 6"
-                @click="handleSubmitTotpChallenge"
-              >
-                {{ isSubmitting ? t('common.processing') : t('auth.oauthFlow.verifyAndContinue') }}
-              </button>
-            </div>
+            </template>
+            <template v-else>
+              <p class="text-sm text-default">
+                {{
+                  t('auth.oauthFlow.totpHint', {
+                    providerName,
+                    account: totpUserEmailMasked || t('auth.oauthFlow.yourAccount')
+                  })
+                }}
+              </p>
+              <div class="space-y-3">
+                <input
+                  v-model="totpCode"
+                  data-testid="wechat-bind-login-totp"
+                  type="text"
+                  inputmode="numeric"
+                  maxlength="6"
+                  class="input w-full"
+                  placeholder="123456"
+                  :disabled="isSubmitting"
+                  @keyup.enter="handleSubmitTotpChallenge"
+                />
+                <button
+                  type="button"
+                  data-testid="wechat-bind-login-totp-submit"
+                  class="btn btn-primary w-full"
+                  :disabled="isSubmitting || totpCode.trim().length !== 6"
+                  @click="handleSubmitTotpChallenge"
+                >
+                  {{ isSubmitting ? t('common.processing') : t('auth.oauthFlow.verifyAndContinue') }}
+                </button>
+              </div>
+            </template>
           </template>
         </div>
       </transition>
@@ -328,17 +356,23 @@ import { AuthLayout } from '@/components/layout'
 import PendingOAuthCreateAccountForm, {
   type PendingOAuthCreateAccountPayload
 } from '@/components/auth/PendingOAuthCreateAccountForm.vue'
+import PasskeyFactorPane from '@/components/auth/PasskeyFactorPane.vue'
+import CaptchaChallenge from '@/components/CaptchaChallenge.vue'
 import { apiClient } from '@/api/client'
 import { sanitizeInternalRedirectPath } from '@/utils/url'
 import { useAuthStore, useAppStore } from '@/stores'
 import {
   completeWeChatOAuthRegistration,
+  exchangeOAuthLoginCode,
   exchangePendingOAuthCompletion,
   getAuthToken,
+  getPublicSettings,
   hasExplicitWeChatOAuthCapabilities,
   getOAuthCompletionKind,
   isOAuthLoginCompletion,
+  isTotp2FARequired,
   login2FA,
+  login2FAPasskeyFinish,
   prepareOAuthBindAccessTokenCookie,
   persistOAuthTokenContext,
   resolveWeChatOAuthStartStrict,
@@ -346,6 +380,7 @@ import {
   type OAuthTokenResponse,
   type PendingOAuthExchangeResponse
 } from '@/api/auth'
+import { passkeyAPI } from '@/api/passkey'
 import {
   clearAllAffiliateReferralCodes,
   loadOAuthAffiliateCode,
@@ -386,6 +421,32 @@ const totpTempToken = ref('')
 const totpCode = ref('')
 const totpError = ref('')
 const totpUserEmailMasked = ref('')
+const twoFactorNextFactor = ref<'totp' | 'passkey'>('totp')
+const passkeySessionToken = ref('')
+const passkeyOptions = ref<{ publicKey: Record<string, unknown> } | undefined>(undefined)
+const passkeyVerifying = ref(false)
+const passkeySupported = computed(() => passkeyAPI.isSupported())
+const bindCaptchaRef = ref<InstanceType<typeof CaptchaChallenge> | null>(null)
+const bindCaptchaSettingsLoaded = ref(false)
+const bindTurnstileEnabled = ref(false)
+const bindTurnstileSiteKey = ref('')
+const bindTencentCaptchaEnabled = ref(false)
+const bindTencentCaptchaAppId = ref('')
+const bindTencentCaptchaRegion = ref('cn')
+const bindAliyunCaptchaEnabled = ref(false)
+const bindAliyunCaptchaSceneId = ref('')
+const bindAliyunCaptchaPrefix = ref('')
+const bindAliyunCaptchaRegion = ref('cn')
+const bindCaptchaToken = ref('')
+const bindTencentRandstr = ref('')
+const bindActionCaptchaEnabled = computed(
+  () =>
+    (bindTencentCaptchaEnabled.value && Boolean(bindTencentCaptchaAppId.value)) ||
+    (bindAliyunCaptchaEnabled.value && Boolean(bindAliyunCaptchaSceneId.value) && Boolean(bindAliyunCaptchaPrefix.value))
+)
+const bindCaptchaEnabled = computed(
+  () => (bindTurnstileEnabled.value && Boolean(bindTurnstileSiteKey.value)) || bindActionCaptchaEnabled.value
+)
 const bindSuccessMessage = t('profile.authBindings.bindSuccess')
 
 const providerName = t('auth.wechatProviderName')
@@ -395,6 +456,53 @@ const showBackToChooser = computed(
 const needsCreateAccount = computed(() => pendingAccountAction.value === 'create_account')
 const needsBindLogin = computed(() => pendingAccountAction.value === 'bind_login')
 const hasCurrentAuthToken = computed(() => Boolean(getAuthToken()) || authStore.isAuthenticated)
+
+async function loadBindCaptchaSettings() {
+  if (bindCaptchaSettingsLoaded.value) return
+  bindCaptchaSettingsLoaded.value = true
+  try {
+    const settings = appStore.cachedPublicSettings ?? (await getPublicSettings())
+    if (!settings) return
+    bindTurnstileEnabled.value = Boolean(settings.turnstile_enabled)
+    bindTurnstileSiteKey.value = settings.turnstile_site_key || ''
+    bindTencentCaptchaEnabled.value = Boolean(settings.tencent_captcha_enabled)
+    bindTencentCaptchaAppId.value = settings.tencent_captcha_app_id || ''
+    bindTencentCaptchaRegion.value = settings.tencent_captcha_region || 'cn'
+    bindAliyunCaptchaEnabled.value = Boolean(settings.aliyun_captcha_enabled)
+    bindAliyunCaptchaSceneId.value = settings.aliyun_captcha_scene_id || ''
+    bindAliyunCaptchaPrefix.value = settings.aliyun_captcha_prefix || ''
+    bindAliyunCaptchaRegion.value = settings.aliyun_captcha_region || 'cn'
+  } catch {
+    bindCaptchaSettingsLoaded.value = false
+  }
+}
+
+watch(needsBindLogin, active => {
+  if (active) {
+    void loadBindCaptchaSettings()
+  }
+}, { immediate: true })
+
+function onBindCaptchaVerify(token: string, randstr = '') {
+  bindCaptchaToken.value = token
+  bindTencentRandstr.value = randstr
+}
+
+function onBindCaptchaExpire() {
+  bindCaptchaToken.value = ''
+  bindTencentRandstr.value = ''
+}
+
+function onBindCaptchaError() {
+  bindCaptchaToken.value = ''
+  bindTencentRandstr.value = ''
+}
+
+function resetBindCaptcha() {
+  bindCaptchaToken.value = ''
+  bindTencentRandstr.value = ''
+  bindCaptchaRef.value?.reset()
+}
 
 watch(invitationError, value => {
   if (value) {
@@ -432,6 +540,11 @@ type PendingWeChatCompletion = PendingOAuthExchangeResponse & {
   requires_2fa?: boolean
   temp_token?: string
   user_email_masked?: string
+  required_factors?: string[]
+  passed_factors?: string[]
+  next_factor?: string
+  passkey_session_token?: string
+  passkey_options?: { publicKey: Record<string, unknown> }
 }
 
 function persistPendingAuthSession(redirect?: string) {
@@ -746,6 +859,9 @@ function applyTotpChallenge(completion: PendingWeChatCompletion): boolean {
   if (completion.requires_2fa !== true || !completion.temp_token) {
     return false
   }
+  const required = completion.required_factors?.length ? completion.required_factors : ['totp']
+  const passed = completion.passed_factors ?? []
+  const next = completion.next_factor || required.find(factor => !passed.includes(factor)) || 'totp'
 
   pendingAccountAction.value = 'none'
   needsChooser.value = false
@@ -756,6 +872,9 @@ function applyTotpChallenge(completion: PendingWeChatCompletion): boolean {
   totpCode.value = ''
   totpError.value = ''
   totpUserEmailMasked.value = completion.user_email_masked || ''
+  twoFactorNextFactor.value = next === 'passkey' ? 'passkey' : 'totp'
+  passkeySessionToken.value = completion.passkey_session_token || ''
+  passkeyOptions.value = completion.passkey_options
   isProcessing.value = false
   return true
 }
@@ -945,17 +1064,40 @@ async function handleBindLogin() {
   const password = bindLoginPassword.value
   if (!email || !password) return
 
+  if (bindTurnstileEnabled.value && !bindCaptchaToken.value) {
+    accountActionError.value = t('auth.completeVerification')
+    return
+  }
+  if (bindActionCaptchaEnabled.value) {
+    const proof = await bindCaptchaRef.value?.verifyAction()
+    if (!proof) return
+    bindCaptchaToken.value = proof.token
+    bindTencentRandstr.value = proof.randstr
+  }
+
   isSubmitting.value = true
   try {
     const { data } = await apiClient.post<PendingWeChatCompletion>('/auth/oauth/pending/bind-login', {
       email,
       password,
+      ...((bindTurnstileEnabled.value || bindAliyunCaptchaEnabled.value) && bindCaptchaToken.value
+        ? { turnstile_token: bindCaptchaToken.value }
+        : {}),
+      ...(bindTencentCaptchaEnabled.value && bindCaptchaToken.value
+        ? {
+            tencent_captcha_ticket: bindCaptchaToken.value,
+            tencent_captcha_randstr: bindTencentRandstr.value
+          }
+        : {}),
       ...serializeAdoptionDecision(currentAdoptionDecision())
     })
     await finalizePendingAccountResponse(data)
   } catch (e: unknown) {
     accountActionError.value = getRequestErrorMessage(e, t('auth.loginFailed'))
   } finally {
+    if (bindCaptchaEnabled.value) {
+      resetBindCaptcha()
+    }
     isSubmitting.value = false
   }
 }
@@ -971,13 +1113,14 @@ async function handleSubmitTotpChallenge() {
       temp_token: totpTempToken.value,
       totp_code: code
     })
-    if (!('access_token' in completionResponse)) {
-      // OAuth / pending-bind 流程不会要求第二个因子；拿到挑战说明策略异常，fail-closed。
-      throw new Error('unexpected two-factor challenge')
+    if (isTotp2FARequired(completionResponse)) {
+      applyTotpChallenge(completionResponse as PendingWeChatCompletion)
+      return
     }
     const completion = completionResponse
     persistOAuthTokenContext(completion)
     await authStore.setToken(completion.access_token)
+    clearPendingAuthSession()
     clearAllAffiliateReferralCodes()
     appStore.showSuccess(t('auth.loginSuccess'))
     await router.replace(redirectTo.value)
@@ -985,6 +1128,42 @@ async function handleSubmitTotpChallenge() {
     totpError.value = getRequestErrorMessage(e, t('auth.loginFailed'))
   } finally {
     isSubmitting.value = false
+  }
+}
+
+async function handlePasskeyFactorVerify() {
+  totpError.value = ''
+  if (!passkeySupported.value) {
+    totpError.value = t('auth.passkeyUnsupported')
+    return
+  }
+  if (!totpTempToken.value || !passkeySessionToken.value || !passkeyOptions.value) {
+    totpError.value = t('auth.passkeyFailed')
+    return
+  }
+
+  passkeyVerifying.value = true
+  try {
+    const credential = await passkeyAPI.acceptLoginChallenge(passkeyOptions.value)
+    const completion = await login2FAPasskeyFinish({
+      temp_token: totpTempToken.value,
+      session_token: passkeySessionToken.value,
+      credential
+    })
+    persistOAuthTokenContext(completion)
+    await authStore.setToken(completion.access_token)
+    clearPendingAuthSession()
+    clearAllAffiliateReferralCodes()
+    appStore.showSuccess(t('auth.loginSuccess'))
+    await router.replace(redirectTo.value)
+  } catch (e: unknown) {
+    const fallback =
+      e instanceof DOMException && e.name === 'NotAllowedError'
+        ? t('auth.passkeyCancelled')
+        : t('auth.passkeyFailed')
+    totpError.value = getRequestErrorMessage(e, fallback)
+  } finally {
+    passkeyVerifying.value = false
   }
 }
 
@@ -1028,6 +1207,7 @@ onMounted(async () => {
 
   const params = parseFragmentParams()
   const legacyLogin = readLegacyFragmentLogin(params)
+  const oneTimeCode = params.get('code')?.trim() || ''
   const legacyPendingToken = params.get('pending_oauth_token')?.trim() || ''
   const error = params.get('error')
   const errorDesc = params.get('error_description') || params.get('error_message') || ''
@@ -1036,6 +1216,33 @@ onMounted(async () => {
   )
 
   try {
+    if (params.get('requires_2fa') === '1' && params.get('temp_token')) {
+      redirectTo.value = redirect
+      if (
+        applyTotpChallenge({
+          requires_2fa: true,
+          temp_token: params.get('temp_token') || '',
+          user_email_masked: params.get('user_email_masked') || '',
+          required_factors: params.get('required_factors')
+            ? params.get('required_factors')!.split(',').map(item => item.trim()).filter(Boolean)
+            : undefined,
+          next_factor: params.get('next_factor') || undefined
+        } as PendingWeChatCompletion)
+      ) {
+        return
+      }
+    }
+
+    if (oneTimeCode) {
+      const exchanged = await exchangeOAuthLoginCode(oneTimeCode)
+      persistOAuthTokenContext(exchanged)
+      await authStore.setToken(exchanged.access_token)
+      clearAllAffiliateReferralCodes()
+      appStore.showSuccess(t('auth.loginSuccess'))
+      await router.replace(sanitizeRedirectPath(exchanged.redirect || redirect))
+      return
+    }
+
     if (legacyLogin) {
       persistOAuthTokenContext(legacyLogin)
       await authStore.setToken(legacyLogin.access_token)

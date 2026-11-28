@@ -2,12 +2,16 @@ package handler
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -21,6 +25,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ip"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/oauth"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
+	servermiddleware "github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 
 	entsql "entgo.io/ent/dialect/sql"
@@ -36,8 +41,11 @@ const (
 	oauthPendingCookieMaxAgeSec   = 10 * 60
 	oauthPendingChoiceStep        = "choose_account_action_required"
 
-	oauthCompletionResponseKey = "completion_response"
-	oauthPromoCodeStateKey     = "promo_code"
+	oauthCompletionResponseKey       = "completion_response"
+	oauthPromoCodeStateKey           = "promo_code"
+	oauthBindTokenIssuedAtStateKey   = "bind_token_iat"
+	oauthBindTokenVersionStateKey    = "bind_token_version"
+	oauthPendingBindAfter2FAStateKey = "pending_bind_after_2fa"
 )
 
 var pendingOAuthCreateAccountPreCommitHook func(context.Context, *dbent.PendingAuthSession) error
@@ -46,6 +54,10 @@ type oauthPendingSessionPayload struct {
 	Intent                 string
 	Identity               service.PendingAuthIdentityKey
 	TargetUserID           *int64
+	BindTokenIssuedAt      int64
+	BindTokenVersion       int64
+	HasBindTokenVersion    bool
+	PendingBindAfter2FA    bool
 	ResolvedEmail          string
 	RedirectTo             string
 	BrowserSessionKey      string
@@ -59,10 +71,13 @@ type oauthAdoptionDecisionRequest struct {
 }
 
 type bindPendingOAuthLoginRequest struct {
-	Email            string `json:"email" binding:"required,email"`
-	Password         string `json:"password" binding:"required"`
-	AdoptDisplayName *bool  `json:"adopt_display_name,omitempty"`
-	AdoptAvatar      *bool  `json:"adopt_avatar,omitempty"`
+	Email                 string `json:"email" binding:"required,email"`
+	Password              string `json:"password" binding:"required"`
+	TurnstileToken        string `json:"turnstile_token,omitempty"`
+	TencentCaptchaTicket  string `json:"tencent_captcha_ticket,omitempty"`
+	TencentCaptchaRandstr string `json:"tencent_captcha_randstr,omitempty"`
+	AdoptDisplayName      *bool  `json:"adopt_display_name,omitempty"`
+	AdoptAvatar           *bool  `json:"adopt_avatar,omitempty"`
 }
 
 type createPendingOAuthAccountRequest struct {
@@ -242,6 +257,15 @@ func (h *AuthHandler) createOAuthPendingSession(c *gin.Context, payload oauthPen
 	}
 	if promoCode := readOAuthPromoCode(c); promoCode != "" {
 		localFlowState[oauthPromoCodeStateKey] = promoCode
+	}
+	if payload.BindTokenIssuedAt > 0 {
+		localFlowState[oauthBindTokenIssuedAtStateKey] = payload.BindTokenIssuedAt
+	}
+	if payload.HasBindTokenVersion {
+		localFlowState[oauthBindTokenVersionStateKey] = payload.BindTokenVersion
+	}
+	if payload.PendingBindAfter2FA {
+		localFlowState[oauthPendingBindAfter2FAStateKey] = true
 	}
 
 	session, err := svc.CreatePendingSession(c.Request.Context(), service.CreatePendingAuthSessionInput{
@@ -1759,6 +1783,68 @@ func writeOAuthTokenPairResponse(c *gin.Context, tokenPair *service.TokenPair) {
 	})
 }
 
+func pendingSessionInt64Value(values map[string]any, key string) (int64, bool) {
+	if len(values) == 0 {
+		return 0, false
+	}
+	raw, ok := values[key]
+	if !ok || raw == nil {
+		return 0, false
+	}
+	switch v := raw.(type) {
+	case int64:
+		return v, true
+	case int:
+		return int64(v), true
+	case float64:
+		return int64(v), true
+	case json.Number:
+		if parsed, err := v.Int64(); err == nil {
+			return parsed, true
+		}
+	case string:
+		if parsed, err := strconv.ParseInt(strings.TrimSpace(v), 10, 64); err == nil {
+			return parsed, true
+		}
+	}
+	return 0, false
+}
+
+func pendingOAuthRequiresBindAfter2FA(session *dbent.PendingAuthSession) bool {
+	if session == nil || len(session.LocalFlowState) == 0 {
+		return false
+	}
+	v, ok := session.LocalFlowState[oauthPendingBindAfter2FAStateKey].(bool)
+	return ok && v
+}
+
+func (h *AuthHandler) checkBindLoginRateLimit(c *gin.Context, email string) bool {
+	if h == nil || h.bindLoginLimiter == nil {
+		return true
+	}
+	clientIP := ip.GetClientIP(c)
+	normalizedEmail := strings.ToLower(strings.TrimSpace(email))
+	emailDigest := sha256.Sum256([]byte(normalizedEmail))
+	key := "oauth-bind-login:ip-email:" + clientIP + ":" + hex.EncodeToString(emailDigest[:8])
+	allowed, retryAfter, err := h.bindLoginLimiter(c.Request.Context(), key, 10, time.Minute)
+	if err != nil {
+		response.ErrorFrom(c, infraerrors.ServiceUnavailable("RATE_LIMIT_UNAVAILABLE", "rate limit service unavailable"))
+		return false
+	}
+	if !allowed {
+		if retryAfter > 0 {
+			sec := int(retryAfter.Seconds())
+			if sec < 1 {
+				sec = 1
+			}
+			c.Header("Retry-After", strconv.Itoa(sec))
+		}
+		response.ErrorFrom(c, infraerrors.TooManyRequests("RATE_LIMIT_EXCEEDED", "Too many requests. Please try again later."))
+		return false
+	}
+	return true
+}
+
 func (h *AuthHandler) bindPendingOAuthLogin(c *gin.Context, provider string) {
 	var req bindPendingOAuthLoginRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -1777,6 +1863,16 @@ func (h *AuthHandler) bindPendingOAuthLogin(c *gin.Context, provider string) {
 	}
 	markAuthAuditProvider(c, pendingOAuthAuditProvider(provider, session.ProviderType))
 	markAuthAuditEmail(c, req.Email)
+
+	if !h.checkBindLoginRateLimit(c, req.Email) {
+		return
+	}
+
+	proof := captchaProof(req.TurnstileToken, req.TencentCaptchaTicket, req.TencentCaptchaRandstr)
+	if err := h.authService.VerifyCaptcha(c.Request.Context(), proof, ip.GetClientIP(c)); err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
 
 	user, err := h.authService.ValidatePasswordCredentials(c.Request.Context(), strings.TrimSpace(req.Email), req.Password)
 	if err != nil {
@@ -1797,27 +1893,41 @@ func (h *AuthHandler) bindPendingOAuthLogin(c *gin.Context, provider string) {
 		response.ErrorFrom(c, err)
 		return
 	}
-	// 绑定已有账户登录同样必须与密码登录/第三方登录同口径：设置读取失败时
-	// LoginRequiresTOTP fail-closed，不能因为 IsTotpEnabled 的 fail-open 跳过动态码。
-	if h.totpService != nil && h.settingSvc.LoginRequiresTOTP(c.Request.Context(), user) {
-		tempToken, err := h.totpService.CreatePendingOAuthBindLoginSession(
+	// 绑定已有账户登录同样必须与密码登录同口径（TOTP / Passkey / 双因子），
+	// 缺失依赖或策略读取失败一律 fail-closed（503），不能静默跳过二次验证。
+	if h.totpService == nil || h.settingSvc == nil {
+		response.ErrorFrom(c, service.ErrTwoFactorPolicyUnavailable)
+		return
+	}
+	factors, err := h.totpService.LoginRequiredFactors(c.Request.Context(), user)
+	if err != nil {
+		response.ErrorFrom(c, service.ErrTwoFactorPolicyUnavailable)
+		return
+	}
+	if len(factors) > 0 {
+		tempToken, err := h.totpService.CreateLoginSessionForFactors(
 			c.Request.Context(),
 			user.ID,
 			user.Email,
-			session.SessionToken,
-			session.BrowserSessionKey,
+			factors,
+			nil,
+			&service.PendingOAuthBindLoginSession{
+				PendingSessionToken: session.SessionToken,
+				BrowserSessionKey:   session.BrowserSessionKey,
+			},
 		)
 		if err != nil {
 			response.InternalError(c, "Failed to create 2FA session")
 			return
 		}
+		if factors[0] == service.FactorPasskey && h.passkeys == nil {
+			_ = h.totpService.DeleteLoginSession(c.Request.Context(), tempToken)
+			response.ErrorFrom(c, service.ErrTwoFactorPasskeyUnavailable)
+			return
+		}
 		// 审计：OAuth 绑定登录被 2FA 拦下（挑战下发，未签发会话）。
 		markAuthAuditChallenge(c, user.ID, user.Email)
-		response.Success(c, TotpLoginResponse{
-			Requires2FA:     true,
-			TempToken:       tempToken,
-			UserEmailMasked: service.MaskEmail(user.Email),
-		})
+		h.respondLoginFactorChallenge(c, tempToken, user, user.Email, factors, nil, factors)
 		return
 	}
 	if err := applyPendingOAuthBinding(c.Request.Context(), h.entClient(), h.authService, h.userService, session, decision, &user.ID, true, true); err != nil {
@@ -2120,28 +2230,79 @@ func (h *AuthHandler) ExchangePendingOAuthCompletion(c *gin.Context) {
 			return
 		}
 		// 身份已绑定就直接签会话的路径同样不能绕过登录二次验证
-		// （LinuxDo / 钉钉 / 微信 / OIDC 等第三方登录共用此兑换接口）。
-		if h.settingSvc != nil && h.settingSvc.LoginRequiresTOTP(c.Request.Context(), loginUser) {
-			if h.totpService == nil {
-				clearCookies()
-				response.ErrorFrom(c, infraerrors.ServiceUnavailable("TWO_FACTOR_UNAVAILABLE", "two-factor verification is unavailable"))
-				return
+		// （GitHub / Google / LinuxDo / 钉钉 / 微信 / OIDC 等第三方登录共用此兑换接口），
+		// 统一走 LoginRequiredFactors（覆盖 TOTP / Passkey / 双因子），缺失依赖或读取失败 fail-closed。
+		if h.totpService == nil || h.settingSvc == nil {
+			clearCookies()
+			response.ErrorFrom(c, infraerrors.ServiceUnavailable("TWO_FACTOR_UNAVAILABLE", "two-factor verification is unavailable"))
+			return
+		}
+		factors, factorErr := h.totpService.LoginRequiredFactors(c.Request.Context(), loginUser)
+		if factorErr != nil {
+			clearCookies()
+			response.ErrorFrom(c, infraerrors.ServiceUnavailable("TWO_FACTOR_UNAVAILABLE", "two-factor verification is unavailable"))
+			return
+		}
+		if len(factors) > 0 {
+			var pendingBind *service.PendingOAuthBindLoginSession
+			if pendingOAuthRequiresBindAfter2FA(session) {
+				pendingBind = &service.PendingOAuthBindLoginSession{
+					PendingSessionToken: session.SessionToken,
+					BrowserSessionKey:   session.BrowserSessionKey,
+				}
 			}
-			tempToken, err := h.totpService.CreateLoginSession(c.Request.Context(), loginUser.ID, loginUser.Email)
+			tempToken, err := h.totpService.CreateLoginSessionForFactors(
+				c.Request.Context(),
+				loginUser.ID,
+				loginUser.Email,
+				factors,
+				nil,
+				pendingBind,
+			)
 			if err != nil {
 				clearCookies()
 				response.ErrorFrom(c, infraerrors.InternalServer("TWO_FACTOR_SESSION_FAILED", "failed to create two-factor session"))
 				return
 			}
-			// 一次性：挑战下发即消费 pending 会话，同一个浏览器会话不能重复兑换。
-			if _, err := svc.ConsumeBrowserSession(c.Request.Context(), sessionToken, browserSessionKey); err != nil {
-				clearCookies()
-				response.ErrorFrom(c, err)
-				return
+			next := factors[0]
+			if next == service.FactorPasskey {
+				if h.passkeys == nil {
+					_ = h.totpService.DeleteLoginSession(c.Request.Context(), tempToken)
+					clearCookies()
+					response.ErrorFrom(c, service.ErrTwoFactorPasskeyUnavailable)
+					return
+				}
+				assertion, passkeySessionToken, pkErr := h.passkeys.BeginLoginForUser(
+					c.Request.Context(), loginUser.ID, service.PasskeySessionKindLogin2FA)
+				if pkErr != nil {
+					_ = h.totpService.DeleteLoginSession(c.Request.Context(), tempToken)
+					clearCookies()
+					response.ErrorFrom(c, pkErr)
+					return
+				}
+				payload["passkey_session_token"] = passkeySessionToken
+				payload["passkey_options"] = assertion
+			}
+			// 仅对已绑定的身份立即消费 pending 会话；未绑定身份（pending_bind_after_2fa）
+			// 保持 pending 会话未消费，留待全部 2FA 因子通过后由 finalizePendingOAuthBindOn2FAComplete 原子落库并消费。
+			if pendingBind == nil {
+				if _, err := svc.ConsumeBrowserSession(c.Request.Context(), sessionToken, browserSessionKey); err != nil {
+					_ = h.totpService.DeleteLoginSession(c.Request.Context(), tempToken)
+					clearCookies()
+					response.ErrorFrom(c, err)
+					return
+				}
 			}
 			payload["requires_2fa"] = true
 			payload["temp_token"] = tempToken
 			payload["user_email_masked"] = service.MaskEmail(loginUser.Email)
+			payload["required_factors"] = service.FactorStrings(factors)
+			payload["passed_factors"] = []string{}
+			payload["next_factor"] = next.String()
+			servermiddleware.SetAuditExtra(c, map[string]any{
+				"two_factor_required_factors": strings.Join(service.FactorStrings(factors), ","),
+				"two_factor_next_factor":      next.String(),
+			})
 			// 审计：2FA 挑战下发（第三方登录不能绕过二次验证）。
 			markAuthAuditChallenge(c, loginUser.ID, loginUser.Email)
 			clearCookies()
@@ -2197,6 +2358,47 @@ func (h *AuthHandler) ExchangePendingOAuthCompletion(c *gin.Context) {
 		markAuthAuditPending(c, "choice_required")
 		response.Success(c, payload)
 		return
+	}
+	// 主动绑定（bind_current_user）在最终落库绑定前必须复核目标用户的登录态是否已被吊销
+	// （含 revoke-all-sessions / 改密 / 停用 / 后台模式），防止在途绑定流程逃逸吊销。
+	if strings.EqualFold(strings.TrimSpace(session.Intent), oauthIntentBindCurrentUser) {
+		if session.TargetUserID == nil || *session.TargetUserID <= 0 || h.userService == nil || h.authService == nil {
+			clearCookies()
+			response.ErrorFrom(c, infraerrors.Unauthorized("UNAUTHORIZED", "authentication required"))
+			return
+		}
+		bindUser, bindErr := h.userService.GetByID(c.Request.Context(), *session.TargetUserID)
+		if bindErr != nil {
+			clearCookies()
+			response.ErrorFrom(c, bindErr)
+			return
+		}
+		if err := ensureLoginUserActive(bindUser); err != nil {
+			clearCookies()
+			response.ErrorFrom(c, err)
+			return
+		}
+		if err := h.ensureBackendModeAllowsUser(c.Request.Context(), bindUser); err != nil {
+			clearCookies()
+			response.ErrorFrom(c, err)
+			return
+		}
+		if recordedVersion, hasVer := pendingSessionInt64Value(session.LocalFlowState, oauthBindTokenVersionStateKey); hasVer && recordedVersion != bindUser.TokenVersion {
+			_, _ = svc.ConsumeBrowserSession(c.Request.Context(), sessionToken, browserSessionKey)
+			clearCookies()
+			response.ErrorFrom(c, infraerrors.Unauthorized("TOKEN_REVOKED", "Token has been revoked"))
+			return
+		}
+		bindIssuedAt := session.CreatedAt
+		if recordedIAT, hasIAT := pendingSessionInt64Value(session.LocalFlowState, oauthBindTokenIssuedAtStateKey); hasIAT && recordedIAT > 0 {
+			bindIssuedAt = time.Unix(recordedIAT, 0).UTC()
+		}
+		if h.authService.IsAccessTokenRevoked(c.Request.Context(), bindUser.ID, bindIssuedAt) {
+			_, _ = svc.ConsumeBrowserSession(c.Request.Context(), sessionToken, browserSessionKey)
+			clearCookies()
+			response.ErrorFrom(c, infraerrors.Unauthorized("TOKEN_REVOKED", "Token has been revoked"))
+			return
+		}
 	}
 	if !adoptionDecision.hasDecision() {
 		adoptionRequired, _ := payload["adoption_required"].(bool)

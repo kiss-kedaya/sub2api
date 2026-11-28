@@ -603,3 +603,44 @@ func TestKeyAccountRefusesAnonymousSimpleModeAndMissingServices(t *testing.T) {
 		require.Equal(t, http.StatusInternalServerError, code)
 	})
 }
+
+func TestKeyAccountRefusesExpiredAndQuotaExhaustedKeys(t *testing.T) {
+	t.Run("expired status rejected", func(t *testing.T) {
+		f := newKeyAccountFixture(t)
+		code, _, raw := f.call(t, "/v1/sub2api/account", f.handler.KeyAccount, func(k *service.APIKey) {
+			k.Status = service.StatusAPIKeyExpired
+		})
+		require.Equal(t, http.StatusForbidden, code)
+		require.NotContains(t, raw, "1234")
+		require.Empty(t, f.users.asked)
+	})
+	t.Run("runtime expiry rejected", func(t *testing.T) {
+		f := newKeyAccountFixture(t)
+		code, _, raw := f.call(t, "/v1/sub2api/account", f.handler.KeyAccount, func(k *service.APIKey) {
+			past := time.Now().Add(-time.Minute)
+			k.ExpiresAt = &past
+		})
+		require.Equal(t, http.StatusForbidden, code)
+		require.NotContains(t, raw, "1234")
+		require.Empty(t, f.users.asked)
+	})
+	t.Run("quota exhausted status rejected", func(t *testing.T) {
+		f := newKeyAccountFixture(t)
+		code, _, raw := f.call(t, "/v1/sub2api/account", f.handler.KeyAccount, func(k *service.APIKey) {
+			k.Status = service.StatusAPIKeyQuotaExhausted
+		})
+		require.Equal(t, http.StatusTooManyRequests, code)
+		require.NotContains(t, raw, "1234")
+		require.Empty(t, f.users.asked)
+	})
+	t.Run("runtime quota exhausted rejected", func(t *testing.T) {
+		f := newKeyAccountFixture(t)
+		code, _, raw := f.call(t, "/v1/sub2api/account", f.handler.KeyAccount, func(k *service.APIKey) {
+			k.Quota = 5
+			k.QuotaUsed = 5
+		})
+		require.Equal(t, http.StatusTooManyRequests, code)
+		require.NotContains(t, raw, "1234")
+		require.Empty(t, f.users.asked)
+	})
+}
