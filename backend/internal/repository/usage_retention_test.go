@@ -127,6 +127,22 @@ func TestDiagnosticRetentionUnlockFailureDiscardsConnection(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestDiagnosticRetentionLockFailureDiscardsConnection(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT pg_try_advisory_lock($1)`)).
+		WithArgs(diagnosticRetentionLockKey).
+		WillReturnError(context.DeadlineExceeded)
+	mock.ExpectClose()
+
+	repo := newUsageLogRepositoryWithSQL(nil, db)
+	repo.runDiagnosticRetentionCycle(context.Background())
+	require.Zero(t, db.Stats().Idle, "connection with uncertain advisory lock state must not return to pool")
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestListConnectionTracesReportsUnifiedRetentionDays(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)

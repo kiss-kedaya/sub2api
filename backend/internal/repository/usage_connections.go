@@ -173,6 +173,9 @@ func (r *usageLogRepository) runDiagnosticRetentionCycle(ctx context.Context) {
 		if ctx.Err() == nil {
 			logger.LegacyPrintf("connection_diagnostics", "retention advisory lock failed: %v", err)
 		}
+		// Discard the connection because the server may have already acquired the
+		// session-level advisory lock before a client timeout or read failure.
+		_ = lockConn.Raw(func(any) error { return driver.ErrBadConn })
 		return
 	}
 	if !acquired {
@@ -197,6 +200,9 @@ func (r *usageLogRepository) pruneDiagnosticTable(parent context.Context, conn *
 	defer tableCancel()
 	for pass := 0; pass < maxPasses; pass++ {
 		if tableCtx.Err() != nil {
+			if parent.Err() == nil {
+				logger.LegacyPrintf("connection_diagnostics", "%s retention budget exhausted (pass=%d): %v", tableName, pass, tableCtx.Err())
+			}
 			return
 		}
 		batchCtx, batchCancel := context.WithTimeout(tableCtx, connectionRetentionBatchTimeout)
