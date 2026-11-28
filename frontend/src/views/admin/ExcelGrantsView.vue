@@ -16,7 +16,7 @@
       <UTable v-else :data="rows" :columns="columns" :loading="busy" class="min-w-[650px]">
         <template #account-cell="{ row }">
           <p class="font-medium text-highlighted">{{ row.original.account_name }}</p>
-          <p class="text-xs text-muted">#{{ row.original.account_id }}</p>
+          <p class="text-xs tabular-nums text-muted">#{{ row.original.account_id }}</p>
         </template>
         <template #channel-cell="{ row }">
           <UBadge :color="row.original.config.enabled ? 'success' : 'neutral'" variant="subtle" :label="row.original.config.enabled ? text('已开启', 'Enabled') : text('已关闭', 'Disabled')" />

@@ -65,7 +65,8 @@ function mountModal() {
     },
     global: {
       stubs: {
-        BaseDialog: { template: '<div><slot /><slot name="footer" /></div>' }
+        BaseDialog: { template: '<div><slot /><slot name="footer" /></div>' },
+        Teleport: true
       }
     }
   })
@@ -167,7 +168,8 @@ describe('AccountBatchTestModal', () => {
     vi.stubGlobal('fetch', fetchMock)
     const wrapper = mountModal()
     await flushPromises()
-    await wrapper.get('[data-test="test-concurrency"]').setValue('2')
+    await wrapper.get('#test-concurrency').trigger('click')
+    await wrapper.findAll('[role="option"]').find(option => option.text() === '2')!.trigger('click')
     await wrapper.get('[data-test="test-all-models"]').trigger('click')
     await flushPromises()
     expect(fetchMock).toHaveBeenCalledTimes(2)

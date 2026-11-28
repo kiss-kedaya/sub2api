@@ -13,14 +13,14 @@
       <UAlert color="warning" variant="subtle" icon="i-lucide-triangle-alert" :title="t('adminCompliance.blockingNotice')" :description="t('adminCompliance.riskNotice')" :ui="{ description: 'leading-6' }" />
 
       <div class="grid gap-4 md:grid-cols-[minmax(0,1fr)_220px]">
-        <section class="max-h-[46vh] min-h-[320px] overflow-y-auto rounded-lg border border-default p-5">
+        <section class="max-h-[46dvh] min-h-[320px] overflow-y-auto rounded-lg border border-default p-5">
           <div class="legal-document-content" v-html="renderedDocument"></div>
         </section>
 
         <aside class="space-y-3 text-sm">
           <div>
             <p class="text-xs text-muted">{{ t('adminCompliance.version') }}</p>
-            <p class="mt-1 break-all font-mono text-highlighted">{{ complianceStore.status?.version || 'v2026.06.10' }}</p>
+            <p class="mt-1 wrap-anywhere font-mono tabular-nums text-highlighted">{{ complianceStore.status?.version || 'v2026.06.10' }}</p>
           </div>
           <ULink
             :to="documentUrl"

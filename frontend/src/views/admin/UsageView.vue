@@ -5,7 +5,7 @@
         <template #actions>
           <div class="usage-range-controls">
             <div class="usage-control-cluster">
-              <span class="text-sm font-medium text-gray-700 dark:text-gray-300">{{ t('admin.dashboard.timeRange') }}:</span>
+              <span class="text-sm font-medium text-default">{{ t('admin.dashboard.timeRange') }}:</span>
               <DateRangePicker
                 ref="rangeToolbarRef"
                 include-time
@@ -15,7 +15,7 @@
               />
             </div>
             <div class="usage-control-cluster">
-              <span class="text-sm font-medium text-gray-700 dark:text-gray-300">{{ t('admin.dashboard.granularity') }}:</span>
+              <span class="text-sm font-medium text-default">{{ t('admin.dashboard.granularity') }}:</span>
               <div class="w-28">
                 <Select v-model="granularity" :options="granularityOptions" @change="loadChartData" />
               </div>
@@ -74,7 +74,7 @@
         </div>
       </section>
       <!-- 明细区：tab 栏 + 筛选 + 内容收进同一张卡片，消除割裂感 -->
-      <section class="card usage-detail-workspace">
+      <section class="card usage-detail-workspace rounded-xl">
         <div class="usage-detail-tabs" role="tablist">
           <button
             v-for="tab in detailTabs"
@@ -85,8 +85,8 @@
             data-testid="usage-detail-tab"
             class="usage-detail-tab"
             :class="activeTab === tab.key
-              ? 'border-primary-500 text-primary-600 dark:text-primary-400'
-              : 'border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700 dark:text-gray-400 dark:hover:border-dark-500 dark:hover:text-gray-200'"
+              ? 'border-primary text-primary'
+              : 'border-transparent text-muted'"
             @click="switchTab(tab.key)"
           >
             <Icon :name="tab.icon" size="sm" />
@@ -118,7 +118,7 @@
           @export="exportToExcel()"
           @export-csv="exportToExcel('csv')"
         />
-        <div v-show="activeTab === 'usage'" class="usage-detail-content">
+        <div v-show="activeTab === 'usage'" class="usage-detail-content rounded-b-xl">
           <InflightUsagePanel
             :open="inflightOpen"
             :total="inflightTotal"
@@ -159,7 +159,7 @@
           />
           <Pagination v-if="pagination.total > 0" :page="pagination.page" :total="pagination.total" :page-size="pagination.page_size" @update:page="handlePageChange" @update:pageSize="handlePageSizeChange" />
         </div>
-        <div v-show="activeTab === 'errors'" class="usage-detail-content">
+        <div v-show="activeTab === 'errors'" class="usage-detail-content rounded-b-xl">
           <OpsErrorLogTable
             flat
             :rows="errRows" :total="errTotal" :loading="errLoading"
@@ -174,7 +174,7 @@
             @ipGeoBatchFailed="handleIpGeoBatchFailed" />
         </div>
         <!-- 懒挂载：首次切到该 tab 才请求排行数据，之后随筛选自动刷新 -->
-        <div v-if="rankingMounted" v-show="activeTab === 'ranking'" class="usage-detail-content">
+        <div v-if="rankingMounted" v-show="activeTab === 'ranking'" class="usage-detail-content rounded-b-xl">
           <UserTokenRanking
             ref="rankingRef"
             :start-date="startDate"
@@ -1136,19 +1136,13 @@ defineExpose({ requestedModelStats, refreshData })
   border-color: var(--signal-line);
   border-radius: 8px;
   box-shadow: inset 0 1px color-mix(in srgb, var(--signal-text) 5%, transparent);
-  transition: border-color 140ms ease, box-shadow 140ms ease;
-}
-
-.usage-chart-grid :deep(.card:hover) {
-  border-color: var(--signal-control-line);
-  box-shadow: inset 0 1px color-mix(in srgb, var(--signal-accent) 16%, transparent);
+  transition: border-color 140ms var(--ease-out);
 }
 
 .usage-detail-workspace {
   min-width: 0;
   overflow: visible;
   border: 1px solid var(--signal-line);
-  border-radius: 8px;
   background: var(--signal-surface);
   box-shadow: inset 0 1px color-mix(in srgb, var(--signal-text) 6%, transparent);
 }
@@ -1173,11 +1167,22 @@ defineExpose({ requestedModelStats, refreshData })
   white-space: nowrap;
   font-size: 0.875rem;
   font-weight: 600;
-  transition: color 140ms ease, border-color 140ms ease, background-color 140ms ease;
+  transition: color 140ms var(--ease-out), border-color 140ms var(--ease-out), background-color 140ms var(--ease-out);
 }
 
-.usage-detail-tab:hover {
-  background: var(--signal-hover);
+@media (hover: hover) and (pointer: fine) {
+  .usage-chart-grid :deep(.card:hover) {
+    border-color: var(--signal-control-line);
+  }
+
+  .usage-detail-tab:hover {
+    background: var(--signal-hover);
+  }
+
+  .usage-detail-tab[aria-selected='false']:hover {
+    border-bottom-color: var(--ui-border-accented);
+    color: var(--ui-text);
+  }
 }
 
 .usage-filter-panel {
@@ -1245,8 +1250,9 @@ defineExpose({ requestedModelStats, refreshData })
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .admin-usage-workbench :deep(*) {
-    transition-duration: 0.01ms !important;
+  .usage-chart-grid :deep(.card),
+  .usage-detail-tab {
+    transition: none;
   }
 }
 </style>

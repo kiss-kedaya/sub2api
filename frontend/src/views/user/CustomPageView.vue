@@ -1,10 +1,10 @@
 <template>
   <AppLayout>
     <div class="custom-page-layout">
-      <div class="custom-page-card flex-1 min-h-0 overflow-hidden">
+      <div class="custom-page-card flex-1 min-h-0 overflow-hidden rounded-lg">
         <div v-if="loading" class="flex h-full items-center justify-center py-12">
           <div
-            class="h-8 w-8 animate-spin rounded-full border-2 border-primary-500 border-t-transparent"
+            class="h-8 w-8 animate-spin motion-reduce:animate-none rounded-full border-2 border-primary border-t-transparent"
           ></div>
         </div>
 
@@ -36,7 +36,7 @@
           >
             <div class="toc-header">
               <span class="toc-title">{{ t('customPage.tableOfContents') }}</span>
-              <button class="toc-close-btn" @click="tocVisible = false">
+              <button type="button" class="toc-close-btn rounded-md" @click="tocVisible = false">
                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
               </button>
             </div>
@@ -45,7 +45,7 @@
                 v-for="item in tocItems"
                 :key="item.id"
                 :href="'#' + item.id"
-                class="toc-item"
+                class="toc-item rounded-md"
                 :class="[
                   `toc-level-${item.level}`,
                   { 'toc-active': activeHeadingId === item.id }
@@ -60,7 +60,8 @@
           <!-- TOC Toggle Button (when collapsed) -->
           <button
             v-show="!tocVisible && tocItems.length > 0"
-            class="toc-toggle-btn"
+            type="button"
+            class="toc-toggle-btn rounded-md"
             @click="tocVisible = true"
           >
             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h18M3 6h18M3 18h18"/></svg>
@@ -101,7 +102,7 @@
             :href="embeddedUrl"
             target="_blank"
             rel="noopener noreferrer"
-            class="custom-open-fab"
+            class="custom-open-fab rounded-md"
             :style="openButtonPosition ? { left: `${openButtonPosition.x}px`, top: `${openButtonPosition.y}px`, right: 'auto' } : undefined"
             @pointerdown="startButtonDrag"
             @pointermove="moveButtonDrag"
@@ -297,7 +298,7 @@ async function fetchAndRenderMarkdown(slug: string) {
       headers: authStore.token ? { Authorization: `Bearer ${authStore.token}` } : {},
     })
     if (!resp.ok) {
-      renderedHtml.value = `<p class="text-red-500">${t('common.pageNotFound')}</p>`
+      renderedHtml.value = `<p class="text-error">${t('common.pageNotFound')}</p>`
       return
     }
     let raw = await resp.text()
@@ -330,7 +331,7 @@ async function fetchAndRenderMarkdown(slug: string) {
     renderedHtml.value = withIds
     tocItems.value = toc
   } catch {
-    renderedHtml.value = '<p class="text-red-500">Failed to load page</p>'
+    renderedHtml.value = '<p class="text-error">Failed to load page</p>'
   } finally {
     loading.value = false
     await nextTick()
@@ -441,36 +442,55 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-.custom-page-layout { display: flex; flex-direction: column; height: calc(100vh - 64px - 4rem); }
+.custom-page-layout { display: flex; flex-direction: column; height: calc(100dvh - 64px - 4rem); }
 /* One card with a hairline ring; flat in dark (today's surface). */
-.custom-page-card { border-radius: 8px; background: var(--ui-bg); box-shadow: 0 0 0 1px var(--ui-border), 0 1px 2px rgba(10, 10, 10, 0.05); }
-.dark .custom-page-card { box-shadow: 0 0 0 1px var(--ui-border); }
+.custom-page-card { border-radius: 8px; background: var(--ui-bg); box-shadow: var(--app-shadow-card); }
 
 .toc-sidebar { display: flex; flex-direction: column; width: min(240px, 30%); min-width: 160px; max-width: 280px; height: 100%; overflow: hidden; border-right: 1px solid var(--ui-border); background: var(--ui-bg-muted); }
 @media (max-width: 640px) {
-  .toc-sidebar { position: absolute; left: 0; top: 0; z-index: 20; width: 70%; max-width: 240px; height: 100%; box-shadow: 2px 0 8px rgba(0, 0, 0, 0.1); }
+  .toc-sidebar { position: absolute; left: 0; top: 0; z-index: 20; width: 70%; max-width: 240px; height: 100%; box-shadow: var(--app-shadow-popover); }
 }
 .toc-header { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; border-bottom: 1px solid var(--ui-border); }
 .toc-title { font-size: 13px; font-weight: 600; color: var(--ui-text-highlighted); }
-.toc-close-btn { padding: 4px; border-radius: 6px; color: var(--ui-text-dimmed); transition: background-color 150ms ease, color 150ms ease; }
-.toc-close-btn:hover { background: var(--ui-bg-elevated); color: var(--ui-text-highlighted); }
+.toc-close-btn { display: inline-flex; align-items: center; justify-content: center; padding: 4px; border-radius: 6px; color: var(--ui-text-dimmed); transition: background-color 150ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1)), color 150ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1)); }
+.toc-close-btn:focus-visible { outline: 2px solid var(--ui-primary); outline-offset: 2px; }
 .toc-nav { flex: 1; overflow-y: auto; padding: 8px; }
-.toc-item { display: block; overflow: hidden; padding: 6px 8px; border-radius: 6px; color: var(--ui-text-muted); font-size: 13px; text-overflow: ellipsis; white-space: nowrap; transition: background-color 150ms ease, color 150ms ease; }
-.toc-item:hover { background: var(--ui-bg-elevated); color: var(--ui-text-highlighted); }
+.toc-item { display: flex; align-items: center; overflow: hidden; padding: 6px 8px; border-radius: 6px; color: var(--ui-text-muted); font-size: 13px; text-overflow: ellipsis; white-space: nowrap; transition: background-color 150ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1)), color 150ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1)); }
+.toc-item:focus-visible { outline: 2px solid var(--ui-primary); outline-offset: 2px; }
 .toc-item.toc-active { background: var(--ui-bg-elevated); color: var(--ui-text-highlighted); font-weight: 500; }
 .dark .toc-item.toc-active { background: color-mix(in srgb, var(--ui-primary) 12%, transparent); color: var(--ui-primary); }
 .toc-level-1 { padding-left: 8px; }
 .toc-level-2 { padding-left: 20px; }
 .toc-level-3 { padding-left: 32px; }
 .toc-level-4 { padding-left: 44px; }
-.toc-toggle-btn { position: absolute; left: 8px; top: 8px; z-index: 10; display: flex; align-items: center; padding: 6px 8px; border-radius: 6px; background: var(--ui-bg); color: var(--ui-text-muted); font-size: 13px; box-shadow: 0 0 0 1px var(--ui-border-accented), 0 1px 2px rgba(10, 10, 10, 0.05); cursor: pointer; transition: background-color 150ms ease, color 150ms ease; }
-.toc-toggle-btn:hover { background: var(--ui-bg-elevated); color: var(--ui-text-highlighted); }
+.toc-toggle-btn { position: absolute; left: 8px; top: 8px; z-index: 10; display: flex; align-items: center; padding: 6px 8px; border-radius: 6px; background: var(--ui-bg); color: var(--ui-text-muted); font-size: 13px; box-shadow: var(--app-shadow-card); cursor: pointer; transition: background-color 150ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1)), color 150ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1)); }
+.toc-toggle-btn:focus-visible { outline: 2px solid var(--ui-primary); outline-offset: 2px; }
 
 /* Embedded page: flat surface, no gradient. */
 .custom-embed-shell { position: relative; width: 100%; height: 100%; overflow: hidden; padding: 0; background: var(--ui-bg-muted); }
-.custom-open-fab { position: absolute; right: 12px; top: 12px; z-index: 10; display: inline-flex; align-items: center; gap: 6px; width: max-content; max-width: 100%; padding: 5px 10px; border-radius: 6px; background: var(--ui-bg); color: var(--ui-text-highlighted); font-size: 12px; font-weight: 500; box-shadow: 0 0 0 1px var(--ui-border-accented), 0 1px 2px rgba(10, 10, 10, 0.06); touch-action: none; user-select: none; transition: background-color 150ms ease; }
-.custom-open-fab:hover { background: var(--ui-bg-elevated); }
+.custom-open-fab { position: absolute; right: 12px; top: 12px; z-index: 10; display: inline-flex; align-items: center; gap: 6px; width: max-content; max-width: 100%; padding: 5px 10px; border-radius: 6px; background: var(--ui-bg); color: var(--ui-text-highlighted); font-size: 12px; font-weight: 500; box-shadow: var(--app-shadow-card); touch-action: none; user-select: none; transition: background-color 150ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1)); }
+.custom-open-fab:focus-visible { outline: 2px solid var(--ui-primary); outline-offset: 2px; }
 .custom-embed-frame { display: block; margin: 0; width: 100%; height: 100%; border: 0; border-radius: 0; box-shadow: none; background: transparent; }
+
+@media (hover: hover) and (pointer: fine) {
+  .toc-close-btn:hover { background: var(--ui-bg-elevated); color: var(--ui-text-highlighted); }
+  .toc-item:hover { background: var(--ui-bg-elevated); color: var(--ui-text-highlighted); }
+  .toc-toggle-btn:hover { background: var(--ui-bg-elevated); color: var(--ui-text-highlighted); }
+  .custom-open-fab:hover { background: var(--ui-bg-elevated); }
+}
+
+@media (pointer: coarse) {
+  .toc-close-btn,
+  .toc-toggle-btn,
+  .custom-open-fab {
+    min-height: 44px;
+    min-width: 44px;
+  }
+  .toc-item {
+    min-height: 44px;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) { .toc-close-btn, .toc-item, .toc-toggle-btn, .custom-open-fab { transition: none; } }
 </style>
 
@@ -480,7 +500,7 @@ onUnmounted(() => {
   line-height: 1.7;
   color: inherit;
 }
-.markdown-page-content h1 { @apply text-3xl font-bold mt-8 mb-4 pb-2 border-b border-gray-200 dark:border-dark-600; }
+.markdown-page-content h1 { @apply text-3xl font-bold mt-8 mb-4 pb-2 border-b border-default; }
 .markdown-page-content h2 { @apply text-2xl font-bold mt-6 mb-3; }
 .markdown-page-content h3 { @apply text-xl font-semibold mt-5 mb-2; }
 .markdown-page-content h4 { @apply text-lg font-semibold mt-4 mb-2; }
@@ -488,16 +508,16 @@ onUnmounted(() => {
 .markdown-page-content ul { @apply list-disc pl-6 mb-4; }
 .markdown-page-content ol { @apply list-decimal pl-6 mb-4; }
 .markdown-page-content li { @apply mb-1; }
-.markdown-page-content a { @apply text-primary-500 hover:text-primary-600 underline; }
-.markdown-page-content blockquote { @apply border-l-4 border-gray-300 dark:border-dark-500 pl-4 italic text-gray-600 dark:text-dark-300 my-4; }
+.markdown-page-content a { @apply text-primary underline; }
+.markdown-page-content blockquote { @apply border-l-4 border-accented pl-4 italic text-muted my-4; }
 .markdown-page-content img { @apply max-w-full h-auto rounded-lg my-4; }
 .markdown-page-content table { @apply w-full border-collapse my-4; }
-.markdown-page-content th { @apply border border-gray-300 dark:border-dark-500 px-3 py-2 bg-gray-50 dark:bg-dark-700 font-semibold text-left; }
-.markdown-page-content td { @apply border border-gray-300 dark:border-dark-500 px-3 py-2; }
-.markdown-page-content code { @apply bg-gray-100 dark:bg-dark-700 px-1.5 py-0.5 rounded text-sm font-mono; }
-.markdown-page-content pre { @apply bg-gray-900 dark:bg-dark-900 text-gray-100 p-4 rounded-lg overflow-x-auto my-4 relative; }
+.markdown-page-content th { @apply border border-accented px-3 py-2 bg-muted font-semibold text-left; }
+.markdown-page-content td { @apply border border-accented px-3 py-2; }
+.markdown-page-content code { @apply bg-elevated px-1.5 py-0.5 rounded text-sm font-mono; }
+.markdown-page-content pre { @apply bg-neutral-900 text-neutral-100 p-4 rounded-lg overflow-x-auto my-4 relative; }
 .markdown-page-content pre code { @apply bg-transparent p-0 text-inherit; }
-.markdown-page-content hr { @apply my-6 border-gray-200 dark:border-dark-600; }
+.markdown-page-content hr { @apply my-6 border-default; }
 
 .copy-btn {
   position: absolute;
@@ -511,9 +531,33 @@ onUnmounted(() => {
   border: 1px solid rgba(255, 255, 255, 0.2);
   cursor: pointer;
   opacity: 0;
-  transition: opacity 0.2s, background 0.2s;
+  transition: opacity 160ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1)), background-color 160ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1));
   font-family: inherit;
 }
-.copy-btn:hover { background: rgba(255, 255, 255, 0.25); }
-pre:hover .copy-btn { opacity: 1; }
+
+.copy-btn:focus-visible {
+  opacity: 1;
+  outline: 2px solid var(--ui-primary);
+  outline-offset: 2px;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .markdown-page-content a:hover { color: color-mix(in srgb, var(--ui-primary) 85%, var(--ui-text)); }
+  .copy-btn:hover { background: rgba(255, 255, 255, 0.25); }
+  pre:hover .copy-btn { opacity: 1; }
+}
+
+@media (hover: none) {
+  .copy-btn {
+    opacity: 0.75;
+    min-height: 44px;
+    min-width: 44px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .copy-btn {
+    transition: none;
+  }
+}
 </style>

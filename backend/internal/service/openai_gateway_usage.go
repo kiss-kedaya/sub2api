@@ -444,6 +444,16 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 			requestID = stable
 		}
 	}
+	// When a balance preauthorization guard is active on this settlement context,
+	// UsageBillingCommand.RequestID MUST match guard.RequestID() so Apply updates
+	// the exact billing_balance_settlements row (e.g. OpenAI WS per-turn holds
+	// and Grok Voice/Realtime holds), while ResponseRequestID preserves the
+	// upstream response identifier for tracing.
+	if guard, ok := BalancePreauthorizationGuardFromContext(ctx); ok {
+		if guardReqID := strings.TrimSpace(guard.RequestID()); guardReqID != "" {
+			requestID = guardReqID
+		}
+	}
 
 	// 确定 RequestedModel（渠道映射前的原始模型）
 	requestedModel := result.Model

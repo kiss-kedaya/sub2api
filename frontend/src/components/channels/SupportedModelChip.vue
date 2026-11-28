@@ -2,14 +2,14 @@
   <UTooltip
     :content="{ side: 'bottom', align: 'center', collisionPadding: 8 }"
     :delay-duration="0"
-    :ui="{ content: ['h-auto w-80 max-w-[min(22rem,calc(100vw-1rem))] rounded-lg border bg-white p-0 text-xs shadow-xl ring-0 dark:bg-dark-800', popoverBorderClass] }"
+    :ui="{ content: ['h-auto w-80 max-w-[min(22rem,calc(100vw-1rem))] rounded-lg border bg-default p-0 text-xs shadow-xl ring-0', popoverBorderClass] }"
   >
     <span
       :class="[
         'inline-flex cursor-help items-center gap-1 rounded-md border px-2 py-0.5 text-xs font-medium transition-colors',
         effectivePlatform
           ? platformBadgeClass(effectivePlatform)
-          : 'border-gray-200 bg-gray-50 text-gray-700 dark:border-dark-600 dark:bg-dark-800 dark:text-gray-300',
+          : 'border-default bg-muted text-default',
       ]"
       tabindex="0"
     >
@@ -20,7 +20,7 @@
       />
       <span
         v-if="showPlatform && model.platform"
-        class="rounded-sm bg-gray-200/60 px-1 text-[10px] uppercase text-gray-600 dark:bg-dark-700 dark:text-gray-400"
+        class="rounded-sm bg-elevated px-1 text-[10px] uppercase text-muted"
       >
         {{ model.platform }}
       </span>
@@ -37,20 +37,20 @@
           <span class="truncate font-semibold">{{ model.name }}</span>
           <span
             v-if="model.platform"
-            class="flex-shrink-0 rounded-sm bg-white/70 px-1.5 py-0.5 text-[10px] uppercase tracking-wide dark:bg-dark-900/60"
+            class="flex-shrink-0 rounded-sm bg-default/70 px-1.5 py-0.5 text-[10px] uppercase tracking-wide"
           >
             {{ model.platform }}
           </span>
         </div>
 
         <div class="p-3">
-          <div v-if="!model.pricing" class="text-gray-500 dark:text-gray-400">
+          <div v-if="!model.pricing" class="text-muted">
             {{ noPricingLabel }}
           </div>
 
-          <div v-else class="space-y-2 text-gray-700 dark:text-gray-300">
+          <div v-else class="space-y-2 text-default">
             <div class="flex justify-between">
-              <span class="text-gray-500 dark:text-gray-400">{{ t(prefixKey('billingMode')) }}</span>
+              <span class="text-muted">{{ t(prefixKey('billingMode')) }}</span>
               <span>{{ billingModeLabel }}</span>
             </div>
 
@@ -136,16 +136,16 @@
               class="mt-2 border-t pt-2"
               :class="[popoverBorderClass]"
             >
-              <div class="mb-1 font-medium text-gray-600 dark:text-gray-400">
+              <div class="mb-1 font-medium text-muted">
                 {{ t(prefixKey('intervals')) }}
               </div>
               <div class="space-y-1">
                 <div
                   v-for="(iv, idx) in model.pricing.intervals"
                   :key="idx"
-                  class="flex justify-between text-[11px]"
+                  class="flex justify-between text-[11px] tabular-nums"
                 >
-                  <span class="text-gray-500 dark:text-gray-400">
+                  <span class="text-muted">
                     <template v-if="iv.tier_label">{{ iv.tier_label }}</template>
                     <template v-else>{{ formatRange(iv.min_tokens, iv.max_tokens) }}</template>
                   </span>
@@ -210,12 +210,12 @@ const perMillionScale = 1_000_000
 const popoverBorderClass = computed(() =>
   effectivePlatform.value
     ? platformBorderClass(effectivePlatform.value)
-    : 'border-gray-200 dark:border-dark-600',
+    : 'border-default',
 )
 const popoverHeaderClass = computed(() =>
   effectivePlatform.value
     ? platformBadgeLightClass(effectivePlatform.value)
-    : 'bg-gray-50 text-gray-700 dark:bg-dark-700/60 dark:text-gray-300',
+    : 'bg-muted text-default',
 )
 
 function prefixKey(k: string): string {

@@ -149,6 +149,52 @@ describe('ChannelMonitorV3QualityHistory', () => {
     expect(mockedArtwork).toHaveBeenCalledTimes(1)
   })
 
+  it('keeps existing chips mounted without flashing loading on 60s silent background polls', async () => {
+    vi.useFakeTimers()
+    let resolveRefresh!: (value: MonitorQualityEvent[]) => void
+    mockedEvents
+      .mockResolvedValueOnce([event(1, 'success')])
+      .mockImplementationOnce(() => new Promise<MonitorQualityEvent[]>((resolve) => { resolveRefresh = resolve }))
+    const wrapper = mountHistory()
+    try {
+      await flushPromises()
+      const initialChip = wrapper.get('[data-testid="quality-history-chip-1"]').element
+      await vi.advanceTimersByTimeAsync(60000)
+      expect(mockedEvents).toHaveBeenCalledTimes(2)
+      expect(wrapper.text()).not.toContain('monitorCommon.qualityHistoryLoading')
+      expect(wrapper.get('[data-testid="quality-history-chip-1"]').element).toBe(initialChip)
+      resolveRefresh([event(1, 'success'), event(2, 'degraded')])
+      await flushPromises()
+      expect(wrapper.findAll('.quality-history-chip')).toHaveLength(2)
+    } finally {
+      wrapper.unmount()
+      vi.useRealTimers()
+    }
+  })
+
+  it('keeps empty state displayed without flashing loading on 60s silent background polls when events is empty', async () => {
+    vi.useFakeTimers()
+    let resolveRefresh!: (value: MonitorQualityEvent[]) => void
+    mockedEvents
+      .mockResolvedValueOnce([])
+      .mockImplementationOnce(() => new Promise<MonitorQualityEvent[]>((resolve) => { resolveRefresh = resolve }))
+    const wrapper = mountHistory()
+    try {
+      await flushPromises()
+      expect(wrapper.text()).toContain('monitorCommon.qualityHistoryEmpty')
+      await vi.advanceTimersByTimeAsync(60000)
+      expect(mockedEvents).toHaveBeenCalledTimes(2)
+      expect(wrapper.text()).not.toContain('monitorCommon.qualityHistoryLoading')
+      expect(wrapper.text()).toContain('monitorCommon.qualityHistoryEmpty')
+      resolveRefresh([])
+      await flushPromises()
+      expect(wrapper.text()).toContain('monitorCommon.qualityHistoryEmpty')
+    } finally {
+      wrapper.unmount()
+      vi.useRealTimers()
+    }
+  })
+
   it('reports a failed artwork load without breaking the popover', async () => {
     mockedEvents.mockResolvedValue([event(3, 'success')])
     mockedArtwork.mockRejectedValue(new Error('boom'))

@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
+import { createMemoryHistory, createRouter } from 'vue-router'
 import USelect from '@nuxt/ui/components/Select.vue'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import IPAuditPanel from '../IPAuditPanel.vue'
@@ -51,6 +52,48 @@ describe('IPAuditPanel', () => {
     expect(wrapper.get('[data-testid="release-outcome"]').attributes('role')).toBe('status')
     // The dialog closes (its leave transition may still be running in jsdom).
     expect(wrapper.findComponent(BaseDialog).props('show')).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('uses wrap-anywhere on IP/account subject identifiers instead of break-all', async () => {
+    const wrapper = mount(IPAuditPanel, { global: { plugins: [i18n()] } })
+    await flushPromises()
+    const html = wrapper.html()
+    expect(html).toContain('wrap-anywhere')
+    expect(html).not.toContain('break-all')
+    wrapper.unmount()
+  })
+
+  it('handles responses missing items or sources without crashing', async () => {
+    api.listIPAudit.mockResolvedValueOnce({ items: undefined, sources: undefined, has_more: false, next_cursor: 0 } as never)
+    const wrapper = mount(IPAuditPanel, { global: { plugins: [i18n()] } })
+    await flushPromises()
+    expect(wrapper.find('[data-testid="ip-audit-panel"]').exists()).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('unmounts collapsed source inventory content until opened and keeps table headers nowrap', async () => {
+    api.listIPAudit.mockResolvedValueOnce({
+      items: [],
+      sources: [{ ...sources[0], manage_url: '/admin/ip-risk' }],
+      has_more: false,
+      next_cursor: 0,
+      unrestricted: false,
+    })
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [{ path: '/:pathMatch(.*)*', component: { template: '<div />' } }],
+    })
+    await router.push('/admin/ip-audit')
+    await router.isReady()
+    const wrapper = mount(IPAuditPanel, { global: { plugins: [i18n(), router] } })
+    await flushPromises()
+    const inventory = wrapper.get('[data-testid="ip-source-inventory"]')
+    expect(inventory.find('ul').exists()).toBe(false)
+    await inventory.get('button').trigger('click')
+    await flushPromises()
+    expect(inventory.find('ul').exists()).toBe(true)
+    expect(wrapper.findAll('thead th').every(th => th.classes().includes('whitespace-nowrap'))).toBe(true)
     wrapper.unmount()
   })
 })

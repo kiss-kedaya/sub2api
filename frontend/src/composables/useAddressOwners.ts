@@ -74,10 +74,12 @@ async function resolveOwners(addresses: readonly string[]): Promise<void> {
  * null when the address has none).
  */
 export function useAddressOwners(addresses: WatchSource<readonly string[]>) {
+  const readAddresses = (): readonly string[] =>
+    (typeof addresses === 'function' ? addresses() : addresses.value) ?? []
+
   watch(
-    // A fresh array each time, so an in-place push is noticed too.
-    () => [...(typeof addresses === 'function' ? addresses() : addresses.value)],
-    list => { void resolveOwners(list) },
+    () => readAddresses().join('\0'),
+    () => { void resolveOwners(readAddresses()) },
     { immediate: true }
   )
 

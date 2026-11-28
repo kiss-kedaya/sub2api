@@ -24,15 +24,15 @@
               </div>
             </UPageCard>
             <div v-if="snapshot" class="flex flex-wrap items-center gap-2 text-sm">
-              <UBadge color="neutral" variant="subtle" icon="i-lucide-globe">{{ tr('currentIP') }}: {{ snapshot.current_ip }}</UBadge>
-              <UBadge :color="snapshot.health.redis_available ? 'success' : 'error'" variant="subtle" icon="i-lucide-database">Redis: {{ snapshot.health.redis_available ? tr('available') : tr('unavailable') }}</UBadge>
+              <UBadge color="neutral" variant="subtle" icon="i-lucide-globe">{{ tr('currentIP') }}: {{ snapshot.current_ip || '—' }}</UBadge>
+              <UBadge :color="snapshot.health?.redis_available ? 'success' : 'error'" variant="subtle" icon="i-lucide-database">Redis: {{ snapshot.health?.redis_available ? tr('available') : tr('unavailable') }}</UBadge>
             </div>
             <UAlert v-if="error" role="alert" color="error" variant="subtle" icon="i-lucide-circle-alert" :description="error" />
             <UAlert v-if="notice" role="status" color="success" variant="subtle" icon="i-lucide-circle-check" :description="notice" />
             <template v-if="draft && snapshot">
-              <UAlert v-if="snapshot.health.emergency_disabled" color="warning" variant="subtle" icon="i-lucide-triangle-alert" :description="tr('emergencyActive')" />
+              <UAlert v-if="snapshot.health?.emergency_disabled" color="warning" variant="subtle" icon="i-lucide-triangle-alert" :description="tr('emergencyActive')" />
               <UAlert v-if="!snapshot.trusted_proxies_configured" color="warning" variant="subtle" icon="i-lucide-triangle-alert" :description="tr('proxyWarning')" />
-              <UAlert v-if="snapshot.health.config_error" color="warning" variant="subtle" icon="i-lucide-triangle-alert" :description="tr('staleConfig')" />
+              <UAlert v-if="snapshot.health?.config_error" color="warning" variant="subtle" icon="i-lucide-triangle-alert" :description="tr('staleConfig')" />
             </template>
           </section>
           <template v-if="draft && snapshot">
@@ -338,7 +338,11 @@ let disposed = false
 onBeforeUnmount(() => { disposed = true })
 onMounted(() => { if (initiallyOpen) void load() })
 const lines = (value: string) => [...new Set(value.split(/[\n,]+/).map(v => v.trim()).filter(Boolean))]
-const date = (seconds: number) => new Date(seconds * 1000).toLocaleString()
+const date = (seconds: number) => {
+  if (!Number.isFinite(seconds) || seconds <= 0) return '—'
+  const d = new Date(seconds * 1000)
+  return Number.isNaN(d.getTime()) ? '—' : d.toLocaleString()
+}
 // A section opens itself on `invalid` (capture). The browser drops its validation bubble for a field that was
 // hidden when it fired, so once the section has rendered open, focus the field and report it again.
 let revealing = false
@@ -370,16 +374,25 @@ async function action(fn: () => Promise<void>) {
   } finally { if (!disposed) busy.value = false }
 }
 function applyConfig(config: IPRiskConfig) {
-  draft.value = structuredClone(config)
-  whitelist.value = config.whitelist.join('\n'); countries.value = config.blocked_countries.join(', '); allowedCountries.value = (config.allowed_countries || []).join(', '); userAgents.value = config.deny_user_agents.join('\n')
+  const cloned = structuredClone(config)
+  cloned.whitelist = Array.isArray(cloned.whitelist) ? cloned.whitelist : []
+  cloned.blacklist = Array.isArray(cloned.blacklist) ? cloned.blacklist : []
+  cloned.allowed_countries = Array.isArray(cloned.allowed_countries) ? cloned.allowed_countries : []
+  cloned.blocked_countries = Array.isArray(cloned.blocked_countries) ? cloned.blocked_countries : []
+  cloned.deny_user_agents = Array.isArray(cloned.deny_user_agents) ? cloned.deny_user_agents : []
+  draft.value = cloned
+  whitelist.value = cloned.whitelist.join('\n')
+  countries.value = cloned.blocked_countries.join(', ')
+  allowedCountries.value = cloned.allowed_countries.join(', ')
+  userAgents.value = cloned.deny_user_agents.join('\n')
 }
 async function loadEvents(page = eventsPage.value, pageSize = eventsPageSize.value, filters = appliedEventFilters) {
   const result = await ipRiskAPI.events(filters.ip, filters.reason, filters.category, page, pageSize)
   if (disposed) return
-  events.value = result.items
-  eventsTotal.value = result.total
-  eventsPage.value = result.page
-  eventsPageSize.value = result.page_size
+  events.value = Array.isArray(result?.items) ? result.items : []
+  eventsTotal.value = result?.total ?? 0
+  eventsPage.value = result?.page ?? page
+  eventsPageSize.value = result?.page_size ?? pageSize
   appliedEventFilters = filters
 }
 async function changeEventsPage(page: number) { await action(() => loadEvents(page)) }
@@ -388,8 +401,8 @@ async function records() {
   const filters = { ip: filterIP.value.trim(), reason: filterReason.value, category: filterCategory.value }
   const result = await Promise.allSettled([loadEvents(1, eventsPageSize.value, filters), ipRiskAPI.bans(), ipRiskAPI.anonymousBans()])
   if (disposed) return
-  if (result[1].status === 'fulfilled') bans.value = result[1].value
-  if (result[2].status === 'fulfilled') anonymousBans.value = result[2].value
+  if (result[1].status === 'fulfilled') bans.value = Array.isArray(result[1].value) ? result[1].value : []
+  if (result[2].status === 'fulfilled') anonymousBans.value = Array.isArray(result[2].value) ? result[2].value : []
   const failed = result.find(item => item.status === 'rejected')
   if (failed?.status === 'rejected') throw failed.reason
 }
@@ -397,8 +410,12 @@ async function load() {
   await action(async () => {
     const result = await ipRiskAPI.get()
     if (disposed) return
+    if (!result?.config || !result?.health) {
+      error.value = tr('failed')
+      return
+    }
     snapshot.value = result; applyConfig(result.config)
-    checkIP.value ||= result.current_ip
+    checkIP.value ||= result.current_ip || ''
     await records()
   })
 }

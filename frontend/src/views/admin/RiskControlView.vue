@@ -45,7 +45,7 @@
             class="lg:rounded-none lg:first:rounded-l-lg lg:last:rounded-r-lg"
           >
             <div class="flex min-w-0 flex-wrap items-center gap-2">
-              <span class="truncate text-2xl font-semibold text-highlighted">{{ item.value }}</span>
+              <span class="truncate text-2xl font-semibold tabular-nums text-highlighted">{{ item.value }}</span>
               <UBadge v-if="item.badge" :color="item.badgeColor" variant="subtle" class="text-xs">{{ item.badge }}</UBadge>
             </div>
             <p v-if="item.meta" class="truncate text-xs text-muted">{{ item.meta }}</p>
@@ -68,7 +68,7 @@
             <div data-test="pre-block-metric-grid" class="grid grid-cols-2 gap-x-4 gap-y-5 md:grid-cols-3">
               <div v-for="item in preBlockMetricItems" :key="item.key" class="min-w-0">
                 <p class="text-xs text-muted">{{ item.label }}</p>
-                <p class="mt-1 truncate text-2xl font-semibold" :class="item.valueClass">{{ item.value }}</p>
+                <p class="mt-1 truncate text-2xl font-semibold tabular-nums" :class="item.valueClass">{{ item.value }}</p>
                 <p v-if="item.meta" class="mt-0.5 truncate text-xs text-dimmed">{{ item.meta }}</p>
               </div>
             </div>
@@ -149,19 +149,19 @@
               <div class="grid grid-cols-2 gap-x-4 gap-y-5">
                 <div>
                   <p class="text-xs text-muted">{{ t('admin.riskControl.activeWorkers') }}</p>
-                  <p class="mt-1 text-2xl font-semibold text-highlighted">{{ status?.active_workers ?? 0 }}</p>
+                  <p class="mt-1 text-2xl font-semibold tabular-nums text-highlighted">{{ status?.active_workers ?? 0 }}</p>
                 </div>
                 <div>
                   <p class="text-xs text-muted">{{ t('admin.riskControl.idleWorkers') }}</p>
-                  <p class="mt-1 text-2xl font-semibold text-success">{{ status?.idle_workers ?? configForm.worker_count }}</p>
+                  <p class="mt-1 text-2xl font-semibold tabular-nums text-success">{{ status?.idle_workers ?? configForm.worker_count }}</p>
                 </div>
                 <div>
                   <p class="text-xs text-muted">{{ t('admin.riskControl.processed') }}</p>
-                  <p class="mt-1 text-2xl font-semibold text-highlighted">{{ formatNumber(status?.processed ?? 0) }}</p>
+                  <p class="mt-1 text-2xl font-semibold tabular-nums text-highlighted">{{ formatNumber(status?.processed ?? 0) }}</p>
                 </div>
                 <div>
                   <p class="text-xs text-muted">{{ t('admin.riskControl.droppedErrors') }}</p>
-                  <p class="mt-1 text-2xl font-semibold text-highlighted">{{ formatNumber((status?.dropped ?? 0) + (status?.errors ?? 0)) }}</p>
+                  <p class="mt-1 text-2xl font-semibold tabular-nums text-highlighted">{{ formatNumber((status?.dropped ?? 0) + (status?.errors ?? 0)) }}</p>
                 </div>
               </div>
             </div>
@@ -256,7 +256,7 @@
               <p class="py-8 text-center text-sm text-muted">{{ t('admin.riskControl.emptyLogs') }}</p>
             </template>
             <template #time-cell="{ row }">
-              <span class="whitespace-nowrap">{{ formatDateTime(row.original.created_at) }}</span>
+              <span class="whitespace-nowrap tabular-nums">{{ formatDateTime(row.original.created_at) }}</span>
             </template>
             <template #group-cell="{ row }">
               <span class="whitespace-nowrap">{{ row.original.group_name || '-' }}</span>
@@ -264,14 +264,14 @@
             <template #user-cell="{ row }">
               <div class="whitespace-nowrap">
                 <p class="text-highlighted">{{ row.original.user_email || '-' }}</p>
-                <p v-if="row.original.user_id" class="text-xs text-dimmed">UID {{ row.original.user_id }}</p>
+                <p v-if="row.original.user_id" class="text-xs tabular-nums text-dimmed">UID {{ row.original.user_id }}</p>
               </div>
             </template>
             <template #api_key-cell="{ row }">
               <span class="whitespace-nowrap">{{ row.original.api_key_name || '-' }}</span>
             </template>
             <template #endpoint-cell="{ row }">
-              <div class="min-w-40 break-all">
+              <div class="min-w-40 wrap-anywhere">
                 <p>{{ row.original.endpoint || '-' }}</p>
                 <p class="text-xs text-dimmed">{{ row.original.provider || '-' }} / {{ row.original.model || '-' }}</p>
               </div>
@@ -282,7 +282,7 @@
             <template #highest-cell="{ row }">
               <div class="whitespace-nowrap">
                 <p>{{ row.original.highest_category || '-' }}</p>
-                <p class="text-xs text-dimmed">{{ percent(row.original.highest_score) }}</p>
+                <p class="text-xs tabular-nums text-dimmed">{{ percent(row.original.highest_score) }}</p>
                 <p v-if="row.original.matched_keyword" class="mt-0.5 text-xs font-medium text-error" :title="t('admin.riskControl.matchedKeyword') + ': ' + row.original.matched_keyword">
                   {{ t('admin.riskControl.matchedKeyword') }}: {{ row.original.matched_keyword }}
                 </p>
@@ -290,7 +290,7 @@
             </template>
             <template #action-cell="{ row }">
               <div class="whitespace-nowrap">
-                <p>{{ violationCountText(row.original) }}</p>
+                <p class="tabular-nums">{{ violationCountText(row.original) }}</p>
                 <p class="text-xs text-dimmed">
                   {{ row.original.email_sent ? t('admin.riskControl.emailSent') : t('admin.riskControl.emailNotSent') }}
                   <span v-if="row.original.auto_banned"> / {{ t('admin.riskControl.autoBanned') }}</span>
@@ -311,8 +311,8 @@
             </template>
             <template #latency-cell="{ row }">
               <div class="whitespace-nowrap">
-                <p>{{ latencyText(row.original.upstream_latency_ms) }}</p>
-                <p v-if="row.original.queue_delay_ms !== null && row.original.queue_delay_ms !== undefined" class="text-xs text-dimmed">
+                <p class="tabular-nums">{{ latencyText(row.original.upstream_latency_ms) }}</p>
+                <p v-if="row.original.queue_delay_ms !== null && row.original.queue_delay_ms !== undefined" class="text-xs tabular-nums text-dimmed">
                   {{ t('admin.riskControl.queueDelay', { ms: row.original.queue_delay_ms }) }}
                 </p>
               </div>
@@ -1773,13 +1773,21 @@ async function loadAll() {
   }
 }
 
+let statusPolling = false
+
 async function loadStatus(silent = true) {
-  statusLoading.value = true
+  if (silent && (statusLoading.value || statusPolling)) return
+  if (silent) statusPolling = true
+  else statusLoading.value = true
   try {
     const runtimeStatus = await adminAPI.riskControl.getStatus()
-    status.value = runtimeStatus
+    if (JSON.stringify(status.value) !== JSON.stringify(runtimeStatus)) {
+      status.value = runtimeStatus
+    }
     if ((runtimeStatus.engine ?? 'openai') === configForm.engine && Array.isArray(runtimeStatus.api_key_statuses)) {
-      configForm.api_key_statuses = [...runtimeStatus.api_key_statuses]
+      if (JSON.stringify(configForm.api_key_statuses) !== JSON.stringify(runtimeStatus.api_key_statuses)) {
+        configForm.api_key_statuses = [...runtimeStatus.api_key_statuses]
+      }
       prunePendingDeleteAPIKeyHashes()
     }
   } catch (err: unknown) {
@@ -1787,7 +1795,8 @@ async function loadStatus(silent = true) {
       appStore.showError(extractApiErrorMessage(err, t('admin.riskControl.statusFailed')))
     }
   } finally {
-    statusLoading.value = false
+    if (silent) statusPolling = false
+    else statusLoading.value = false
   }
 }
 
@@ -2387,7 +2396,9 @@ function formatNumber(value: number): string {
 onMounted(() => {
   void loadAll()
   statusTimer = window.setInterval(() => {
-    void loadStatus(true)
+    if (document.visibilityState === 'visible' && !statusLoading.value && !statusPolling) {
+      void loadStatus(true)
+    }
   }, 15000)
 })
 

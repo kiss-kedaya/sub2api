@@ -62,6 +62,7 @@
                 variant="ghost"
                 size="xs"
                 square
+                class="max-sm:min-h-11 max-sm:min-w-11 pointer-coarse:min-h-11 pointer-coarse:min-w-11"
                 :icon="copiedCode === value ? 'i-lucide-check' : 'i-lucide-copy'"
                 :title="copiedCode === value ? t('admin.promo.copied') : t('keys.copyToClipboard')"
                 :aria-label="copiedCode === value ? t('admin.promo.copied') : t('keys.copyToClipboard')"
@@ -83,11 +84,11 @@
           </template>
 
           <template #cell-expires_at="{ value }">
-            <span class="text-muted">{{ value ? formatDateTime(value) : t('admin.promo.neverExpires') }}</span>
+            <span class="tabular-nums text-muted">{{ value ? formatDateTime(value) : t('admin.promo.neverExpires') }}</span>
           </template>
 
           <template #cell-created_at="{ value }">
-            <span class="text-muted">{{ formatDateTime(value) }}</span>
+            <span class="tabular-nums text-muted">{{ formatDateTime(value) }}</span>
           </template>
 
           <template #cell-actions="{ row }">
@@ -186,7 +187,7 @@
                 <p class="truncate text-sm font-medium text-highlighted">
                   {{ usage.user?.email || t('admin.promo.userPrefix', { id: usage.user_id }) }}
                 </p>
-                <p class="text-xs text-muted">{{ formatDateTime(usage.used_at) }}</p>
+                <p class="text-xs tabular-nums text-muted">{{ formatDateTime(usage.used_at) }}</p>
               </div>
             </div>
             <span class="amount amount-positive text-sm">+${{ usage.bonus_amount.toFixed(2) }}</span>

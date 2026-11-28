@@ -3,12 +3,12 @@
     <div class="crypto-private-key space-y-4 text-sm">
       <div class="space-y-1.5">
         <span class="font-medium text-default">{{ t('admin.crypto.address') }}</span>
-        <code data-testid="private-key-address" class="block rounded-md bg-elevated px-3 py-2 font-mono text-xs break-all text-default">{{ displayedAddress?.address }}</code>
+        <code data-testid="private-key-address" class="block rounded-md bg-elevated px-3 py-2 font-mono text-xs wrap-anywhere text-default">{{ displayedAddress?.address }}</code>
       </div>
       <template v-if="privateKey">
         <div class="space-y-1.5">
           <span id="crypto-private-key-label" class="font-medium text-default">{{ t('admin.crypto.privateKey') }}</span>
-          <pre id="crypto-private-key-value" ref="privateKeyElement" data-testid="private-key-value" aria-labelledby="crypto-private-key-label" class="m-0 rounded-md bg-elevated px-3 py-2 font-mono text-xs whitespace-pre-wrap break-all text-default">{{ visible ? privateKey : '••••••••••••••••••••••••••••••••' }}</pre>
+          <pre id="crypto-private-key-value" ref="privateKeyElement" data-testid="private-key-value" aria-labelledby="crypto-private-key-label" class="m-0 rounded-md bg-elevated px-3 py-2 font-mono text-xs whitespace-pre-wrap wrap-anywhere text-default">{{ visible ? privateKey : '••••••••••••••••••••••••••••••••' }}</pre>
         </div>
         <div class="flex flex-wrap gap-2">
           <UButton color="neutral" variant="outline" size="sm" :icon="visible ? 'i-lucide-eye-off' : 'i-lucide-eye'" :aria-pressed="visible" aria-controls="crypto-private-key-value" @click="visible = !visible">
@@ -18,7 +18,7 @@
             {{ t('admin.crypto.privateKeyCopy') }}
           </UButton>
         </div>
-        <p role="timer" class="text-xs text-muted">{{ t('admin.crypto.privateKeyAutoClear', { seconds: remainingSeconds }) }}</p>
+        <p role="timer" class="text-xs tabular-nums text-muted">{{ t('admin.crypto.privateKeyAutoClear', { seconds: remainingSeconds }) }}</p>
       </template>
       <p v-else role="status" class="text-muted">{{ t('admin.crypto.privateKeyExpired') }}</p>
       <p v-if="displayedAddress?.family === 'evm'" class="text-xs text-muted">{{ t('admin.crypto.privateKeyEvmShared') }}</p>
@@ -171,7 +171,7 @@ async function copyPrivateKey() {
   }
 }
 
-watch(() => [props.address?.id, props.address?.address, props.address?.family], () => {
+watch([() => props.address?.id, () => props.address?.address, () => props.address?.family], () => {
   reset()
   const selected = props.address
   if (selected && Number.isSafeInteger(selected.id) && selected.id > 0 && (selected.family === 'evm' || selected.family === 'solana')) {

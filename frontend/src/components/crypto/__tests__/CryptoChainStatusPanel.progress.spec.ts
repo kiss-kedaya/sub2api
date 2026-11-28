@@ -29,7 +29,7 @@ describe('chain row: progress, speed and ETA', () => {
     expect(bar.attributes('role')).toBe('progressbar')
     expect(bar.attributes('data-state')).toBe('synced')
     expect(bar.attributes('aria-valuenow')).toBe('100')
-    expect(r.get('[data-testid="chain-bar-fill"]').attributes('style')).toContain('width: 100%')
+    expect(r.get('[data-testid="chain-bar-fill"]').attributes('style')).toContain('transform: scaleX(1)')
     expect(r.get('[data-testid="chain-pct"]').text()).toBe('100%')
     expect(stat(r, 'scanned').text()).toBe('已扫到 39,999,990 / 40,000,000')
     expect(stat(r, 'remaining').text()).toBe('还有 7 块没扫')
@@ -44,7 +44,7 @@ describe('chain row: progress, speed and ETA', () => {
     const r = await row(report([chain({ state: 'catching_up', progress_pct: 78.4, eta_seconds: 1800, unscanned: 2160 })]))
     expect(r.get('[data-testid="chain-state"]').text()).toBe('追赶中')
     expect(r.get('[data-testid="chain-bar"]').attributes('data-state')).toBe('catching_up')
-    expect(r.get('[data-testid="chain-bar-fill"]').attributes('style')).toContain('width: 78.4%')
+    expect(r.get('[data-testid="chain-bar-fill"]').attributes('style')).toContain('transform: scaleX(0.784)')
     expect(r.get('[data-testid="chain-bar"]').attributes('aria-valuenow')).toBe('78.4')
     expect(r.get('[data-testid="chain-pct"]').text()).toBe('78.4%')
     expect(stat(r, 'remaining').text()).toBe('还有 2,160 块没扫')
@@ -71,7 +71,7 @@ describe('chain row: progress, speed and ETA', () => {
   it('an unknown percentage reads calculating and leaves the bar empty', async () => {
     const r = await row(report([chain({ state: 'catching_up', progress_pct: null, eta_seconds: null })]))
     expect(r.get('[data-testid="chain-pct"]').text()).toBe('计算中')
-    expect(r.get('[data-testid="chain-bar-fill"]').attributes('style')).toContain('width: 0%')
+    expect(r.get('[data-testid="chain-bar-fill"]').attributes('style')).toContain('transform: scaleX(0)')
     expect(r.get('[data-testid="chain-bar"]').attributes('aria-valuenow')).toBeUndefined()
   })
 

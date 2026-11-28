@@ -28,6 +28,7 @@
               :color="countdownTone"
               variant="subtle"
               icon="i-lucide-timer"
+              class="tabular-nums"
               data-testid="signer-unlock-countdown"
               :data-tone="countdownTone"
             >{{ t('admin.crypto.signer.unlockWindow', { time: unlockRemainingLabel }) }}</UBadge>
@@ -89,7 +90,7 @@
         <p class="text-sm font-medium text-highlighted">{{ t('admin.crypto.signer.setupStepsTitle') }}</p>
         <ol class="mt-2 grid gap-1.5 text-sm text-muted">
           <li v-for="(step, index) in setupSteps" :key="step" class="flex gap-2">
-            <span class="mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-full bg-primary/10 text-[10px] font-semibold text-primary">{{ index + 1 }}</span>
+            <span class="mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-full bg-primary/10 text-[10px] font-semibold text-primary-700 dark:text-primary-300">{{ index + 1 }}</span>
             <span>{{ t(step) }}</span>
           </li>
         </ol>
@@ -152,13 +153,13 @@
         >{{ t('admin.crypto.signer.advanced') }}</UButton>
         <dl v-if="advancedOpen" class="mt-2 grid gap-2 text-sm sm:grid-cols-[9rem_minmax(0,1fr)]" data-testid="signer-advanced">
           <dt class="text-muted">{{ t('admin.crypto.signer.vaultVersion') }}</dt>
-          <dd class="text-default">{{ status.vault_version }}</dd>
+          <dd class="tabular-nums text-default">{{ status.vault_version }}</dd>
           <dt class="text-muted">{{ t('admin.crypto.signer.createdAt') }}</dt>
-          <dd class="text-default">{{ formatTime(status.created_at) }}</dd>
+          <dd class="tabular-nums text-default">{{ formatTime(status.created_at) }}</dd>
           <template v-if="status.dk_commitment">
             <dt class="text-muted">{{ t('admin.crypto.signer.commitment') }}</dt>
             <dd class="min-w-0">
-              <p class="font-mono text-xs break-all text-default" data-testid="signer-commitment">{{ status.dk_commitment }}</p>
+              <p class="font-mono text-xs wrap-anywhere text-default" data-testid="signer-commitment">{{ status.dk_commitment }}</p>
               <p class="mt-1 text-xs text-muted">{{ t('admin.crypto.signer.commitmentHint') }}</p>
             </dd>
           </template>

@@ -1,5 +1,5 @@
 <template>
-  <UBadge v-if="remaining > 0" class="crypto-grant-status whitespace-nowrap" role="status" color="neutral" variant="subtle" icon="i-lucide-timer">
+  <UBadge v-if="remaining > 0" class="crypto-grant-status whitespace-nowrap tabular-nums" role="status" color="neutral" variant="subtle" icon="i-lucide-timer">
     {{ t('admin.crypto.securityGrantActive', { minutes: Math.ceil(remaining / 60) }) }}
   </UBadge>
 </template>

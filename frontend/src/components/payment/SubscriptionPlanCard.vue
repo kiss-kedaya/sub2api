@@ -1,10 +1,9 @@
 <template>
   <div
     :class="[
-      'payment-subscription-plan group relative flex flex-col overflow-hidden rounded-lg border shadow-xs transition-shadow',
-      'hover:shadow-md dark:shadow-none dark:hover:shadow-none',
+      'payment-subscription-plan group relative flex flex-col overflow-hidden rounded-lg border transition-colors duration-150 hover:border-accented',
       borderClass,
-      'bg-default dark:bg-dark-800',
+      'bg-default',
     ]"
   >
     <!-- Colored top accent bar -->
@@ -27,7 +26,7 @@
         <div class="shrink-0 text-right">
           <div class="flex items-baseline gap-1">
             <span class="text-xs text-dimmed">{{ planCurrencySymbol }}</span>
-            <span :class="['text-2xl font-extrabold tracking-tight', textClass]">{{ plan.price }}</span>
+            <span :class="['text-2xl font-extrabold tracking-tight tabular-nums', textClass]">{{ plan.price }}</span>
             <span v-if="plan.currency" class="text-xs font-medium text-dimmed">{{ plan.currency }}</span>
           </div>
           <div class="flex items-center justify-end gap-1">
@@ -37,33 +36,33 @@
             <span class="text-[11px] text-dimmed">/ {{ validitySuffix }}</span>
           </div>
           <div v-if="plan.original_price" class="mt-0.5 flex items-center justify-end gap-1.5">
-            <span class="text-xs text-dimmed line-through dark:text-dark-500">{{ planCurrencySymbol }}{{ plan.original_price }}<template v-if="plan.currency"> {{ plan.currency }}</template></span>
-            <span :class="['rounded-sm px-1 py-0.5 text-[10px] font-semibold', discountClass]">{{ discountText }}</span>
+            <span class="text-xs text-dimmed line-through tabular-nums">{{ planCurrencySymbol }}{{ plan.original_price }}<template v-if="plan.currency"> {{ plan.currency }}</template></span>
+            <span :class="['rounded-sm px-1 py-0.5 text-[10px] font-semibold tabular-nums', discountClass]">{{ discountText }}</span>
           </div>
         </div>
       </div>
 
       <!-- Group quota info (compact) -->
-      <div class="payment-subscription-plan__quota mb-3 grid grid-cols-2 gap-x-3 gap-y-1 rounded-md bg-muted px-3 py-2 text-xs ring ring-default dark:bg-dark-700/50 dark:ring-0">
+      <div class="payment-subscription-plan__quota mb-3 grid grid-cols-2 gap-x-3 gap-y-1 rounded-md bg-muted px-3 py-2 text-xs ring ring-default">
         <div class="flex items-center justify-between">
           <span class="text-dimmed">{{ t('payment.planCard.rate') }}</span>
-          <span class="font-medium text-default">{{ rateDisplay }}</span>
+          <span class="font-medium tabular-nums text-default">{{ rateDisplay }}</span>
         </div>
         <div v-if="hasPeakRate" class="col-span-2 flex items-center justify-between gap-2">
           <span class="text-dimmed">{{ t('payment.planCard.peakRate') }}</span>
-          <span class="text-right font-medium text-amber-700 dark:text-amber-300">{{ peakRateDisplay }}</span>
+          <span class="text-right font-medium tabular-nums text-amber-700 dark:text-amber-300">{{ peakRateDisplay }}</span>
         </div>
         <div v-if="plan.daily_limit_usd != null" class="flex items-center justify-between">
           <span class="text-dimmed">{{ t('payment.planCard.dailyLimit') }}</span>
-          <span class="font-medium text-default">${{ plan.daily_limit_usd }}</span>
+          <span class="font-medium tabular-nums text-default">${{ plan.daily_limit_usd }}</span>
         </div>
         <div v-if="plan.weekly_limit_usd != null" class="flex items-center justify-between">
           <span class="text-dimmed">{{ t('payment.planCard.weeklyLimit') }}</span>
-          <span class="font-medium text-default">${{ plan.weekly_limit_usd }}</span>
+          <span class="font-medium tabular-nums text-default">${{ plan.weekly_limit_usd }}</span>
         </div>
         <div v-if="plan.monthly_limit_usd != null" class="flex items-center justify-between">
           <span class="text-dimmed">{{ t('payment.planCard.monthlyLimit') }}</span>
-          <span class="font-medium text-default">${{ plan.monthly_limit_usd }}</span>
+          <span class="font-medium tabular-nums text-default">${{ plan.monthly_limit_usd }}</span>
         </div>
         <div v-if="plan.daily_limit_usd == null && plan.weekly_limit_usd == null && plan.monthly_limit_usd == null" class="flex items-center justify-between">
           <span class="text-dimmed">{{ t('payment.planCard.quota') }}</span>
@@ -73,7 +72,7 @@
           <span class="text-dimmed">{{ t('payment.planCard.models') }}</span>
           <div class="flex flex-wrap justify-end gap-1">
             <span v-for="scope in modelScopeLabels" :key="scope"
-              class="rounded-sm bg-elevated px-1.5 py-0.5 text-[10px] font-medium text-toned dark:bg-dark-600 dark:text-gray-300">
+              class="rounded-sm bg-elevated px-1.5 py-0.5 text-[10px] font-medium text-toned">
               {{ scope }}
             </span>
           </div>
@@ -86,7 +85,7 @@
           <svg :class="['mt-0.5 h-3.5 w-3.5 flex-shrink-0', iconClass]" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
             <path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5" />
           </svg>
-          <span class="text-xs text-toned dark:text-gray-300">{{ feature }}</span>
+          <span class="text-xs text-toned">{{ feature }}</span>
         </div>
       </div>
 

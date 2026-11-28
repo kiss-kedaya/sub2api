@@ -191,7 +191,7 @@ describe('SIGNAL dashboard accounting and access contracts', () => {
     const wrapper = mount(Charts, { props: { loading: false, trend: trendPoints } })
     const trend = wrapper.findComponent({ name: 'TokenUsageTrend' })
     expect(trend.props('mode')).toBe('total')
-    expect(trend.props('animationDuration')).toBe(160)
+    expect(trend.props('animationDuration')).toBe(0)
     // The single series takes the theme primary; the header shows the range total.
     expect(trend.props('color')).toMatch(/^#[0-9a-f]{6}$/)
     expect(wrapper.text()).toContain('2.0K')
@@ -234,8 +234,9 @@ describe('SIGNAL dashboard accounting and access contracts', () => {
     expect(legendRows[0].text()).toContain('40.0%')
     expect(legendRows[3].text()).toContain('10.0%')
     expect(wrapper.get('.signal-model-period').text()).toContain('2026-09-11')
-    preferredMotion.value = 'reduce'
-    await flushPromises()
+    expect(doughnut.props('data').datasets[0].backgroundColor).not.toContain('#d87a99')
+    expect(doughnut.props('data').datasets[0].backgroundColor).not.toContain('#efb3c6')
+    expect(doughnut.props('options').plugins.tooltip.backgroundColor).toBeTruthy()
     expect(doughnut.props('options').animation.duration).toBe(0)
     await wrapper.setProps({ loading: true })
     expect(wrapper.findComponent({ name: 'LoadingSpinner' }).exists()).toBe(true)

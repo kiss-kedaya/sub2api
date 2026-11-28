@@ -28,7 +28,7 @@
             v-if="apiKey && !ccsModelsLoading"
             type="button"
             data-test="ccs-import-model-reload"
-            class="inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline"
+            class="inline-flex min-h-11 items-center gap-1 rounded px-1 text-xs font-medium text-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary [@media(hover:hover)_and_(pointer:fine)]:hover:underline [@media(pointer:fine)]:min-h-0"
             @click="loadCcsModels"
           >
             <UIcon name="i-lucide-refresh-cw" class="size-3" aria-hidden="true" />

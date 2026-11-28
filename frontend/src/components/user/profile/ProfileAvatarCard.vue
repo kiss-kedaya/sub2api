@@ -30,19 +30,19 @@
 
       <div :class="props.embedded ? 'space-y-3' : 'min-w-0 flex-1 space-y-4'">
         <div class="space-y-1">
-          <p v-if="props.embedded" class="text-sm font-semibold text-gray-900 dark:text-white">
+          <p v-if="props.embedded" class="text-sm font-semibold text-highlighted">
             {{ t('profile.avatar.title') }}
           </p>
-          <p v-else class="text-sm font-medium text-gray-900 dark:text-white">
+          <p v-else class="text-sm font-medium text-highlighted">
             {{ displayName }}
           </p>
-          <p class="text-sm text-gray-500 dark:text-gray-400">
+          <p class="text-sm text-muted">
             {{ t('profile.avatar.uploadHint') }}
           </p>
         </div>
 
         <div class="flex flex-wrap items-center gap-3">
-          <label class="btn btn-secondary btn-sm cursor-pointer">
+          <label class="btn btn-secondary btn-sm min-h-11 lg:min-h-0 cursor-pointer">
             <input
               data-testid="profile-avatar-file-input"
               type="file"
@@ -56,7 +56,7 @@
           <button
             data-testid="profile-avatar-save"
             type="button"
-            class="btn btn-primary btn-sm"
+            class="btn btn-primary btn-sm min-h-11 lg:min-h-0"
             :disabled="avatarSaving || !avatarDraft"
             @click="handleAvatarSave"
           >
@@ -66,7 +66,7 @@
           <button
             data-testid="profile-avatar-delete"
             type="button"
-            class="btn btn-secondary btn-sm"
+            class="btn btn-secondary btn-sm min-h-11 lg:min-h-0"
             :disabled="avatarSaving"
             @click="handleAvatarDelete"
           >

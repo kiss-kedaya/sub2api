@@ -1,7 +1,7 @@
 <template>
   <button
     type="button"
-    class="admin-row-action"
+    class="admin-row-action rounded-md"
     :class="`admin-row-action--${tone}`"
     :title="label"
   >
@@ -37,7 +37,6 @@ withDefaults(defineProps<{
   flex: 0 0 auto;
   align-items: center;
   justify-content: center;
-  border-radius: 6px;
   color: var(--ui-text-muted);
   transition: color 140ms cubic-bezier(0.23, 1, 0.32, 1), background-color 140ms cubic-bezier(0.23, 1, 0.32, 1), transform 120ms cubic-bezier(0.23, 1, 0.32, 1);
 }
@@ -56,35 +55,37 @@ withDefaults(defineProps<{
   opacity: 0.5;
 }
 
-.admin-row-action:hover:not(:disabled) {
-  background: var(--ui-bg-elevated);
-  color: var(--ui-text-highlighted);
-}
+@media (hover: hover) and (pointer: fine) {
+  .admin-row-action:hover:not(:disabled) {
+    background: var(--ui-bg-elevated);
+    color: var(--ui-text-highlighted);
+  }
 
-.admin-row-action--primary:hover:not(:disabled) {
-  background: color-mix(in oklab, var(--ui-primary) 12%, transparent);
-  color: var(--ui-primary);
-}
+  .admin-row-action--primary:hover:not(:disabled) {
+    background: color-mix(in oklab, var(--ui-primary) 12%, transparent);
+    color: var(--ui-primary);
+  }
 
-.admin-row-action--danger:hover:not(:disabled) {
-  background: color-mix(in oklab, var(--ui-error) 12%, transparent);
-  color: var(--ui-error);
-}
+  .admin-row-action--danger:hover:not(:disabled) {
+    background: color-mix(in oklab, var(--ui-error) 12%, transparent);
+    color: var(--ui-error);
+  }
 
-.admin-row-action--success:hover:not(:disabled) {
-  background: color-mix(in oklab, var(--ui-success) 12%, transparent);
-  color: var(--ui-success);
-}
+  .admin-row-action--success:hover:not(:disabled) {
+    background: color-mix(in oklab, var(--ui-success) 12%, transparent);
+    color: var(--ui-success);
+  }
 
-.admin-row-action--warning:hover:not(:disabled) {
-  background: color-mix(in oklab, var(--ui-warning) 14%, transparent);
-  color: #b45309;
+  .admin-row-action--warning:hover:not(:disabled) {
+    background: color-mix(in oklab, var(--ui-warning) 14%, transparent);
+    color: #b45309;
+  }
 }
 
 @media (max-width: 767px) {
   .admin-row-action {
-    width: 40px;
-    height: 40px;
+    width: 44px;
+    height: 44px;
   }
 }
 
@@ -96,7 +97,9 @@ withDefaults(defineProps<{
 </style>
 
 <style>
-html.dark .admin-row-action--warning:hover:not(:disabled) {
-  color: var(--ui-warning);
+@media (hover: hover) and (pointer: fine) {
+  html.dark .admin-row-action--warning:hover:not(:disabled) {
+    color: var(--ui-warning);
+  }
 }
 </style>

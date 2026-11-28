@@ -592,7 +592,7 @@ describe('user deposit confirmation progress', () => {
     const bar = wrapper.get('[role="progressbar"]')
     expect(bar.attributes('aria-valuenow')).toBe('2')
     expect(bar.attributes('aria-valuemax')).toBe('3')
-    expect(wrapper.get('.deposit-view__progress-fill').attributes('style')).toContain('width: 67%')
+    expect(wrapper.get('.deposit-view__progress-fill').attributes('style')).toContain('scaleX(0.67)')
     expect(wrapper.get('.deposit-view__pending strong').text()).toBe('deposit.pendingSummary {"n":1}')
     expect(wrapper.findAll('.deposit-view__pending-list li').map(li => li.text())).toEqual(['10 USDT · BSC (BEP20) · 2/3'])
   })
@@ -627,7 +627,7 @@ describe('user deposit confirmation progress', () => {
     const wrapper = render()
     await flushPromises()
     expect(wrapper.get('.deposit-view__progress-text').text()).toBe('deposit.confirmProgressDone {"done":3,"required":3}')
-    expect(wrapper.get('.deposit-view__progress-fill').attributes('style')).toContain('width: 100%')
+    expect(wrapper.get('.deposit-view__progress-fill').attributes('style')).toContain('scaleX(1)')
   })
 })
 
@@ -1085,7 +1085,7 @@ describe('user deposit confirmation progress: in-flight states', () => {
     const bar = wrapper.get('[role="progressbar"]')
     expect(bar.attributes('aria-valuenow')).toBe('1')
     expect(bar.attributes('aria-valuemax')).toBe('3')
-    expect(wrapper.get('.deposit-view__progress-fill').attributes('style')).toContain('width: 33%')
+    expect(wrapper.get('.deposit-view__progress-fill').attributes('style')).toContain('scaleX(0.33)')
     // 临时入账的说明还在：进度条不能把「可能被回滚」这件事挤掉。
     expect(wrapper.get('[data-testid="deposit-provisional-hint"]').text()).toBe('deposit.provisionalHint')
   })
@@ -1237,12 +1237,12 @@ describe('user deposit history presentation and smooth updates', () => {
     const wrapper = render()
     await flushPromises()
 
-    expect(wrapper.get('.deposit-view__progress-fill').attributes('style')).toContain('width: 33%')
+    expect(wrapper.get('.deposit-view__progress-fill').attributes('style')).toContain('scaleX(0.33)')
 
     await vi.advanceTimersByTimeAsync(5000)
     await flushPromises()
     expect(wrapper.find('[data-testid="transaction-list-loading"]').exists()).toBe(false)
-    expect(wrapper.get('.deposit-view__progress-fill').attributes('style')).toContain('width: 67%')
+    expect(wrapper.get('.deposit-view__progress-fill').attributes('style')).toContain('scaleX(0.67)')
     expect(wrapper.get('[data-testid="deposit-history-row"]').attributes('data-fresh')).toBeUndefined()
   })
 

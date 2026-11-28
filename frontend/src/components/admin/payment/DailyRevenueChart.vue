@@ -33,26 +33,28 @@ import {
 } from 'chart.js'
 import { Line } from 'vue-chartjs'
 import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
+import { chartTooltipStyle, useChartTheme } from '@/components/charts/chartTheme'
 import type { DailyPaymentStats } from '@/types/payment'
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Tooltip, Legend, Filler)
 
 const { t } = useI18n()
+const chartTheme = useChartTheme()
 
 const props = defineProps<{
   data: DailyPaymentStats[]
   loading?: boolean
 }>()
 
-const colors = [
-  ['rgb(59, 130, 246)', 'rgba(59, 130, 246, 0.1)'],
-  ['rgb(168, 85, 247)', 'rgba(168, 85, 247, 0.1)'],
-  ['rgb(245, 158, 11)', 'rgba(245, 158, 11, 0.1)'],
-  ['rgb(239, 68, 68)', 'rgba(239, 68, 68, 0.1)'],
-]
-
 const chartData = computed(() => {
   if (!props.data || props.data.length === 0) return null
+  const theme = chartTheme.value
+  const colors = [
+    [theme.primary, `${theme.primary}1a`],
+    ['rgb(168, 85, 247)', 'rgba(168, 85, 247, 0.1)'],
+    ['rgb(245, 158, 11)', 'rgba(245, 158, 11, 0.1)'],
+    ['rgb(239, 68, 68)', 'rgba(239, 68, 68, 0.1)'],
+  ]
   const currencies = [...new Set(props.data.flatMap(day => Object.keys(day.amount)))].sort()
   return {
     labels: props.data.map(d => d.date),
@@ -73,8 +75,8 @@ const chartData = computed(() => {
       {
         label: t('payment.admin.orderCount'),
         data: props.data.map(d => d.count),
-        borderColor: 'rgb(16, 185, 129)',
-        backgroundColor: 'rgba(16, 185, 129, 0.1)',
+        borderColor: theme.output,
+        backgroundColor: `${theme.output}1a`,
         fill: false,
         tension: 0.3,
         pointRadius: 3,
@@ -85,27 +87,39 @@ const chartData = computed(() => {
   }
 })
 
-const chartOptions = {
-  responsive: true,
-  maintainAspectRatio: false,
-  interaction: { mode: 'index' as const, intersect: false },
-  scales: {
-    y: {
-      type: 'linear' as const,
-      display: true,
-      position: 'left' as const,
-      title: { display: true, text: t('payment.admin.revenue') },
+const chartOptions = computed(() => {
+  const theme = chartTheme.value
+  return {
+    responsive: true,
+    maintainAspectRatio: false,
+    animation: false as const,
+    interaction: { mode: 'index' as const, intersect: false },
+    scales: {
+      x: {
+        grid: { color: theme.grid },
+        ticks: { color: theme.text },
+      },
+      y: {
+        type: 'linear' as const,
+        display: true,
+        position: 'left' as const,
+        title: { display: true, text: t('payment.admin.revenue'), color: theme.text },
+        grid: { color: theme.grid },
+        ticks: { color: theme.text },
+      },
+      y1: {
+        type: 'linear' as const,
+        display: true,
+        position: 'right' as const,
+        title: { display: true, text: t('payment.admin.orderCount'), color: theme.text },
+        ticks: { color: theme.text },
+        grid: { drawOnChartArea: false },
+      }
     },
-    y1: {
-      type: 'linear' as const,
-      display: true,
-      position: 'right' as const,
-      title: { display: true, text: t('payment.admin.orderCount') },
-      grid: { drawOnChartArea: false },
+    plugins: {
+      legend: { position: 'top' as const, labels: { color: theme.text } },
+      tooltip: chartTooltipStyle(theme),
     }
-  },
-  plugins: {
-    legend: { position: 'top' as const },
   }
-}
+})
 </script>

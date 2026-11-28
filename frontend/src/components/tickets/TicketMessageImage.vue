@@ -1,9 +1,9 @@
 <template>
   <div class="timeline-image-item">
-    <div v-if="loading" class="timeline-image-skeleton" :style="aspectStyle" role="status" :aria-label="t('tickets.loading')">
+    <div v-if="loading" class="timeline-image-skeleton rounded-lg" :style="aspectStyle" role="status" :aria-label="t('tickets.loading')">
       <Icon name="refresh" size="sm" class="animate-spin" />
     </div>
-    <div v-else-if="failed || !objectURL" class="timeline-image-error" role="alert">
+    <div v-else-if="failed || !objectURL" class="timeline-image-error rounded-lg" role="alert">
       <Icon name="exclamationCircle" size="sm" />
       <span>{{ t('tickets.imageLoadFailed') }}</span>
       <button type="button" class="ticket-text-button" @click="load">{{ t('tickets.retry') }}</button>
@@ -11,7 +11,7 @@
     <button
       v-else
       type="button"
-      class="timeline-image-thumb"
+      class="timeline-image-thumb rounded-lg"
       :title="attachment.file_name || t('tickets.imagePreview')"
       :aria-label="t('tickets.imagePreview')"
       @click="emit('preview', { url: objectURL, attachment })"
@@ -106,11 +106,13 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .timeline-image-item { min-width: 0; }
-.timeline-image-thumb { display: block; padding: 0; border: 1px solid var(--signal-line); border-radius: 8px; overflow: hidden; background: var(--signal-bg); cursor: zoom-in; max-width: 100%; transition: border-color 140ms, transform 140ms; }
-.timeline-image-thumb:hover { border-color: var(--signal-accent); }
+.timeline-image-thumb { display: block; padding: 0; border: 1px solid var(--signal-line); overflow: hidden; background: var(--signal-bg); cursor: zoom-in; max-width: 100%; transition: border-color 140ms var(--motion-out, cubic-bezier(0.23, 1, 0.32, 1)), transform 140ms var(--motion-out, cubic-bezier(0.23, 1, 0.32, 1)); }
+@media (hover: hover) and (pointer: fine) {
+  .timeline-image-thumb:hover { border-color: var(--signal-accent); }
+}
 .timeline-image-thumb img { display: block; max-width: 240px; max-height: 220px; width: auto; height: auto; object-fit: cover; }
-.timeline-image-skeleton { display: grid; place-items: center; width: 140px; min-height: 96px; max-height: 180px; border-radius: 8px; border: 1px solid var(--signal-line); background: var(--signal-hover); color: var(--signal-muted); }
-.timeline-image-error { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; width: 150px; min-height: 96px; padding: 10px; border-radius: 8px; border: 1px dashed var(--signal-line); background: var(--signal-bg); color: var(--signal-muted); font-size: 11px; text-align: center; }
+.timeline-image-skeleton { display: grid; place-items: center; width: 140px; min-height: 96px; max-height: 180px; border: 1px solid var(--signal-line); background: var(--signal-hover); color: var(--signal-muted); }
+.timeline-image-error { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; width: 150px; min-height: 96px; padding: 10px; border: 1px dashed var(--signal-line); background: var(--signal-bg); color: var(--signal-muted); font-size: 11px; text-align: center; }
 @media (max-width: 640px) {
   .timeline-image-thumb img { max-width: 100%; max-height: 180px; }
 }

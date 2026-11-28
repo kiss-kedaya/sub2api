@@ -1,29 +1,29 @@
 <template>
   <div class="mt-5 grid grid-cols-2 gap-2">
     <div
-      class="rounded-xl p-3 bg-gray-50/80 dark:bg-dark-900/40 border border-gray-100 dark:border-dark-700/50"
+      class="rounded-xl p-3 bg-muted/80 border border-default"
     >
       <div
-        class="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-gray-400"
+        class="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-dimmed"
       >
         <Icon :name="primaryIcon" size="xs" />
         <span>{{ primaryLabel }}</span>
       </div>
-      <div class="mt-1.5 text-lg font-bold font-mono tabular-nums text-gray-900 dark:text-gray-100">
-        {{ primaryValue }}<span class="text-xs font-normal text-gray-400 ml-0.5">{{ primaryUnit }}</span>
+      <div class="mt-1.5 text-lg font-bold font-mono tabular-nums text-highlighted">
+        {{ primaryValue }}<span class="text-xs font-normal text-dimmed ml-0.5">{{ primaryUnit }}</span>
       </div>
     </div>
     <div
-      class="rounded-xl p-3 bg-gray-50/80 dark:bg-dark-900/40 border border-gray-100 dark:border-dark-700/50"
+      class="rounded-xl p-3 bg-muted/80 border border-default"
     >
       <div
-        class="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-gray-400"
+        class="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-dimmed"
       >
         <Icon :name="secondaryIcon" size="xs" />
         <span>{{ secondaryLabel }}</span>
       </div>
-      <div class="mt-1.5 text-lg font-bold font-mono tabular-nums text-gray-900 dark:text-gray-100">
-        {{ secondaryValue }}<span class="text-xs font-normal text-gray-400 ml-0.5">{{ secondaryUnit }}</span>
+      <div class="mt-1.5 text-lg font-bold font-mono tabular-nums text-highlighted">
+        {{ secondaryValue }}<span class="text-xs font-normal text-dimmed ml-0.5">{{ secondaryUnit }}</span>
       </div>
     </div>
   </div>

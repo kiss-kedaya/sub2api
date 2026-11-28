@@ -40,7 +40,7 @@
         :loading="loading"
         :mode="mode"
         :color="mode === 'total' ? primary : undefined"
-        :animation-duration="reducedMotion ? 0 : 160"
+        :animation-duration="0"
       />
     </div>
   </DashboardChartCard>
@@ -48,7 +48,6 @@
 
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { usePreferredReducedMotion } from '@vueuse/core'
 import { useI18n } from 'vue-i18n'
 import TokenUsageTrend from '@/components/charts/TokenUsageTrend.vue'
 import DashboardChartCard from '@/components/dashboard/DashboardChartCard.vue'
@@ -58,8 +57,6 @@ import type { TrendDataPoint } from '@/types'
 const props = defineProps<{ loading: boolean; error?: boolean; trend: TrendDataPoint[] }>()
 defineEmits(['refresh'])
 const { t } = useI18n()
-const preferredMotion = usePreferredReducedMotion()
-const reducedMotion = computed(() => preferredMotion.value === 'reduce')
 const mode = ref<'total' | 'breakdown'>('total')
 const modeItems = computed(() => [
   { label: t('dashboard.totalUsage'), value: 'total' },
@@ -68,8 +65,8 @@ const modeItems = computed(() => [
 const setMode = (value: string | number) => {
   mode.value = value === 'breakdown' ? 'breakdown' : 'total'
 }
-// Main series follows the theme primary (Appearance settings); #171717 is the default black.
-const primary = useThemeColor('--ui-primary', '#171717')
+// Main series follows the theme primary (Appearance settings); Studio Blue is the fallback.
+const primary = useThemeColor('--ui-primary', '#155dfc')
 
 const formatTokens = (n: number) => {
   if (n >= 1_000_000_000) return `${(n / 1_000_000_000).toFixed(2)}B`

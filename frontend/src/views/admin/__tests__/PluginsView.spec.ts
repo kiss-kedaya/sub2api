@@ -166,4 +166,20 @@ describe('管理员插件页二次验证', () => {
     expect(stepUpRun).toHaveBeenCalledTimes(1)
     expect(uploadPlugin).toHaveBeenCalledTimes(1)
   })
+
+  it('兼容缺失 compatibility/bindings 字段及非数组响应而不崩溃', async () => {
+    listPlugins.mockResolvedValueOnce({ items: [] })
+    const wrapper1 = mountView()
+    await flushPromises()
+    expect(wrapper1.text()).toContain('admin.plugins.empty')
+
+    listPlugins.mockResolvedValueOnce([{
+      ...plugin,
+      compatibility: undefined,
+      bindings: undefined,
+    }])
+    const wrapper2 = mountView()
+    await flushPromises()
+    expect(wrapper2.text()).toContain('Test Transport')
+  })
 })

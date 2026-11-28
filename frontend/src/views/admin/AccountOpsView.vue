@@ -286,7 +286,10 @@ const tableUi = {
   separator: 'h-0'
 }
 const editingHook = ref<AccountOpsWebhook|null>(null), editingProvider = ref<AccountOpsWebhookProvider>('custom'), showWebhook = ref(false), showEmail = ref(false), testingId = ref<string|null>(null)
-let version = 0, accountsVersion = 0, testSequence = 0, mutationSequence = 0, paginationSequence = 0, alive = true, timer: ReturnType<typeof setInterval>|null = null
+let version = 0, accountsVersion = 0, testSequence = 0, mutationSequence = 0, paginationSequence = 0, eventsPaginated = false, alive = true, pollingOverview = false, pollingAccounts = false, timer: ReturnType<typeof setInterval>|null = null
+function assignIfChanged<T>(target: { value: T }, next: T) {
+  if (JSON.stringify(target.value) !== JSON.stringify(next)) target.value = next
+}
 const normalize = (c: AccountOpsConfig): AccountOpsConfig => ({ enabled:c.enabled, recipient:c.recipient,email_name:c.email_name ?? '', use_admin_email:c.use_admin_email ?? false, use_admin_bark:c.use_admin_bark ?? false, balance_low:c.balance_low, weekly_quota:c.weekly_quota, cooldown_minutes:c.cooldown_minutes, webhooks:(c.webhooks??[]).map(h=>({id:h.id,name:h.name,provider:h.provider,enabled:h.enabled,url_configured:h.url_configured===true,secret_configured:h.secret_configured===true,message_template:h.message_template})), groups:(c.groups??[]).map(g=>({id:g.id,name:g.name,provider:g.provider,site:g.site,account_ids:g.account_ids ? [...g.account_ids] : []})), balance_thresholds:(c.balance_thresholds??[]).map(r=>({...r,notify_alert:r.notify_alert??true,notify_recovery:r.notify_recovery??true})), quota_thresholds:(c.quota_thresholds??[]).map(r=>({...r,notify_alert:r.notify_alert??true,notify_recovery:r.notify_recovery??true})) })
 const eventKey = (e: AccountOpsEvent) => e.id ?? `${e.account_id}:${e.kind}:${e.phase??'legacy'}:${e.first_seen}`
 const filteredEvents = computed(()=>events.value.filter(e=>(kind.value==='all'||kind.value===e.kind)&&(phase.value==='all'||phase.value===(e.phase??'alert'))&&`${e.account_name} ${e.account_id}`.toLowerCase().includes(query.value.toLowerCase().trim())))
@@ -295,28 +298,60 @@ const message = (e: unknown) => extractApiErrorMessage(e,t('accountOps.saveFaile
 // Blocked step-up (TOTP disabled / admin API key) cannot be resolved by retrying the request.
 const stepUpMessage = (e: unknown) => stepUpBlockReason(e) === 'STEP_UP_ADMIN_API_KEY_FORBIDDEN' ? t('stepUp.adminApiKeyForbidden') : t('stepUp.notEnabled')
 const actionMessage = (e: unknown) => isStepUpBlocked(e) ? stepUpMessage(e) : message(e)
-async function load() {
-  if (!auth.user || mutating.value || globalSaving.value) return
-  const current=++version;loading.value=true
-  const [settings, page] = await Promise.allSettled([getAccountOpsSettings(), getAccountOpsEvents()])
-  if (!alive || current !== version) return
-  const failures: string[] = []
-  if (settings.status === 'fulfilled') remote.value = { ...settings.value, config: normalize(settings.value.config) }; else failures.push(message(settings.reason))
-  if (page.status === 'fulfilled') { events.value = page.value.items; hasMore.value = page.value.has_more } else failures.push(message(page.reason))
-  loadError.value = [...new Set(failures)].join(' · ')
-  if (loadError.value) app.showError(loadError.value)
-  loading.value = false
+async function load(silent = false) {
+  if (!auth.user || mutating.value || globalSaving.value || (silent && (loading.value || pollingOverview))) return
+  const current = ++version
+  const startPaginationSequence = paginationSequence
+  if (silent) pollingOverview = true; else loading.value = true
+  try {
+    const [settings, page] = await Promise.allSettled([getAccountOpsSettings(), getAccountOpsEvents()])
+    if (!alive || current !== version) return
+    const failures: string[] = []
+    if (settings.status === 'fulfilled') {
+      const nextRemote = { ...settings.value, config: normalize(settings.value.config) }
+      assignIfChanged(remote, nextRemote)
+    } else failures.push(message(settings.reason))
+    if (page.status === 'fulfilled') {
+      if (!silent || (!eventsPaginated && paginationSequence === startPaginationSequence)) {
+        if (!silent) eventsPaginated = false
+        assignIfChanged(events, page.value.items)
+        if (hasMore.value !== page.value.has_more) hasMore.value = page.value.has_more
+      }
+    } else failures.push(message(page.reason))
+    const nextError = [...new Set(failures)].join(' · ')
+    if (loadError.value !== nextError) loadError.value = nextError
+    if (loadError.value && !silent) app.showError(loadError.value)
+  } finally {
+    if (silent) pollingOverview = false
+    else if (alive && current === version) loading.value = false
+  }
 }
 async function refresh() {
   if (mutating.value || globalSaving.value) return
-  await Promise.all([load(), ...(activeTab.value === 'rules' ? [loadAccounts()] : [])])
+  await Promise.all([load(false), ...(activeTab.value === 'rules' ? [loadAccounts(false)] : [])])
 }
-async function loadAccounts() {
-  if(!auth.user)return
-  const current=++accountsVersion;thresholdLoading.value=true
-  try{const [a, g] = await Promise.all([getAccountOpsThresholdAccounts(), getAccountOpsThresholdGroups()]);if(alive&&current===accountsVersion){thresholdAccounts.value=a;accountGroups.value=g;thresholdReady.value=true;thresholdError.value=''}}
-  catch(e){if(alive&&current===accountsVersion){thresholdError.value=message(e);app.showError(thresholdError.value)}}
-  finally{if(alive&&current===accountsVersion)thresholdLoading.value=false}
+async function loadAccounts(silent = false) {
+  if (!auth.user || (silent && (thresholdLoading.value || pollingAccounts))) return
+  const current = ++accountsVersion
+  if (silent) pollingAccounts = true; else thresholdLoading.value = true
+  try {
+    const [a, g] = await Promise.all([getAccountOpsThresholdAccounts(), getAccountOpsThresholdGroups()])
+    if (alive && current === accountsVersion) {
+      assignIfChanged(thresholdAccounts, a)
+      assignIfChanged(accountGroups, g)
+      if (!thresholdReady.value) thresholdReady.value = true
+      if (thresholdError.value !== '') thresholdError.value = ''
+    }
+  } catch (e) {
+    if (alive && current === accountsVersion) {
+      const nextError = message(e)
+      if (thresholdError.value !== nextError) thresholdError.value = nextError
+      if (!silent) app.showError(thresholdError.value)
+    }
+  } finally {
+    if (silent) pollingAccounts = false
+    else if (alive && current === accountsVersion) thresholdLoading.value = false
+  }
 }
 // Entering the rules sub-page loads the accounts once if the first load has not finished or was reset.
 watch(activeTab, tab => { if (tab === 'rules' && !thresholdReady.value && !thresholdLoading.value) void loadAccounts() })
@@ -391,8 +426,8 @@ async function testChannel(id: string, action: () => Promise<unknown>){
     if(alive&&current===testSequence)testingId.value=null
   }
 }
-async function more(){if(loadingMore.value||loading.value)return;const current=version, sequence=++paginationSequence;loadingMore.value=true;try{const p=await getAccountOpsEvents(events.value.length);if(alive&&current===version){const merged=new Map([...events.value,...p.items].map(e=>[eventKey(e),e]));events.value=[...merged.values()];hasMore.value=p.has_more}}catch(e){if(alive&&current===version)app.showError(message(e))}finally{if(alive&&sequence===paginationSequence)loadingMore.value=false}}
-watch(()=>auth.user?`${auth.user.id}:${auth.user.role}`:'',()=>{version++;accountsVersion++;testSequence++;mutationSequence++;paginationSequence++;loading.value=loadingMore.value=mutating.value=thresholdLoading.value=false;thresholdAccounts.value=[];accountGroups.value=[];thresholdReady.value=false;showWebhook.value=showEmail.value=showAddChannel.value=showGroupDialog.value=false;testingId.value=null;enabledDraft.value=globalSaving.value=false;batchAccounts.value=[];loadError.value=''},{flush:'sync'})
-onMounted(()=>{void load();void loadAccounts();timer=setInterval(()=>{if(document.visibilityState==='visible'&&!loadingMore.value&&!mutating.value&&!globalSaving.value){void load();if(activeTab.value==='rules')void loadAccounts()}},30000)})
-onBeforeUnmount(()=>{alive=false;version++;accountsVersion++;testSequence++;mutationSequence++;paginationSequence++;stepUp.onCancel();if(timer)clearInterval(timer)})
+async function more(){if(loadingMore.value||loading.value)return;const current=version, sequence=++paginationSequence;loadingMore.value=true;try{const p=await getAccountOpsEvents(events.value.length);if(alive&&current===version){const merged=new Map([...events.value,...p.items].map(e=>[eventKey(e),e]));events.value=[...merged.values()];hasMore.value=p.has_more;eventsPaginated=true}}catch(e){if(alive&&current===version)app.showError(message(e))}finally{if(alive&&sequence===paginationSequence)loadingMore.value=false}}
+watch(()=>auth.user?`${auth.user.id}:${auth.user.role}`:'',()=>{version++;accountsVersion++;testSequence++;mutationSequence++;paginationSequence++;eventsPaginated=false;loading.value=loadingMore.value=mutating.value=thresholdLoading.value=false;pollingOverview=pollingAccounts=false;thresholdAccounts.value=[];accountGroups.value=[];thresholdReady.value=false;showWebhook.value=showEmail.value=showAddChannel.value=showGroupDialog.value=false;testingId.value=null;enabledDraft.value=globalSaving.value=false;batchAccounts.value=[];loadError.value=''},{flush:'sync'})
+onMounted(()=>{void load(false);void loadAccounts(false);timer=setInterval(()=>{if(document.visibilityState==='visible'&&!loadingMore.value&&!mutating.value&&!globalSaving.value){void load(true);if(activeTab.value==='rules')void loadAccounts(true)}},30000)})
+onBeforeUnmount(()=>{alive=false;pollingOverview=pollingAccounts=false;version++;accountsVersion++;testSequence++;mutationSequence++;paginationSequence++;stepUp.onCancel();if(timer)clearInterval(timer)})
 </script>

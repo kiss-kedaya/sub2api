@@ -11,7 +11,7 @@
     <div :class="props.embedded ? '' : 'p-5 sm:p-6'">
       <form @submit.prevent="handleUpdateProfile" class="space-y-4">
         <div v-if="props.embedded">
-          <p class="text-sm font-semibold text-gray-900 dark:text-white">
+          <p class="text-sm font-semibold text-highlighted">
             {{ t('profile.editProfile') }}
           </p>
         </div>

@@ -57,7 +57,7 @@
           <template #cell-title="{ value, row }">
             <div class="min-w-0">
               <p class="truncate font-medium text-highlighted">{{ value }}</p>
-              <p class="mt-0.5 text-xs text-muted">#{{ row.id }} · {{ formatDateTime(row.created_at) }}</p>
+              <p class="mt-0.5 text-xs tabular-nums text-muted">#{{ row.id }} · {{ formatDateTime(row.created_at) }}</p>
             </div>
           </template>
 
@@ -82,14 +82,14 @@
           </template>
 
           <template #cell-timeRange="{ row }">
-            <div class="text-xs text-muted">
+            <div class="text-xs tabular-nums text-muted">
               <p>{{ t('admin.announcements.form.startsAt') }}: <span class="text-default">{{ row.starts_at ? formatDateTime(row.starts_at) : t('admin.announcements.timeImmediate') }}</span></p>
               <p class="mt-0.5">{{ t('admin.announcements.form.endsAt') }}: <span class="text-default">{{ row.ends_at ? formatDateTime(row.ends_at) : t('admin.announcements.timeNever') }}</span></p>
             </div>
           </template>
 
           <template #cell-created_at="{ value }">
-            <span class="text-muted">{{ formatDateTime(value) }}</span>
+            <span class="tabular-nums text-muted">{{ formatDateTime(value) }}</span>
           </template>
 
           <template #cell-actions="{ row }">

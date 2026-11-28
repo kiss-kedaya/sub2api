@@ -121,6 +121,26 @@ func (h *GatewayHandler) SystemOne(c *gin.Context) {
 	}
 	defer inflightRelease()
 
+	preauthCtx := withFixedKeyRouteForPreauthorization(c.Request.Context(), apiKey)
+	balanceGuard, preauthErr := preauthorizeTextGatewayRequest(
+		preauthCtx, h.balancePreauthorizer, h.gatewayService,
+		apiKey, subscription, body,
+		service.BalancePreauthorizationBillingModel(model, channelMapping),
+		pricingAt, "",
+	)
+	if preauthErr != nil {
+		status, code, message, retryAfter := billingErrorDetails(preauthErr)
+		if retryAfter > 0 {
+			c.Header("Retry-After", strconv.Itoa(retryAfter))
+		}
+		h.errorResponse(c, status, code, message)
+		return
+	}
+	defer func() { deferBalancePreauthorizationRefund(reqLog, balanceGuard) }()
+	if balanceGuard != nil {
+		c.Request = c.Request.WithContext(service.ContextWithBalancePreauthorizationGuard(c.Request.Context(), balanceGuard))
+	}
+
 	fs := NewFailoverState(h.maxAccountSwitches, false)
 	for {
 		if failoverClientGone(c) {

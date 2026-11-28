@@ -24,7 +24,7 @@
     </div>
     <div
       v-else-if="error"
-      class="plaza-status plaza-status-error"
+      class="plaza-status plaza-status-error rounded-lg"
     >
       {{ t('modelPlaza.loadFailed') }}
     </div>
@@ -50,7 +50,7 @@
       </div>
       <div
         v-else
-        class="plaza-status"
+        class="plaza-status rounded-lg"
       >
         {{ searchActive ? t('modelPlaza.noSearchResult') : t('modelPlaza.empty') }}
       </div>
@@ -172,7 +172,6 @@ const filteredGroups = computed(() => {
 .plaza-status {
   padding: 32px 20px;
   border: 1px dashed var(--signal-line, #dedee4);
-  border-radius: 8px;
   color: var(--signal-muted, #63636c);
   text-align: center;
   font-size: 14px;
@@ -194,11 +193,11 @@ const filteredGroups = computed(() => {
 .plaza-description :deep(h1),
 .plaza-description :deep(h2),
 .plaza-description :deep(h3) {
-  @apply mb-2 mt-3 font-semibold text-gray-900 first:mt-0 dark:text-white;
+  @apply mb-2 mt-3 font-semibold text-highlighted first:mt-0;
 }
 
 .plaza-description :deep(p) {
-  @apply mb-2 text-gray-700 last:mb-0 dark:text-dark-200;
+  @apply mb-2 text-default last:mb-0;
 }
 
 .plaza-description :deep(a) {
@@ -214,15 +213,15 @@ const filteredGroups = computed(() => {
 }
 
 .plaza-description :deep(li) {
-  @apply mb-0.5 text-gray-700 dark:text-dark-200;
+  @apply mb-0.5 text-default;
 }
 
 .plaza-description :deep(code) {
-  @apply rounded bg-gray-100 px-1.5 py-0.5 font-mono text-xs dark:bg-dark-800;
+  @apply rounded bg-muted px-1.5 py-0.5 font-mono text-xs;
 }
 
 .plaza-description :deep(blockquote) {
-  @apply my-2 border-l-4 border-gray-300 pl-3 text-gray-600 dark:border-dark-600 dark:text-dark-300;
+  @apply my-2 border-l-4 border-default pl-3 text-muted;
 }
 </style>
 

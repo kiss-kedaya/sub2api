@@ -122,4 +122,27 @@ describe('EmailOAuthButtons', () => {
     expect(buttons[1].text()).toContain('Google')
     expect(buttons[1].text()).not.toContain('使用 Google 登录')
   })
+
+  it('sanitizes repeated array redirect query params before emitting OAuth start', async () => {
+    routeState.query = { redirect: ['', '/keys?tab=active', '/orders'] }
+    const wrapper = mount(EmailOAuthButtons, {
+      props: {
+        githubEnabled: true,
+        googleEnabled: false,
+      },
+      global: {
+        stubs: {
+          GitHubMark: true,
+          GoogleMark: true,
+        },
+      },
+    })
+
+    await wrapper.get('button').trigger('click')
+
+    expect(wrapper.emitted('start')?.[0]?.[0]).toEqual({
+      provider: 'github',
+      params: { redirect: '/keys?tab=active' }
+    })
+  })
 })

@@ -295,13 +295,16 @@
 
 /* Range switch (90m / 24h / 7d / 30d): neutral track with a raised pill. */
 .console-signal .channel-range-switch { display: inline-flex; gap: 2px; padding: 3px; border-radius: 8px; background: var(--ui-bg-elevated); }
-.console-signal .channel-range-switch button { min-height: 28px; padding: 3px 12px; border-radius: 6px; color: var(--ui-text-muted); font-size: 12px; font-weight: 500; font-variant-numeric: tabular-nums; transition: background-color 150ms ease, color 150ms ease; }
+.console-signal .channel-range-switch button { min-height: 28px; padding: 3px 12px; border-radius: 6px; color: var(--ui-text-muted); font-size: 12px; font-weight: 500; font-variant-numeric: tabular-nums; transition: transform var(--cb-t-fast, 140ms) var(--cb-ease-press, cubic-bezier(0.3, 0, 0.2, 1)), background-color 150ms var(--motion-out, cubic-bezier(0.23, 1, 0.32, 1)), color 150ms var(--motion-out, cubic-bezier(0.23, 1, 0.32, 1)); }
 @media (hover: hover) and (pointer: fine) {
   .console-signal .channel-range-switch button:hover { color: var(--ui-text-highlighted); }
 }
 .console-signal .channel-range-switch button:active { color: var(--ui-text-highlighted); }
-.console-signal .channel-range-switch button:focus-visible { outline: 2px solid var(--ui-border-inverted); outline-offset: 1px; }
-.console-signal .channel-range-switch button:is([aria-pressed='true'], [aria-selected='true']) { background: var(--ui-bg); color: var(--ui-text-highlighted); box-shadow: 0 1px 2px rgba(10, 10, 10, 0.08), 0 0 0 1px var(--ui-border); }
+.console-signal .channel-range-switch button:focus-visible { outline: 2px solid var(--ui-primary); outline-offset: 1px; }
+.console-signal .channel-range-switch button:is([aria-pressed='true'], [aria-selected='true']) { background: var(--ui-bg); color: var(--ui-text-highlighted); box-shadow: 0 0 0 1px var(--ui-border), var(--app-shadow-card); }
+@media (prefers-reduced-motion: reduce) {
+  .console-signal .channel-range-switch button { transition: none; }
+}
 
 .console-signal .signal-channel-v3 section[data-layout='cluster'] > .grid,
 .console-signal .signal-channel-v3 [data-testid='channel-status-compact-platforms'] > .grid {
@@ -336,11 +339,11 @@
 }
 
 /* Light theme: flat white cards and panels with a hairline shadow (dark keeps its surface). */
-html:not(.dark) .console-signal :is(.signal-monitor-surface, .signal-channel-ledger) { box-shadow: 0 1px 2px rgba(10, 10, 10, 0.05) !important; }
+html:not(.dark) .console-signal :is(.signal-monitor-surface, .signal-channel-ledger) { box-shadow: var(--app-shadow-card) !important; }
 
 html:not(.dark) .console-signal .channel-signal-card {
   background: var(--ui-bg) !important;
-  box-shadow: 0 1px 2px rgba(10, 10, 10, 0.05) !important;
+  box-shadow: var(--app-shadow-card) !important;
 }
 
 .console-signal .channel-signal-card__header {
@@ -552,23 +555,22 @@ html:not(.dark) .console-signal .channel-signal-card {
     font-size: 15px;
   }
 
+  .console-signal .channel-range-switch button {
+    min-height: 44px;
+    padding-inline: 10px;
+  }
+
+  .console-signal .signal-channel-filterbar .btn-secondary {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
   .console-signal .signal-available-page .table-page-layout {
     height: auto;
   }
 
   .console-signal .signal-channel-filterbar {
-    position: relative;
     padding-block: 12px;
-  }
-
-  .console-signal .signal-channel-filterbar > div:last-child {
-    position: absolute;
-    right: 0;
-    width: auto;
-  }
-
-  .console-signal .signal-channel-filterbar > div:first-child {
-    padding-right: 50px;
   }
 }
 

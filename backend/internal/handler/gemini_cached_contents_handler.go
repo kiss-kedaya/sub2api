@@ -2,6 +2,7 @@
 package handler
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -153,7 +154,13 @@ func (h *GatewayHandler) GeminiCachedContentsCreate(c *gin.Context) {
 	if !h.checkGeminiCachedContentBilling(c, reqLog, apiKey, subscription) {
 		return
 	}
-	inflightRelease, err := reserveInflightBalance(c, h.billingCacheService, h.gatewayService, apiKey, subscription, tokenInflightEstimate(c, modelName, body))
+	estimatedTokens := estimateGeminiCachedContentInputTokens(body)
+	inflightRelease, err := reserveInflightBalance(c, h.billingCacheService, h.gatewayService, apiKey, subscription, service.InflightEstimateRequest{
+		Model:     modelName,
+		BodyBytes: estimatedTokens * 4,
+		MaxTokens: 1,
+		Kind:      service.InflightEstimateToken,
+	})
 	if err != nil {
 		reqLog.Info("gemini.cached_content.inflight_reservation_rejected", zap.Error(err))
 		status, _, message, retryAfter := billingErrorDetails(err)
@@ -240,10 +247,73 @@ func (h *GatewayHandler) GeminiCachedContentsCreate(c *gin.Context) {
 			googleError(c, http.StatusInternalServerError, "Failed to allocate cached content id")
 			return
 		}
+		createRequestID := service.GeminiCachedContentCreateUsageRequestID(publicID)
+
+		// Pre-check estimated input + TTL storage cost before creating an upstream
+		// cache so low-balance / exhausted-quota callers cannot create expensive
+		// upstream caches and drive balances negative.
+		estimatedStorageTokenHours := service.GeminiCachedContentStorageTokenHours(int64(estimatedTokens), ttl)
+		estimatedAmount := h.gatewayService.QuoteUsageCost(c.Request.Context(), &service.RecordUsageInput{
+			Result: &service.ForwardResult{
+				Model:                  modelName,
+				UpstreamModel:          mappedModel,
+				Usage:                  service.ClaudeUsage{InputTokens: estimatedTokens},
+				CacheStorageTokenHours: estimatedStorageTokenHours,
+			},
+			APIKey:             apiKey,
+			User:               apiKey.User,
+			Subscription:       subscription,
+			PricingAt:          pricingAt,
+			ChannelUsageFields: usageFields,
+		})
+		precheckRes, precheckErr := h.reserveGeminiCachedContentChargeRes(c, apiKey, subscription, estimatedAmount)
+		if precheckErr != nil {
+			accountReleaseFunc()
+			reqLog.Info("gemini.cached_content.precheck_charge_rejected",
+				zap.Int("estimated_tokens", estimatedTokens),
+				zap.Float64("estimated_amount", estimatedAmount),
+				zap.Error(precheckErr),
+			)
+			writeGeminiCachedContentBillingError(c, precheckErr)
+			return
+		}
+		precheckDone := inflightNoop
+		if precheckRes != nil {
+			precheckDone = precheckRes.HandlerDone
+		}
+		createGuard, preauthErr := preauthorizeFixedAmountGatewayRequest(
+			withFixedKeyRouteForPreauthorization(c.Request.Context(), apiKey),
+			h.balancePreauthorizer,
+			apiKey,
+			subscription,
+			createRequestID,
+			body,
+			estimatedAmount,
+		)
+		if preauthErr != nil {
+			precheckDone()
+			accountReleaseFunc()
+			reqLog.Info("gemini.cached_content.preauth_rejected",
+				zap.Int("estimated_tokens", estimatedTokens),
+				zap.Float64("estimated_amount", estimatedAmount),
+				zap.Error(preauthErr),
+			)
+			writeGeminiCachedContentBillingError(c, preauthErr)
+			return
+		}
+		refundCreateGuard := func() {
+			if createGuard != nil {
+				deferBalancePreauthorizationRefund(reqLog, createGuard)
+				createGuard = nil
+			}
+		}
+		inflightRelease()
 
 		upstream, err := svc.CreateUpstream(c.Request.Context(), account, req, mappedModel, publicID, ttl)
 		accountReleaseFunc()
 		if err != nil {
+			refundCreateGuard()
+			precheckDone()
 			var upErr *service.GeminiCachedContentUpstreamError
 			if errors.As(err, &upErr) {
 				reqLog.Info("gemini.cached_content.upstream_create_failed", zap.Int64("account_id", account.ID), zap.Int("status", upErr.StatusCode))
@@ -273,7 +343,8 @@ func (h *GatewayHandler) GeminiCachedContentsCreate(c *gin.Context) {
 			continue
 		}
 
-		// 缓存 token 数在上游创建后才确定：按确定金额校验余额 / 额度并预留，不足时删除上游缓存，
+		// 缓存 token 数在上游创建后才确定：保持 precheckRes 持续持有并在确定金额高于预估时
+		// 仅追加差额预留（避免先释再锁的 TOCTOU 窗口与双倍计提）；不足时删除上游缓存，
 		// 只收取已发生的缓存 token 输入费。
 		tokens := upstream.TotalTokenCount
 		storageTokenHours := service.GeminiCachedContentStorageTokenHours(tokens, ttl)
@@ -284,20 +355,58 @@ func (h *GatewayHandler) GeminiCachedContentsCreate(c *gin.Context) {
 			},
 			APIKey: apiKey, User: apiKey.User, Subscription: subscription, PricingAt: pricingAt, ChannelUsageFields: usageFields,
 		})
-		inflightRelease()
-		chargeDone, err := h.reserveGeminiCachedContentCharge(c, apiKey, subscription, amount)
+		const cachedChargeDeltaEps = 1e-9
+		chargeDone := precheckDone
+		if createGuard != nil && amount-createGuard.HoldAmount() > cachedChargeDeltaEps {
+			if topUpErr := createGuard.TopUpFixedAmount(c.Request.Context(), amount); topUpErr != nil {
+				err = topUpErr
+			}
+		}
+		if err == nil {
+			if precheckRes == nil {
+				chargeDone, err = h.reserveGeminiCachedContentCharge(c, apiKey, subscription, amount)
+			} else if delta := amount - estimatedAmount; delta > cachedChargeDeltaEps {
+				deltaRes, reserveErr := h.billingCacheService.ReserveFixedCharge(c.Request.Context(), apiKey.User, apiKey, apiKey.Group, subscription, delta)
+				if reserveErr != nil {
+					err = reserveErr
+				} else if deltaRes != nil {
+					precheckRes.Attach(deltaRes)
+				}
+			}
+		}
 		if err != nil {
 			reqLog.Info("gemini.cached_content.storage_charge_rejected", zap.Float64("amount", amount), zap.Error(err))
 			h.cleanupGeminiCachedContentUpstream(reqLog, account, upstream.Name)
-			if usageErr := h.submitGeminiCachedContentUsage(c, apiKey, account, subscription, pricingAt,
-				service.GeminiCachedContentCreateUsageRequestID(publicID), modelName, mappedModel, int(tokens), 0, usageFields, body); usageErr != nil {
+			var inputGuard *service.BalancePreauthorizationGuard
+			if tokens > 0 && createGuard != nil {
+				if transferred, ok := createGuard.TransferToWorker(); ok {
+					inputGuard = transferred
+				}
+			}
+			usageErr := h.submitGeminiCachedContentUsageWithGuard(c, inputGuard, apiKey, account, subscription, pricingAt,
+				createRequestID, modelName, mappedModel, int(tokens), 0, usageFields, body)
+			refundCreateGuard()
+			precheckDone()
+			if usageErr != nil {
+				// Input tokens were already consumed upstream; if settlement failed,
+				// intentionally leave inputGuard unrefunded so crash recovery settles
+				// the durable hold rather than granting a free call.
 				googleError(c, http.StatusServiceUnavailable, "Cached content usage settlement is temporarily unavailable")
 				return
 			}
+			// Safety net when RecordUsage returned nil without finalizing (e.g. simple/zero-cost mode);
+			// no-op when Finalize already settled inputGuard.
+			deferBalancePreauthorizationRefund(reqLog, inputGuard)
 			writeGeminiCachedContentBillingError(c, err)
 			return
 		}
 		defer chargeDone()
+		saved := false
+		defer func() {
+			if !saved {
+				refundCreateGuard()
+			}
+		}()
 
 		expireTime := service.ClampGeminiCachedContentExpire(upstream.ExpireTime, svc.Now().Add(ttl))
 		record := &service.GeminiCachedContent{
@@ -314,8 +423,8 @@ func (h *GatewayHandler) GeminiCachedContentsCreate(c *gin.Context) {
 			ExpireTime:      expireTime,
 			ChannelUsage:    usageFields,
 		}
-		intent, prepareErr := h.prepareGeminiCachedContentCharge(c, apiKey, account, subscription, pricingAt,
-			service.GeminiCachedContentCreateUsageRequestID(publicID), modelName, mappedModel, int(tokens), storageTokenHours, usageFields, body)
+		intent, prepareErr := h.prepareGeminiCachedContentChargeWithGuard(c, createGuard, apiKey, account, subscription, pricingAt,
+			createRequestID, modelName, mappedModel, int(tokens), storageTokenHours, usageFields, body)
 		if prepareErr != nil {
 			h.cleanupGeminiCachedContentUpstream(reqLog, account, record.UpstreamName)
 			googleError(c, http.StatusServiceUnavailable, "Cached content billing could not be prepared")
@@ -330,9 +439,15 @@ func (h *GatewayHandler) GeminiCachedContentsCreate(c *gin.Context) {
 			googleError(c, http.StatusInternalServerError, "Failed to persist cached content")
 			return
 		}
+		saved = true
 		// The resource and frozen charge are durable together. Once saved, failures
 		// leave it unavailable and recoverable; never delete a committed charge.
 		persistCtx, cancelPersist = geminiCachedContentPersistContext(c)
+		if createGuard != nil {
+			if workerGuard, ok := createGuard.TransferToWorker(); ok {
+				persistCtx = service.ContextWithBalancePreauthorizationGuard(persistCtx, workerGuard)
+			}
+		}
 		err = svc.SettleCharge(persistCtx, record)
 		cancelPersist()
 		if err != nil {
@@ -454,7 +569,8 @@ func (h *GatewayHandler) GeminiCachedContentsPatch(c *gin.Context) {
 		googleError(c, http.StatusServiceUnavailable, geminiCachedContentUnavailableMessage)
 		return
 	}
-	ttl, err := service.ParseGeminiCachedContentPatchRequest(body, c.Query("updateMask"), svc.Now(), svc.MaxTTLForAccount(account))
+	patchNow := svc.Now()
+	ttl, err := service.ParseGeminiCachedContentPatchRequest(body, c.Query("updateMask"), patchNow, svc.MaxTTLForAccount(account))
 	if err != nil {
 		googleError(c, http.StatusBadRequest, err.Error())
 		return
@@ -464,7 +580,16 @@ func (h *GatewayHandler) GeminiCachedContentsPatch(c *gin.Context) {
 	c.Request = c.Request.WithContext(pricingCtx)
 
 	subscription, _ := middleware.GetSubscriptionFromContext(c)
-	if extension := svc.Now().Add(ttl).Sub(record.ExpireTime); extension > 0 {
+	var patchRequestID string
+	var patchGuard *service.BalancePreauthorizationGuard
+	patchChargeCommitted := false
+	defer func() {
+		if !patchChargeCommitted {
+			deferBalancePreauthorizationRefund(reqLog, patchGuard)
+		}
+	}()
+	patchTargetExpire := patchNow.Add(ttl)
+	if extension := patchTargetExpire.Sub(record.ExpireTime); extension > 0 {
 		usage := &service.RecordUsageInput{
 			Result: &service.ForwardResult{
 				Model: record.Model, UpstreamModel: record.UpstreamModelID(),
@@ -480,13 +605,29 @@ func (h *GatewayHandler) GeminiCachedContentsPatch(c *gin.Context) {
 		if !h.checkGeminiCachedContentBilling(c, reqLog, apiKey, subscription) {
 			return
 		}
-		chargeDone, err := h.reserveGeminiCachedContentCharge(c, apiKey, subscription, h.gatewayService.QuoteUsageCost(c.Request.Context(), usage))
+		patchAmount := h.gatewayService.QuoteUsageCost(c.Request.Context(), usage)
+		chargeDone, err := h.reserveGeminiCachedContentCharge(c, apiKey, subscription, patchAmount)
 		if err != nil {
 			reqLog.Info("gemini.cached_content.storage_charge_rejected", zap.Error(err))
 			writeGeminiCachedContentBillingError(c, err)
 			return
 		}
 		defer chargeDone()
+		patchRequestID = service.GeminiCachedContentPatchUsageRequestID(record.PublicID)
+		patchGuard, err = preauthorizeFixedAmountGatewayRequest(
+			withFixedKeyRouteForPreauthorization(c.Request.Context(), apiKey),
+			h.balancePreauthorizer,
+			apiKey,
+			subscription,
+			patchRequestID,
+			body,
+			patchAmount,
+		)
+		if err != nil {
+			reqLog.Info("gemini.cached_content.patch_preauth_rejected", zap.Float64("amount", patchAmount), zap.Error(err))
+			writeGeminiCachedContentBillingError(c, err)
+			return
+		}
 	}
 
 	setOpsSelectedAccount(c, account.ID, account.Platform)
@@ -529,11 +670,43 @@ func (h *GatewayHandler) GeminiCachedContentsPatch(c *gin.Context) {
 		googleError(c, http.StatusBadGateway, "Upstream request failed")
 		return
 	}
-	expireTime := service.ClampGeminiCachedContentExpire(upstream.ExpireTime, svc.Now().Add(ttl))
+	expireTime := service.ClampGeminiCachedContentExpire(upstream.ExpireTime, patchTargetExpire)
 	var intent *service.MediaBillingIntent
 	if extended := expireTime.Sub(mutation.Baseline()); extended > 0 {
-		intent, err = h.prepareGeminiCachedContentCharge(c, apiKey, account, subscription, pricingAt,
-			service.GeminiCachedContentPatchUsageRequestID(record.PublicID), record.Model, record.UpstreamModelID(), 0,
+		if patchRequestID == "" {
+			patchRequestID = service.GeminiCachedContentPatchUsageRequestID(record.PublicID)
+		}
+		if patchGuard == nil && h.balancePreauthorizer != nil {
+			fallbackAmount := h.gatewayService.QuoteUsageCost(c.Request.Context(), &service.RecordUsageInput{
+				Result: &service.ForwardResult{
+					Model:                  record.Model,
+					UpstreamModel:          record.UpstreamModelID(),
+					CacheStorageTokenHours: service.GeminiCachedContentStorageTokenHours(record.TotalTokenCount, extended),
+				},
+				APIKey:             apiKey,
+				User:               apiKey.User,
+				Subscription:       subscription,
+				PricingAt:          pricingAt,
+				ChannelUsageFields: record.ChannelUsage,
+			})
+			var preauthErr error
+			patchGuard, preauthErr = preauthorizeFixedAmountGatewayRequest(
+				withFixedKeyRouteForPreauthorization(c.Request.Context(), apiKey),
+				h.balancePreauthorizer,
+				apiKey,
+				subscription,
+				patchRequestID,
+				body,
+				fallbackAmount,
+			)
+			if preauthErr != nil {
+				reqLog.Info("gemini.cached_content.patch_post_rpc_preauth_rejected", zap.Float64("amount", fallbackAmount), zap.Error(preauthErr))
+				writeGeminiCachedContentBillingError(c, preauthErr)
+				return
+			}
+		}
+		intent, err = h.prepareGeminiCachedContentChargeWithGuard(c, patchGuard, apiKey, account, subscription, pricingAt,
+			patchRequestID, record.Model, record.UpstreamModelID(), 0,
 			service.GeminiCachedContentStorageTokenHours(record.TotalTokenCount, extended), record.ChannelUsage, body)
 		if err != nil {
 			// Keep the mutation lease for the existing rollback worker.
@@ -558,7 +731,13 @@ func (h *GatewayHandler) GeminiCachedContentsPatch(c *gin.Context) {
 		return
 	}
 	if intent != nil {
+		patchChargeCommitted = true
 		persistCtx, cancelPersist = geminiCachedContentPersistContext(c)
+		if patchGuard != nil {
+			if workerGuard, ok := patchGuard.TransferToWorker(); ok {
+				persistCtx = service.ContextWithBalancePreauthorizationGuard(persistCtx, workerGuard)
+			}
+		}
 		err = svc.SettleCharge(persistCtx, record)
 		cancelPersist()
 		if err != nil {
@@ -715,10 +894,11 @@ func (h *GatewayHandler) acquireGeminiCachedContentAccountSlot(c *gin.Context, r
 	return wrapReleaseOnDone(c.Request.Context(), release), true
 }
 
-// submitGeminiCachedContentUsage 记录缓存创建 / 延长的计费：inputTokens 按输入价计，storageTokenHours 按计费模型的存储单价计；
+// submitGeminiCachedContentUsageWithGuard 记录缓存创建 / 延长的计费：inputTokens 按输入价计，storageTokenHours 按计费模型的存储单价计；
 // requestID 是带固定前缀的费用行标识（见 GeminiCachedContentUsageRequestIDPrefix），落库时不被请求 id 覆盖。
-func (h *GatewayHandler) submitGeminiCachedContentUsage(
+func (h *GatewayHandler) submitGeminiCachedContentUsageWithGuard(
 	c *gin.Context,
+	guard *service.BalancePreauthorizationGuard,
 	apiKey *service.APIKey,
 	account *service.Account,
 	subscription *service.UserSubscription,
@@ -752,6 +932,9 @@ func (h *GatewayHandler) submitGeminiCachedContentUsage(
 	quotaPlatform := service.QuotaPlatform(c.Request.Context(), apiKey)
 	ctx, cancel := geminiCachedContentPersistContext(c)
 	defer cancel()
+	if guard != nil {
+		ctx = service.ContextWithBalancePreauthorizationGuard(ctx, guard)
+	}
 	err := h.gatewayService.RecordUsage(ctx, &service.RecordUsageInput{
 		Result:             result,
 		APIKey:             apiKey,
@@ -779,9 +962,12 @@ func (h *GatewayHandler) submitGeminiCachedContentUsage(
 	return err
 }
 
-func (h *GatewayHandler) prepareGeminiCachedContentCharge(c *gin.Context, apiKey *service.APIKey, account *service.Account, subscription *service.UserSubscription, pricingAt time.Time, requestID, model, upstreamModel string, inputTokens int, storageTokenHours float64, usageFields service.ChannelUsageFields, payload []byte) (*service.MediaBillingIntent, error) {
+func (h *GatewayHandler) prepareGeminiCachedContentChargeWithGuard(c *gin.Context, guard *service.BalancePreauthorizationGuard, apiKey *service.APIKey, account *service.Account, subscription *service.UserSubscription, pricingAt time.Time, requestID, model, upstreamModel string, inputTokens int, storageTokenHours float64, usageFields service.ChannelUsageFields, payload []byte) (*service.MediaBillingIntent, error) {
 	ctx, cancel := geminiCachedContentPersistContext(c)
 	defer cancel()
+	if guard != nil {
+		ctx = service.ContextWithBalancePreauthorizationGuard(ctx, guard)
+	}
 	return h.gatewayService.PrepareCachedContentCharge(ctx, &service.RecordUsageInput{
 		Result: &service.ForwardResult{RequestID: requestID, Model: model, UpstreamModel: upstreamModel, Usage: service.ClaudeUsage{InputTokens: inputTokens}, CacheStorageTokenHours: storageTokenHours},
 		APIKey: apiKey, User: apiKey.User, Account: account, Subscription: subscription, PricingAt: pricingAt,
@@ -805,19 +991,143 @@ func (h *GatewayHandler) cleanupGeminiCachedContentUpstream(reqLog *zap.Logger, 
 	}
 }
 
+const (
+	geminiCachedContentInlineDataPartTokens = 1024
+	geminiCachedContentFileDataPartTokens   = 2048
+)
+
+type geminiCachedContentEstimatePayload struct {
+	Contents               []json.RawMessage `json:"contents"`
+	SystemInstruction      json.RawMessage   `json:"systemInstruction"`
+	SystemInstructionSnake json.RawMessage   `json:"system_instruction"`
+	Tools                  json.RawMessage   `json:"tools"`
+	ToolConfig             json.RawMessage   `json:"toolConfig"`
+	ToolConfigSnake        json.RawMessage   `json:"tool_config"`
+}
+
+type geminiCachedContentEstimateBlock struct {
+	Parts []map[string]json.RawMessage `json:"parts"`
+}
+
+func accumulateGeminiCachedContentParts(parts []map[string]json.RawMessage, textBytes, mediaTokens *int, depth int) {
+	for _, part := range parts {
+		for k, v := range part {
+			val := bytes.TrimSpace(v)
+			if len(val) == 0 || bytes.Equal(val, []byte("null")) {
+				continue
+			}
+			switch k {
+			case "inlineData", "inline_data":
+				// Do NOT divide raw base64 bytes by 4 (a 4MB image is ~258 tokens, not 1.3M tokens).
+				*mediaTokens += geminiCachedContentInlineDataPartTokens
+			case "fileData", "file_data":
+				// Apply a conservative floor so fileUri-only requests still undergo non-zero pre-check.
+				*mediaTokens += geminiCachedContentFileDataPartTokens
+			case "text":
+				var text string
+				if err := json.Unmarshal(val, &text); err == nil {
+					*textBytes += len(text)
+				} else {
+					*textBytes += len(val)
+				}
+			case "functionResponse", "function_response":
+				// Multimodal functionResponse may carry nested parts with inlineData/fileData.
+				if depth < 4 {
+					var fnObj map[string]json.RawMessage
+					if err := json.Unmarshal(val, &fnObj); err == nil {
+						for fk, fv := range fnObj {
+							trimmedField := bytes.TrimSpace(fv)
+							if len(trimmedField) == 0 || bytes.Equal(trimmedField, []byte("null")) {
+								continue
+							}
+							if fk == "parts" {
+								var nestedParts []map[string]json.RawMessage
+								if err := json.Unmarshal(trimmedField, &nestedParts); err == nil {
+									accumulateGeminiCachedContentParts(nestedParts, textBytes, mediaTokens, depth+1)
+									continue
+								}
+							}
+							*textBytes += len(trimmedField)
+						}
+						continue
+					}
+				}
+				*textBytes += len(val)
+			default:
+				// Count function calls/responses, executable code, and other structured payloads.
+				*textBytes += len(val)
+			}
+		}
+	}
+}
+
+func accumulateGeminiCachedContentBlock(raw json.RawMessage, textBytes, mediaTokens *int) {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+		return
+	}
+	var block geminiCachedContentEstimateBlock
+	if err := json.Unmarshal(trimmed, &block); err != nil || block.Parts == nil {
+		*textBytes += len(trimmed)
+		return
+	}
+	accumulateGeminiCachedContentParts(block.Parts, textBytes, mediaTokens, 0)
+}
+
+// estimateGeminiCachedContentInputTokens structurally estimates input tokens from a
+// Gemini cachedContents request body for pre-CreateUpstream affordability checks:
+// text/function/code payload bytes are divided by 4 (excluding raw base64 inlineData),
+// inlineData parts add a realistic per-part media token estimate, and fileData parts
+// add a conservative floor. Falls back to len(body)/4 only if JSON is malformed.
+func estimateGeminiCachedContentInputTokens(body []byte) int {
+	var payload geminiCachedContentEstimatePayload
+	if err := json.Unmarshal(body, &payload); err != nil {
+		tokens := len(body) / 4
+		if tokens < 1 {
+			return 1
+		}
+		return tokens
+	}
+	var textBytes, mediaTokens int
+	for _, content := range payload.Contents {
+		accumulateGeminiCachedContentBlock(content, &textBytes, &mediaTokens)
+	}
+	accumulateGeminiCachedContentBlock(payload.SystemInstruction, &textBytes, &mediaTokens)
+	accumulateGeminiCachedContentBlock(payload.SystemInstructionSnake, &textBytes, &mediaTokens)
+	for _, raw := range []json.RawMessage{payload.Tools, payload.ToolConfig, payload.ToolConfigSnake} {
+		trimmed := bytes.TrimSpace(raw)
+		if len(trimmed) > 0 && !bytes.Equal(trimmed, []byte("null")) {
+			textBytes += len(trimmed)
+		}
+	}
+	tokens := textBytes/4 + mediaTokens
+	if tokens < 1 {
+		return 1
+	}
+	return tokens
+}
+
+func (h *GatewayHandler) reserveGeminiCachedContentChargeRes(c *gin.Context, apiKey *service.APIKey, subscription *service.UserSubscription, amount float64) (*service.InflightReservation, error) {
+	ctx := c.Request.Context()
+	res, err := h.billingCacheService.ReserveFixedCharge(ctx, apiKey.User, apiKey, apiKey.Group, subscription, amount)
+	if err != nil {
+		return nil, err
+	}
+	if res == nil {
+		return nil, nil
+	}
+	c.Request = c.Request.WithContext(service.WithInflightReservation(ctx, res))
+	return res, nil
+}
+
 // reserveGeminiCachedContentCharge 校验余额 / 订阅额度 / API Key 额度足以支付确定金额 amount（倍率后），
 // 并按该金额在用户、订阅、API Key 维度登记在途预留（不受预留上限封顶，见 ReserveFixedCharge）。
 // 返回的 done 须在 handler 结束时调用；预留随计费任务交接，落库后释放。
 func (h *GatewayHandler) reserveGeminiCachedContentCharge(c *gin.Context, apiKey *service.APIKey, subscription *service.UserSubscription, amount float64) (func(), error) {
-	ctx := c.Request.Context()
-	res, err := h.billingCacheService.ReserveFixedCharge(ctx, apiKey.User, apiKey, apiKey.Group, subscription, amount)
-	if err != nil {
+	res, err := h.reserveGeminiCachedContentChargeRes(c, apiKey, subscription, amount)
+	if err != nil || res == nil {
 		return inflightNoop, err
 	}
-	if res == nil {
-		return inflightNoop, nil
-	}
-	c.Request = c.Request.WithContext(service.WithInflightReservation(ctx, res))
 	return res.HandlerDone, nil
 }
 

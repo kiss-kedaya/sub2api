@@ -92,6 +92,7 @@
           v-if="passkeyToken"
           color="success"
           variant="subtle"
+          class="tabular-nums"
           data-test="key-factor-passkey-verified"
         >
           {{ t('keys.factor.passkeyVerified', { seconds: passkeyRemaining }) }}
@@ -137,7 +138,7 @@
 
     <p
       v-if="errorMessage"
-      class="text-xs text-red-600 dark:text-red-400"
+      class="text-xs text-error"
       role="alert"
       data-test="key-factor-error"
     >
@@ -282,7 +283,7 @@ const applyDefaultMethod = () => {
 }
 
 watch(
-  () => [props.factors, props.preferredFactor] as const,
+  [() => props.factors, () => props.preferredFactor],
   () => {
     applyDefaultMethod()
     if (method.value) errorMessage.value = ''

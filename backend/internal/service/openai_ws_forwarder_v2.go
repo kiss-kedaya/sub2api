@@ -404,6 +404,7 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 	// What the upstream produced, kept in case the client leaves before the terminal
 	// event and the turn has to be billed from an estimate.
 	turnOutput := apicompat.NewBufferedResponseAccumulator()
+	guardCtx, streamBalanceGuard := balancePreauthorizationGuardForRequest(ctx, c)
 	readTimeout := s.openAIWSReadTimeout()
 	clientRequestCanceled := func() bool {
 		return ctx != nil && errors.Is(ctx.Err(), context.Canceled)
@@ -788,6 +789,30 @@ readLoop:
 		} else {
 			if responseField.Exists() && responseField.Type == gjson.JSON {
 				finalResponse = []byte(responseField.Raw)
+			}
+		}
+
+		if n := responsesSSEDataOutputBytes(eventType, message); n > 0 {
+			if topUpErr := streamBalanceGuard.ObserveStreamingOutput(guardCtx, n); topUpErr != nil {
+				lease.MarkBroken()
+				s.reportOpenAIStreamOutputHoldTopUpFailure(c, account, "OpenAI WS v2", topUpErr)
+				if reqStream {
+					flushStreamWriter(true)
+				} else if c != nil && c.Writer != nil && !c.Writer.Written() {
+					status, errType, errMsg := balanceHoldAbortClientError(topUpErr)
+					writeResponsesError(c, status, errType, errMsg)
+				}
+				result := resultWithUsage()
+				if reqStream {
+					result.ImageCount = imageCounter.Count()
+					result.ImageOutputSizes = imageCounter.Sizes()
+				}
+				applyIncompleteOpenAIWSTurnUsage(account, &result.Usage, turnOutput, payload, incompleteOpenAIWSTurn{
+					mode:       "forward_v2",
+					model:      mappedModel,
+					responseID: responseID,
+				})
+				return result, wrapStreamOutputHoldTopUpFailure(topUpErr)
 			}
 		}
 

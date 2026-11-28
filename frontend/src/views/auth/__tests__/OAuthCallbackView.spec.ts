@@ -125,6 +125,12 @@ describe('OAuthCallbackView', () => {
     expect(wrapper.text()).toContain('common.copy')
     expect(wrapper.find('input[value="oauth-code"]').exists()).toBe(true)
     expect(wrapper.find('input[value="oauth-state"]').exists()).toBe(true)
+    const readonlyInputs = wrapper.findAll('input[readonly]')
+    expect(readonlyInputs).toHaveLength(3)
+    for (const input of readonlyInputs) {
+      expect(input.classes()).toContain('min-w-0')
+      expect(input.classes()).toContain('flex-1')
+    }
   })
 
   it('shows query errors with a return to login instead of manual code fields', () => {

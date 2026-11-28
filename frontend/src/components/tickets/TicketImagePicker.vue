@@ -14,7 +14,7 @@
       <div
         v-for="item in items"
         :key="item.localID"
-        class="ticket-pending-image"
+        class="ticket-pending-image rounded-lg"
         :class="{ uploading: item.status === 'uploading', error: item.status === 'error' }"
         role="listitem"
       >
@@ -98,14 +98,18 @@ defineExpose({ openPicker })
 <style scoped>
 .ticket-image-picker { display: flex; flex-direction: column; gap: 8px; }
 .ticket-pending-images { display: flex; flex-wrap: wrap; gap: 8px; }
-.ticket-pending-image { position: relative; width: 68px; height: 68px; border-radius: 8px; overflow: hidden; border: 1px solid var(--signal-line); background: var(--signal-bg); flex-shrink: 0; }
+.ticket-pending-image { position: relative; width: 68px; height: 68px; overflow: hidden; border: 1px solid var(--signal-line); background: var(--signal-bg); flex-shrink: 0; }
 .ticket-pending-image.error { border-color: #dc2626; }
 .ticket-pending-image img { width: 100%; height: 100%; object-fit: cover; display: block; }
-.ticket-pending-fallback { width: 100%; height: 100%; display: grid; place-items: center; padding: 4px; font-size: 10px; color: var(--signal-muted); word-break: break-all; text-align: center; }
+.ticket-pending-fallback { width: 100%; height: 100%; display: grid; place-items: center; padding: 4px; font-size: 10px; color: var(--signal-muted); overflow-wrap: anywhere; text-align: center; }
 .ticket-pending-overlay { position: absolute; inset: 0; display: grid; place-items: center; background: rgba(15, 23, 42, 0.45); color: #fff; }
 .ticket-pending-error { background: rgba(220, 38, 38, 0.65); }
-.ticket-pending-remove { position: absolute; top: 3px; right: 3px; width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center; background: rgba(15, 23, 42, 0.72); color: #fff; border: 0; cursor: pointer; transition: background-color 120ms; }
-.ticket-pending-remove:hover:not(:disabled) { background: rgba(15, 23, 42, 0.92); }
+.ticket-pending-remove { position: absolute; top: 3px; right: 3px; width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center; background: rgba(15, 23, 42, 0.72); color: #fff; border: 0; cursor: pointer; transition: background-color 140ms var(--motion-out, cubic-bezier(0.23, 1, 0.32, 1)), transform 140ms var(--motion-out, cubic-bezier(0.23, 1, 0.32, 1)); }
+.ticket-pending-remove::before { content: ''; position: absolute; inset: -12px; }
+@media (hover: hover) and (pointer: fine) {
+  .ticket-pending-remove:hover:not(:disabled) { background: rgba(15, 23, 42, 0.92); }
+}
+.ticket-pending-remove:active:not(:disabled) { transform: scale(0.95); }
 .ticket-picker-trigger-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; }
 .ticket-picker-button { min-height: 32px; padding: 5px 10px; font-size: 12px; }
 .ticket-picker-hint { font-size: 11px; color: var(--signal-muted); line-height: 1.5; }

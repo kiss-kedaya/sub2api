@@ -143,7 +143,7 @@
               <HelpTooltip
                 v-if="accountHomepageUrl(row)"
                 :content="accountHomepageUrl(row)"
-                width-class="w-max max-w-sm break-all"
+                width-class="w-max max-w-sm wrap-anywhere"
                 class="-ml-1 self-start"
               >
                 <template #trigger>

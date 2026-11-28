@@ -19,6 +19,7 @@ import (
 	dbuser "github.com/Wei-Shaw/sub2api/ent/user"
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/ip"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/oauth"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
 	servermiddleware "github.com/Wei-Shaw/sub2api/internal/server/middleware"
@@ -108,7 +109,7 @@ func (h *AuthHandler) LinuxDoOAuthStart(c *gin.Context) {
 		return
 	}
 
-	secureCookie := isRequestHTTPS(c)
+	secureCookie := h.isRequestHTTPS(c)
 	setCookie(c, linuxDoOAuthStateCookieName, encodeCookieValue(state), linuxDoOAuthCookieMaxAgeSec, secureCookie)
 	setCookie(c, linuxDoOAuthRedirectCookie, encodeCookieValue(redirectTo), linuxDoOAuthCookieMaxAgeSec, secureCookie)
 	intent := normalizeOAuthIntent(c.Query("intent"))
@@ -179,7 +180,7 @@ func (h *AuthHandler) LinuxDoOAuthCallback(c *gin.Context) {
 		return
 	}
 
-	secureCookie := isRequestHTTPS(c)
+	secureCookie := h.isRequestHTTPS(c)
 	defer func() {
 		clearCookie(c, linuxDoOAuthStateCookieName, secureCookie)
 		clearCookie(c, linuxDoOAuthVerifierCookie, secureCookie)
@@ -525,7 +526,7 @@ func (h *AuthHandler) CompleteLinuxDoOAuthRegistration(c *gin.Context) {
 		return
 	}
 
-	secureCookie := isRequestHTTPS(c)
+	secureCookie := h.isRequestHTTPS(c)
 	sessionToken, err := readOAuthPendingSessionCookie(c)
 	if err != nil {
 		clearOAuthPendingSessionCookie(c, secureCookie)
@@ -995,6 +996,16 @@ func singleLine(value string) string {
 	return strings.Join(strings.Fields(value), " ")
 }
 
+func hasUnsafeRedirectControlOrBackslash(value string) bool {
+	for i := 0; i < len(value); i++ {
+		ch := value[i]
+		if ch < 0x20 || ch == 0x7f || ch == '\\' {
+			return true
+		}
+	}
+	return false
+}
+
 func sanitizeFrontendRedirectPath(path string) string {
 	path = strings.TrimSpace(path)
 	if path == "" {
@@ -1003,7 +1014,7 @@ func sanitizeFrontendRedirectPath(path string) string {
 	if len(path) > linuxDoOAuthMaxRedirectLen {
 		return ""
 	}
-	// 只允许同源相对路径（避免开放重定向）。
+	// 只允许同源相对路径（避免开放重定向、反斜杠及控制字符/制表符规范化绕过）。
 	if !strings.HasPrefix(path, "/") {
 		return ""
 	}
@@ -1013,18 +1024,28 @@ func sanitizeFrontendRedirectPath(path string) string {
 	if strings.Contains(path, "://") {
 		return ""
 	}
-	if strings.ContainsAny(path, "\r\n") {
+	if hasUnsafeRedirectControlOrBackslash(path) {
 		return ""
 	}
 	return path
 }
 
-func isRequestHTTPS(c *gin.Context) bool {
-	if c.Request.TLS != nil {
-		return true
+func (h *AuthHandler) isRequestHTTPS(c *gin.Context) bool {
+	var cfg *config.Config
+	if h != nil {
+		cfg = h.cfg
 	}
-	proto := strings.ToLower(strings.TrimSpace(c.GetHeader("X-Forwarded-Proto")))
-	return proto == "https"
+	return isRequestHTTPSWithConfig(c, cfg)
+}
+
+func isRequestHTTPSWithConfig(c *gin.Context, cfg *config.Config) bool {
+	if c == nil || c.Request == nil {
+		return false
+	}
+	if cfg != nil {
+		return ip.IsRequestHTTPS(c, cfg.Server.TrustedProxies, cfg.Server.TrustedProxiesConfigured)
+	}
+	return ip.IsContextHTTPS(c)
 }
 
 func encodeCookieValue(value string) string {
@@ -1188,7 +1209,7 @@ func (h *AuthHandler) PrepareOAuthBindAccessTokenCookie(c *gin.Context) {
 		return
 	}
 
-	setOAuthBindAccessTokenCookie(c, token, isRequestHTTPS(c))
+	setOAuthBindAccessTokenCookie(c, token, h.isRequestHTTPS(c))
 	c.Status(http.StatusNoContent)
 	c.Writer.WriteHeaderNow()
 }
@@ -1202,7 +1223,7 @@ func (h *AuthHandler) resolveOAuthBindTargetUserID(c *gin.Context) (*int64, erro
 	}
 
 	ck, err := c.Request.Cookie(oauthBindAccessTokenCookieName)
-	clearOAuthBindAccessTokenCookie(c, isRequestHTTPS(c))
+	clearOAuthBindAccessTokenCookie(c, h.isRequestHTTPS(c))
 	if err != nil {
 		return nil, err
 	}

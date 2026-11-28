@@ -383,6 +383,13 @@ function toggle() {
   text-wrap: pretty;
 }
 
+@media (pointer: coarse) {
+  .setting-row__head,
+  .setting-row__button {
+    min-height: 44px;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .setting-row__caret,
   .setting-row__body {

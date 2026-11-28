@@ -1,6 +1,6 @@
 <template>
   <BaseDialog :show="show" :title="t(hook ? 'accountOps.editRobot' : 'accountOps.addRobot')" width="normal" @close="close">
-    <form id="account-ops-webhook-form" class="max-h-[68vh] space-y-3 overflow-y-auto pr-1" @submit.prevent="save"><fieldset :disabled="busy"><AccountOpsChannelFields ref="fields" v-model="draft" :encryption-configured="encryptionConfigured" single :testing-id="testingId" @test="emit('test', $event)" /></fieldset></form>
+    <form id="account-ops-webhook-form" class="max-h-[68dvh] space-y-3 overflow-y-auto pr-1" @submit.prevent="save"><fieldset :disabled="busy"><AccountOpsChannelFields ref="fields" v-model="draft" :encryption-configured="encryptionConfigured" single :testing-id="testingId" @test="emit('test', $event)" /></fieldset></form>
     <template #footer>
       <div class="flex justify-end gap-2">
         <UButton color="neutral" variant="subtle" :label="t('common.cancel')" @click="close" />
@@ -33,7 +33,7 @@ function saveErrorMessage(error: unknown): string {
   return extractApiErrorMessage(error, t('accountOps.saveFailed'))
 }
 let sequence = 0
-watch(() => [props.show, props.hook?.id] as const, () => {
+watch([() => props.show, () => props.hook?.id], () => {
   sequence++; fields.value?.clearInputs(); busy.value = false
   const id = props.hook?.id ?? Array.from(crypto.getRandomValues(new Uint8Array(16)), byte => byte.toString(16).padStart(2, '0')).join('')
   draft.value = [{ id, name: props.hook?.name ?? '', provider: props.hook?.provider ?? props.initialProvider ?? 'custom', enabled: props.hook?.enabled ?? true, url_configured: props.hook?.url_configured ?? false, secret_configured: props.hook?.secret_configured ?? false, message_template: props.hook?.message_template ?? '' }]

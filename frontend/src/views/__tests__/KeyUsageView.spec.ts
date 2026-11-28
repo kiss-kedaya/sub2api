@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import { nextTick } from 'vue'
@@ -230,5 +232,28 @@ describe('KeyUsageView daily detail', () => {
     expect(requestUrl).toContain('end_date=2026-07-13')
 
     wrapper.unmount()
+  })
+
+  it('uses Studio Blue + Obsidian Graphite tokens, linear reduced-motion skeleton, and 16px mobile inputs without backdrop blur', () => {
+    const source = readFileSync(resolve(__dirname, '../KeyUsageView.vue'), 'utf8')
+    expect(source).toContain('min-h-dvh')
+    expect(source).not.toContain('min-h-screen')
+    expect(source).not.toContain('backdrop-blur-xs')
+    expect(source).not.toContain('transition-shadow')
+    expect(source).not.toMatch(/transition\s*:[^;]*box-shadow/)
+    expect(source).toContain('min-h-11 min-w-11')
+    expect(source).toContain('min-w-0 flex-1')
+    expect(source).not.toContain('#14b8a6')
+    expect(source).not.toContain('#e5e7eb')
+    expect(source).not.toContain('#334155')
+    expect(source).not.toMatch(/\b(?:text|bg|border|divide)-(?:gray|dark)-/)
+    expect(source).toContain('shimmer-kv 1.8s linear infinite')
+    expect(source).toContain('@media (prefers-reduced-motion: reduce)')
+    expect(source).toContain('motion-reduce:animate-none')
+    expect(source).toContain('text-base sm:text-sm')
+    expect(source).toContain('text-base sm:text-xs')
+    expect(source).not.toMatch(/\.skeleton\s*\{[^}]*border-radius\s*:/)
+    expect(source).not.toMatch(/\.tabular-nums\s*\{[^}]*letter-spacing\s*:/)
+    expect(source).not.toMatch(/outline\s*:\s*none/)
   })
 })

@@ -19,7 +19,7 @@
             <UInput v-model="groupSearch" type="search" icon="i-lucide-search" class="w-full" :placeholder="t('admin.promptAudit.policy.searchGroups')" :aria-label="t('admin.promptAudit.policy.searchGroups')" />
             <div class="max-h-52 overflow-y-auto rounded-md border border-default">
               <div v-for="group in filteredGroups" :key="group.id" class="flex items-center justify-between gap-3 px-3 py-2 not-last:border-b not-last:border-default">
-                <UCheckbox :model-value="draft.group_ids.includes(group.id)" :label="group.name" @update:model-value="toggleGroup(group.id)" />
+                <UCheckbox :model-value="draft.group_ids.includes(group.id)" :label="group.name" class="min-w-0" @update:model-value="toggleGroup(group.id)" />
                 <span class="shrink-0 text-xs text-muted">{{ group.platform }} · {{ group.status }}</span>
               </div>
               <p v-if="filteredGroups.length === 0" class="px-3 py-4 text-center text-sm text-muted">{{ t('admin.promptAudit.policy.noGroups') }}</p>

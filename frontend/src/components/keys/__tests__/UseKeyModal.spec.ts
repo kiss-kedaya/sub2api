@@ -25,6 +25,19 @@ vi.mock('file-saver', () => ({
 
 import UseKeyModal from '../UseKeyModal.vue'
 
+const SelectStub = {
+  name: 'Select',
+  props: {
+    modelValue: [String, Number, Boolean],
+    options: { type: Array as () => Array<{ value: string; label: string; disabled?: boolean }>, default: () => [] },
+    disabled: Boolean,
+    ariaLabel: String,
+    searchable: [Boolean, String]
+  },
+  emits: ['update:modelValue', 'change'],
+  template: `<select :value="modelValue" :disabled="disabled" :aria-label="ariaLabel" @change="$emit('update:modelValue', $event.target.value); $emit('change', $event.target.value)"><option v-for="opt in options" :key="opt.value" :value="opt.value" :disabled="Boolean(opt.disabled)">{{ opt.label }}</option></select>`
+}
+
 function readBlobAsText(blob: Blob): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader()
@@ -55,7 +68,8 @@ describe('UseKeyModal', () => {
           },
           Icon: {
             template: '<span />'
-          }
+          },
+          Select: SelectStub
         }
       }
     })
@@ -100,7 +114,8 @@ describe('UseKeyModal', () => {
           },
           Icon: {
             template: '<span />'
-          }
+          },
+          Select: SelectStub
         }
       }
     })
@@ -193,7 +208,8 @@ describe('UseKeyModal', () => {
           },
           Icon: {
             template: '<span />'
-          }
+          },
+          Select: SelectStub
         }
       }
     })
@@ -296,7 +312,8 @@ describe('UseKeyModal', () => {
           },
           Icon: {
             template: '<span />'
-          }
+          },
+          Select: SelectStub
         }
       }
     })
@@ -356,7 +373,8 @@ describe('UseKeyModal', () => {
           },
           Icon: {
             template: '<span />'
-          }
+          },
+          Select: SelectStub
         }
       }
     })
@@ -399,7 +417,8 @@ describe('UseKeyModal', () => {
           },
           Icon: {
             template: '<span />'
-          }
+          },
+          Select: SelectStub
         }
       }
     })
@@ -452,7 +471,8 @@ describe('UseKeyModal', () => {
           },
           Icon: {
             template: '<span />'
-          }
+          },
+          Select: SelectStub
         }
       }
     })
@@ -500,7 +520,8 @@ describe('UseKeyModal', () => {
           },
           Icon: {
             template: '<span />'
-          }
+          },
+          Select: SelectStub
         }
       }
     })
@@ -548,7 +569,8 @@ describe('UseKeyModal', () => {
           },
           Icon: {
             template: '<span />'
-          }
+          },
+          Select: SelectStub
         }
       }
     })
@@ -585,7 +607,8 @@ describe('UseKeyModal', () => {
           },
           Icon: {
             template: '<span />'
-          }
+          },
+          Select: SelectStub
         }
       }
     })
@@ -619,7 +642,8 @@ describe('UseKeyModal', () => {
           },
           Icon: {
             template: '<span />'
-          }
+          },
+          Select: SelectStub
         }
       }
     })
@@ -669,7 +693,8 @@ describe('UseKeyModal', () => {
           },
           Icon: {
             template: '<span />'
-          }
+          },
+          Select: SelectStub
         }
       }
     })
@@ -703,7 +728,8 @@ describe('UseKeyModal', () => {
           },
           Icon: {
             template: '<span />'
-          }
+          },
+          Select: SelectStub
         }
       }
     })
@@ -782,7 +808,8 @@ describe('UseKeyModal', () => {
           },
           Icon: {
             template: '<span />'
-          }
+          },
+          Select: SelectStub
         }
       }
     })
@@ -855,7 +882,8 @@ describe('UseKeyModal', () => {
           },
           Icon: {
             template: '<span />'
-          }
+          },
+          Select: SelectStub
         }
       }
     })
@@ -989,7 +1017,8 @@ describe('UseKeyModal', () => {
           },
           Icon: {
             template: '<span />'
-          }
+          },
+          Select: SelectStub
         }
       }
     })
@@ -1041,7 +1070,8 @@ describe('UseKeyModal', () => {
           },
           Icon: {
             template: '<span />'
-          }
+          },
+          Select: SelectStub
         }
       }
     })
@@ -1083,7 +1113,8 @@ describe('UseKeyModal', () => {
           },
           Icon: {
             template: '<span />'
-          }
+          },
+          Select: SelectStub
         }
       }
     })
@@ -1136,7 +1167,8 @@ describe('UseKeyModal', () => {
         global: {
           stubs: {
             BaseDialog: { template: '<div><slot /><slot name="footer" /></div>' },
-            Icon: { template: '<span />' }
+            Icon: { template: '<span />' },
+            Select: SelectStub
           }
         }
       })
@@ -1187,7 +1219,8 @@ describe('UseKeyModal no-group warning', () => {
           },
           Icon: {
             template: '<span />'
-          }
+          },
+          Select: SelectStub
         }
       }
     })
@@ -1209,5 +1242,13 @@ describe('UseKeyModal no-group warning', () => {
 
     expect(wrapper.text()).not.toContain('keys.useKeyModal.noGroupTitle')
     expect(wrapper.find('[data-test="use-key-assign-group"]').exists()).toBe(false)
+  })
+
+  it('uses neutral-400/500 tokens rather than slate-* in highlighted code blocks', () => {
+    const wrapper = mountModal('gemini')
+    const html = wrapper.find('pre code').html()
+    expect(html).not.toContain('text-slate-')
+    expect(html).toContain('text-neutral-400')
+    expect(html).toContain('text-neutral-500')
   })
 })

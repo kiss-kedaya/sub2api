@@ -17,8 +17,8 @@
     <UAlert v-if="notice" color="success" variant="subtle" icon="i-lucide-check-circle-2" :title="notice" />
     <UAlert v-if="revealed" color="warning" variant="subtle" icon="i-lucide-key-round" :title="text('已显示一个 Key，关闭后不会再显示', 'A key is revealed; it is hidden again when you close this')">
       <div class="mt-1 flex flex-wrap items-center gap-2">
-        <code class="break-all rounded bg-elevated px-2 py-1 text-xs">{{ revealed }}</code>
-        <UButton size="xs" color="neutral" variant="outline" :label="text('收起', 'Hide')" @click="revealed = ''" />
+        <code class="wrap-anywhere rounded bg-elevated px-2 py-1 text-xs">{{ revealed }}</code>
+        <UButton size="xs" color="neutral" variant="outline" class="max-sm:min-h-11 pointer-coarse:min-h-11" :label="text('收起', 'Hide')" @click="revealed = ''" />
       </div>
     </UAlert>
 
@@ -37,8 +37,8 @@
         <tbody>
           <tr v-for="key in rows" :key="key.id" class="border-b border-default last:border-b-0 align-top">
             <td class="p-3">
-              <p class="font-medium text-highlighted">{{ key.name || `#${key.id}` }}</p>
-              <p class="text-xs text-muted">
+              <p class="font-medium tabular-nums text-highlighted">{{ key.name || `#${key.id}` }}</p>
+              <p class="text-xs tabular-nums text-muted">
                 {{ text('到期', 'expires') }}: {{ key.expires_at ? formatTime(key.expires_at) : text('不限', 'never') }}
                 <span v-if="key.last_used_at"> · {{ text('最近使用', 'last used') }} {{ formatTime(key.last_used_at) }}</span>
               </p>
@@ -61,9 +61,9 @@
             </td>
             <td class="p-3">
               <div class="flex flex-wrap justify-end gap-1">
-                <UButton size="xs" color="neutral" variant="ghost" :label="text('显示', 'Reveal')" @click="reveal(key)" />
-                <UButton size="xs" color="neutral" variant="ghost" :label="text('编辑', 'Edit')" @click="openEdit(key)" />
-                <UButton size="xs" color="error" variant="ghost" :label="text('删除', 'Delete')" @click="askDelete(key)" />
+                <UButton size="xs" color="neutral" variant="ghost" class="max-sm:min-h-11 pointer-coarse:min-h-11" :label="text('显示', 'Reveal')" @click="reveal(key)" />
+                <UButton size="xs" color="neutral" variant="ghost" class="max-sm:min-h-11 pointer-coarse:min-h-11" :label="text('编辑', 'Edit')" @click="openEdit(key)" />
+                <UButton size="xs" color="error" variant="ghost" class="max-sm:min-h-11 pointer-coarse:min-h-11" :label="text('删除', 'Delete')" @click="askDelete(key)" />
               </div>
             </td>
           </tr>
@@ -75,11 +75,11 @@
         </tbody>
       </table>
       <div class="flex flex-wrap items-center justify-between gap-3 border-t border-default p-3 text-sm text-muted">
-        <span>{{ text(`${total} 个 Key`, `${total} keys`) }}</span>
+        <span class="tabular-nums">{{ text(`${total} 个 Key`, `${total} keys`) }}</span>
         <div class="flex items-center gap-2">
-          <UButton icon="i-lucide-chevron-left" color="neutral" variant="ghost" :disabled="loading || page <= 1" :aria-label="text('上一页', 'Previous page')" @click="load(page - 1)" />
+          <UButton icon="i-lucide-chevron-left" color="neutral" variant="ghost" class="max-sm:min-h-11 max-sm:min-w-11 pointer-coarse:min-h-11 pointer-coarse:min-w-11" :disabled="loading || page <= 1" :aria-label="text('上一页', 'Previous page')" @click="load(page - 1)" />
           <span class="tabular-nums">{{ page }} / {{ pages || 1 }}</span>
-          <UButton icon="i-lucide-chevron-right" color="neutral" variant="ghost" :disabled="loading || page >= pages" :aria-label="text('下一页', 'Next page')" @click="load(page + 1)" />
+          <UButton icon="i-lucide-chevron-right" color="neutral" variant="ghost" class="max-sm:min-h-11 max-sm:min-w-11 pointer-coarse:min-h-11 pointer-coarse:min-w-11" :disabled="loading || page >= pages" :aria-label="text('下一页', 'Next page')" @click="load(page + 1)" />
         </div>
       </div>
     </div>

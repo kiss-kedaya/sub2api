@@ -362,7 +362,7 @@ onUnmounted(() => { generation++; clearSecrets() })
 .crypto-mnemonics__words li > span { color: var(--ui-text-dimmed); font-size: .625rem; }
 .crypto-mnemonics__words li > strong { min-width: 0; overflow-wrap: anywhere; font-weight: 600; color: var(--ui-text-highlighted); }
 .crypto-mnemonics__words--masked li > strong { color: var(--ui-text-dimmed); letter-spacing: .08em; user-select: none; }
-.mnemonic-panel-enter-active, .mnemonic-panel-leave-active { transition: opacity 150ms ease; }
+.mnemonic-panel-enter-active, .mnemonic-panel-leave-active { transition: opacity 150ms var(--motion-out, cubic-bezier(0.23, 1, 0.32, 1)); }
 .mnemonic-panel-enter-from, .mnemonic-panel-leave-to { opacity: 0; }
-@media (prefers-reduced-motion: reduce) { .mnemonic-panel-enter-active, .mnemonic-panel-leave-active { transition: none; } }
+@media (prefers-reduced-motion: reduce) { .mnemonic-panel-enter-active, .mnemonic-panel-leave-active { transition: opacity 120ms ease; } }
 </style>

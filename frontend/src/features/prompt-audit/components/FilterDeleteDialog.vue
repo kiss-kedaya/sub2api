@@ -53,11 +53,11 @@
         <template #description>
           <dl class="mt-1 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs text-toned">
             <dt>{{ t('admin.promptAudit.events.snapshotMax') }}</dt>
-            <dd>{{ preview.snapshot_max_id }}</dd>
+            <dd class="tabular-nums">{{ preview.snapshot_max_id }}</dd>
             <dt>Filter SHA-256</dt>
-            <dd class="break-all font-mono">{{ preview.filter_hash }}</dd>
+            <dd class="wrap-anywhere font-mono">{{ preview.filter_hash }}</dd>
             <dt>{{ t('admin.promptAudit.events.expiresAt') }}</dt>
-            <dd>{{ formatDate(preview.expires_at) }}</dd>
+            <dd class="tabular-nums">{{ formatDate(preview.expires_at) }}</dd>
           </dl>
           <p class="mt-2 text-xs text-warning">{{ t('admin.promptAudit.events.filterDeleteWarning') }}</p>
         </template>

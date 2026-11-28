@@ -23,9 +23,9 @@
         <span class="truncate font-medium text-highlighted" data-test="api-key-secret-name">{{ apiKey.name }}</span>
       </div>
 
-      <div class="flex items-start gap-2 rounded-lg bg-gray-50 p-3 ring ring-inset ring-default dark:bg-dark-900">
+      <div class="flex items-start gap-2 rounded-lg bg-muted p-3 ring ring-inset ring-default">
         <code
-          class="min-w-0 flex-1 break-all font-mono text-xs leading-5 text-highlighted"
+          class="min-w-0 flex-1 wrap-anywhere font-mono text-xs leading-5 text-highlighted"
           data-test="api-key-secret-value"
         >{{ secret }}</code>
         <UButton
@@ -403,10 +403,16 @@ const copySecret = async () => {
   height: 20px;
   border-radius: 9999px;
   color: var(--ui-text-dimmed);
-  transition: color 120ms ease-out, background-color 120ms ease-out;
+  transition: color 120ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1)), background-color 120ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1));
 }
 
-.seal-info:hover,
+@media (hover: hover) and (pointer: fine) {
+  .seal-info:hover {
+    color: var(--ui-text-toned);
+    background: var(--ui-bg-elevated);
+  }
+}
+
 .seal-info[aria-expanded='true'] {
   color: var(--ui-text-toned);
   background: var(--ui-bg-elevated);
@@ -417,10 +423,18 @@ const copySecret = async () => {
   outline-offset: 1px;
 }
 
+@media (pointer: coarse) {
+  .seal-info {
+    width: 44px;
+    height: 44px;
+    margin: -12px -10px;
+  }
+}
+
 /* The password field slides in a few pixels and fades; transform + opacity only. */
 .seal-field-enter-active,
 .seal-field-leave-active {
-  transition: opacity 160ms cubic-bezier(0.23, 1, 0.32, 1), transform 160ms cubic-bezier(0.23, 1, 0.32, 1);
+  transition: opacity 160ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1)), transform 160ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1));
 }
 
 .seal-field-enter-from,
@@ -431,7 +445,10 @@ const copySecret = async () => {
 
 @media (prefers-reduced-motion: reduce) {
   .seal-field-enter-active,
-  .seal-field-leave-active,
+  .seal-field-leave-active {
+    transition: opacity 120ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1));
+  }
+
   .seal-info {
     transition: none;
   }

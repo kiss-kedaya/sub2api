@@ -29,7 +29,7 @@
           </div>
           <div class="ml-auto flex items-center gap-2">
             <span class="text-sm font-medium text-muted">{{ t('admin.dashboard.granularity') }}</span>
-            <div class="w-28">
+            <div class="min-w-28 w-auto sm:w-32">
               <Select v-model="granularity" :options="granularityOptions" @change="loadChartData" />
             </div>
           </div>
@@ -143,11 +143,11 @@
       </UCard>
 
       <div class="flex flex-wrap items-center justify-between gap-3">
-        <div v-if="errorViewEnabled" class="usage-tabs" role="tablist">
-          <button type="button" role="tab" class="usage-tab" :aria-selected="activeTab === 'usage'" @click="activeTab = 'usage'">
+        <div v-if="errorViewEnabled" class="usage-tabs rounded-lg" role="tablist">
+          <button type="button" role="tab" class="usage-tab rounded-md" :aria-selected="activeTab === 'usage'" @click="activeTab = 'usage'">
             {{ t('usage.tabs.usage') }}
           </button>
-          <button type="button" role="tab" class="usage-tab" :aria-selected="activeTab === 'errors'" @click="switchToErrors">
+          <button type="button" role="tab" class="usage-tab rounded-md" :aria-selected="activeTab === 'errors'" @click="switchToErrors">
             {{ t('usage.tabs.errors') }}
           </button>
         </div>
@@ -156,7 +156,8 @@
             color="neutral"
             variant="outline"
             icon="i-lucide-refresh-cw"
-            :ui="{ leadingIcon: (activeTab === 'errors' ? errorLoading : loading) ? 'animate-spin' : '' }"
+            class="min-h-11 min-w-11 sm:min-h-0 sm:min-w-0"
+            :ui="{ leadingIcon: (activeTab === 'errors' ? errorLoading : loading) ? 'animate-spin motion-reduce:animate-none' : '' }"
             :disabled="activeTab === 'errors' ? errorLoading : loading"
             :title="t('common.refresh')"
             :aria-label="t('common.refresh')"
@@ -166,6 +167,7 @@
             color="neutral"
             variant="outline"
             icon="i-lucide-filter-x"
+            class="min-h-11 min-w-11 sm:min-h-0 sm:min-w-0"
             :title="t('common.reset')"
             :aria-label="t('common.reset')"
             @click="resetFilters"
@@ -175,30 +177,39 @@
               color="neutral"
               variant="outline"
               icon="i-lucide-columns-3"
+              class="min-h-11 min-w-11 sm:min-h-0 sm:min-w-0"
               data-testid="usage-column-settings"
               :title="t('admin.users.columnSettings')"
               :aria-label="t('admin.users.columnSettings')"
               :aria-expanded="showColumnDropdown"
-              @click="showColumnDropdown = !showColumnDropdown"
+              @click="toggleColumnDropdown"
             />
-            <div
-              v-if="showColumnDropdown"
-              class="absolute right-0 top-full z-50 mt-1 max-h-80 w-52 overflow-y-auto rounded-lg bg-default p-1 shadow-lg ring ring-default"
-            >
-              <button
-                v-for="col in currentToggleableColumns"
-                :key="col.key"
-                type="button"
-                :data-testid="`usage-column-toggle-${col.key}`"
-                @click="toggleCurrentColumn(col.key)"
-                class="flex w-full items-center justify-between rounded-md px-2.5 py-1.5 text-left text-sm text-default transition-colors hover:bg-elevated"
+            <Teleport to="body">
+              <div
+                v-if="showColumnDropdown"
+                ref="columnDropdownMenuRef"
+                :style="columnDropdownStyle"
+                data-testid="usage-column-dropdown"
+                :class="[
+                  'fixed z-50 max-h-[min(20rem,calc(100dvh-16px))] w-52 overflow-y-auto rounded-lg bg-default p-1 shadow-(--app-shadow-popover) ring ring-default',
+                  columnDropdownPlacement === 'top' ? 'origin-bottom' : 'origin-top'
+                ]"
               >
-                <span>{{ col.label }}</span>
-                <UIcon v-if="isCurrentColumnVisible(col.key)" name="i-lucide-check" class="size-4 text-highlighted" />
-              </button>
-            </div>
+                <button
+                  v-for="col in currentToggleableColumns"
+                  :key="col.key"
+                  type="button"
+                  :data-testid="`usage-column-toggle-${col.key}`"
+                  @click="toggleCurrentColumn(col.key)"
+                  class="flex min-h-11 w-full items-center justify-between rounded-md px-2.5 py-1.5 text-left text-sm text-default transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary sm:min-h-0 [@media(hover:hover)_and_(pointer:fine)]:hover:bg-elevated"
+                >
+                  <span>{{ col.label }}</span>
+                  <UIcon v-if="isCurrentColumnVisible(col.key)" name="i-lucide-check" class="size-4 text-highlighted" />
+                </button>
+              </div>
+            </Teleport>
           </div>
-          <UButton v-if="activeTab !== 'errors'" icon="i-lucide-download" :disabled="exporting" @click="exportToCSV">{{ t(exportWaiting ? 'usage.exportWaiting' : exporting ? 'usage.exporting' : 'usage.exportCsv') }}</UButton>
+          <UButton v-if="activeTab !== 'errors'" icon="i-lucide-download" class="min-h-11 sm:min-h-0" :disabled="exporting" @click="exportToCSV">{{ t(exportWaiting ? 'usage.exportWaiting' : exporting ? 'usage.exporting' : 'usage.exportCsv') }}</UButton>
         </div>
       </div>
 
@@ -271,7 +282,6 @@
 <script setup lang="ts">
 import '@/styles/console-workspace.css'
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
-import { usePreferredReducedMotion } from '@vueuse/core'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
 import { keysAPI, usageAPI, userGroupsAPI } from '@/api'
@@ -311,8 +321,7 @@ import { COMMON_ERROR_STATUS_CODES } from '@/utils/errorBadges'
 
 const { t } = useI18n()
 const appStore = useAppStore()
-const reducedMotion = usePreferredReducedMotion()
-const chartAnimationDuration = computed(() => reducedMotion.value === 'reduce' ? 0 : 180)
+const chartAnimationDuration = 0
 
 type DistributionMetric = 'tokens' | 'actual_cost'
 type EndpointSource = 'inbound' | 'upstream' | 'path'
@@ -1040,8 +1049,65 @@ const toggleCurrentColumn = (key: string) => {
 
 const showColumnDropdown = ref(false)
 const columnDropdownRef = ref<HTMLElement | null>(null)
+const columnDropdownMenuRef = ref<HTMLElement | null>(null)
+const columnDropdownStyle = ref<Record<string, string>>({})
+const columnDropdownPlacement = ref<'top' | 'bottom'>('bottom')
+
+const updateColumnDropdownPosition = () => {
+  if (!columnDropdownRef.value || typeof window === 'undefined') return
+  const rect = columnDropdownRef.value.getBoundingClientRect()
+  const vw = window.innerWidth || 1024
+  const vh = window.innerHeight || 768
+  const margin = 8
+  const gap = 4
+  const menuWidth = Math.min(208, vw - margin * 2)
+  const left = Math.max(margin, Math.min(rect.right - menuWidth, vw - menuWidth - margin))
+  const spaceBelow = vh - rect.bottom - margin - gap
+  const spaceAbove = rect.top - margin - gap
+  const placeAbove = spaceBelow < 220 && spaceAbove > spaceBelow
+  const availableSpace = placeAbove ? spaceAbove : spaceBelow
+  const viewportCap = Math.max(120, vh - margin * 2)
+  const maxHeight = Math.min(320, viewportCap, Math.max(140, availableSpace))
+  columnDropdownPlacement.value = placeAbove ? 'top' : 'bottom'
+  if (placeAbove) {
+    const bottom = Math.max(margin, Math.min(vh - rect.top + gap, vh - margin - maxHeight))
+    columnDropdownStyle.value = {
+      bottom: `${bottom}px`,
+      left: `${left}px`,
+      maxHeight: `${maxHeight}px`,
+      '--transform-origin': 'bottom right',
+    }
+  } else {
+    const top = Math.max(margin, Math.min(rect.bottom + gap, vh - margin - maxHeight))
+    columnDropdownStyle.value = {
+      top: `${top}px`,
+      left: `${left}px`,
+      maxHeight: `${maxHeight}px`,
+      '--transform-origin': 'top right',
+    }
+  }
+}
+
+const handleColumnDropdownReposition = () => {
+  if (showColumnDropdown.value) {
+    updateColumnDropdownPosition()
+  }
+}
+
+const toggleColumnDropdown = () => {
+  showColumnDropdown.value = !showColumnDropdown.value
+  if (showColumnDropdown.value) {
+    updateColumnDropdownPosition()
+  }
+}
+
 const handleColumnClickOutside = (event: MouseEvent) => {
-  if (columnDropdownRef.value && !columnDropdownRef.value.contains(event.target as HTMLElement)) {
+  const target = event.target as HTMLElement
+  if (
+    columnDropdownRef.value &&
+    !columnDropdownRef.value.contains(target) &&
+    !columnDropdownMenuRef.value?.contains(target)
+  ) {
     showColumnDropdown.value = false
   }
 }
@@ -1133,6 +1199,8 @@ onMounted(() => {
   loadSavedColumns()
   loadSavedErrColumns()
   document.addEventListener('click', handleColumnClickOutside)
+  window.addEventListener('resize', handleColumnDropdownReposition)
+  window.addEventListener('scroll', handleColumnDropdownReposition, true)
   void loadFilterOptions()
   refreshData()
 })
@@ -1142,6 +1210,8 @@ onUnmounted(() => {
   exportController?.abort()
   abortController?.abort()
   document.removeEventListener('click', handleColumnClickOutside)
+  window.removeEventListener('resize', handleColumnDropdownReposition)
+  window.removeEventListener('scroll', handleColumnDropdownReposition, true)
 })
 
 watch(endpointDistributionSource, () => {
@@ -1156,9 +1226,12 @@ watch(endpointDistributionSource, () => {
 .usage-stats-strip :deep(.signal-usage-metrics > .card) { border-radius: 0; box-shadow: none; background: transparent; }
 /* Usage / error records switch: neutral track with a raised pill. */
 .usage-tabs { display: inline-flex; gap: 2px; padding: 3px; border-radius: 8px; background: var(--ui-bg-elevated); }
-.usage-tab { min-height: 32px; padding: 4px 14px; border-radius: 6px; font-size: 13px; font-weight: 500; color: var(--ui-text-muted); transition: background-color 150ms ease, color 150ms ease, box-shadow 150ms ease; }
-.usage-tab:hover { color: var(--ui-text-highlighted); }
-.usage-tab:focus-visible { outline: 2px solid var(--ui-border-inverted); outline-offset: 1px; }
+.usage-tab { min-height: 32px; padding: 4px 14px; border-radius: 6px; font-size: 13px; font-weight: 500; color: var(--ui-text-muted); transition: background-color 150ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1)), color 150ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1)); }
+@media (max-width: 639px) { .usage-tab { min-height: 44px; } }
+@media (hover: hover) and (pointer: fine) {
+  .usage-tab:hover { color: var(--ui-text-highlighted); }
+}
+.usage-tab:focus-visible { outline: 2px solid var(--ui-primary); outline-offset: 1px; }
 .usage-tab[aria-selected='true'] { background: var(--ui-bg); color: var(--ui-text-highlighted); box-shadow: 0 1px 2px rgba(10, 10, 10, 0.08), 0 0 0 1px var(--ui-border); }
 @media (prefers-reduced-motion: reduce) { .usage-tab { transition: none; } }
 </style>

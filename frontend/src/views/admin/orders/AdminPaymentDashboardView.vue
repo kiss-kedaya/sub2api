@@ -44,7 +44,7 @@
                 </span>
                 <span class="text-right">
                   <span v-for="[currency, amount] in sortedAmounts(method.amount)" :key="currency" class="block text-sm font-medium tabular-nums text-highlighted">{{ formatMoney(currency, amount) }}</span>
-                  <span class="text-xs text-muted">({{ method.count }})</span>
+                  <span class="text-xs tabular-nums text-muted">({{ method.count }})</span>
                 </span>
               </li>
             </ul>
@@ -101,19 +101,19 @@ function methodColor(type: string): string {
     alipay_direct: 'bg-blue-400', wxpay_direct: 'bg-green-400',
     stripe: 'bg-purple-500',
   }
-  return c[type] || 'bg-gray-400'
+  return c[type] || 'bg-(--ui-text-dimmed)'
 }
 
-function sortedAmounts(amounts: CurrencyAmounts): [string, number][] {
-  return Object.entries(amounts).sort(([left], [right]) => left.localeCompare(right))
+function sortedAmounts(amounts?: CurrencyAmounts | null): [string, number][] {
+  return Object.entries(amounts ?? {}).sort(([left], [right]) => left.localeCompare(right))
 }
 
-function sortedTopUsers(usersByCurrency: Record<string, TopUserPaymentStats[]>): [string, TopUserPaymentStats[]][] {
-  return Object.entries(usersByCurrency).sort(([left], [right]) => left.localeCompare(right))
+function sortedTopUsers(usersByCurrency?: Record<string, TopUserPaymentStats[]> | null): [string, TopUserPaymentStats[]][] {
+  return Object.entries(usersByCurrency ?? {}).sort(([left], [right]) => left.localeCompare(right))
 }
 
-function hasTopUsers(usersByCurrency: Record<string, TopUserPaymentStats[]>): boolean {
-  return Object.values(usersByCurrency).some(users => users.length > 0)
+function hasTopUsers(usersByCurrency?: Record<string, TopUserPaymentStats[]> | null): boolean {
+  return Object.values(usersByCurrency ?? {}).some(users => Array.isArray(users) && users.length > 0)
 }
 
 function formatMoney(currency: string, amount: number): string {

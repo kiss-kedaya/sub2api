@@ -56,11 +56,11 @@
               </span>
               <!-- Tooltip（向下显示避免被弹窗裁剪） -->
               <div
-                class="pointer-events-none absolute left-0 top-full z-100 mt-1.5 w-72 rounded-sm bg-inverted px-3 py-2 text-xs text-inverted opacity-0 transition-opacity group-hover:opacity-100"
+                class="pointer-events-none absolute left-0 top-full z-50 mt-1.5 w-72 rounded-sm bg-inverted px-3 py-2 text-xs text-inverted opacity-0 transition-opacity group-hover:opacity-100"
               >
                 {{ t('admin.accounts.mixedSchedulingTooltip') }}
                 <div
-                  class="absolute bottom-full left-3 border-4 border-transparent border-b-gray-900"
+                  class="absolute bottom-full left-3 border-4 border-transparent border-b-(--ui-bg-inverted)"
                 ></div>
               </div>
             </div>
@@ -74,11 +74,11 @@
                 ?
               </span>
               <div
-                class="pointer-events-none absolute left-0 top-full z-100 mt-1.5 w-72 rounded-sm bg-inverted px-3 py-2 text-xs text-inverted opacity-0 transition-opacity group-hover:opacity-100"
+                class="pointer-events-none absolute left-0 top-full z-50 mt-1.5 w-72 rounded-sm bg-inverted px-3 py-2 text-xs text-inverted opacity-0 transition-opacity group-hover:opacity-100"
               >
                 {{ t('admin.accounts.allowOveragesTooltip') }}
                 <div
-                  class="absolute bottom-full left-3 border-4 border-transparent border-b-gray-900"
+                  class="absolute bottom-full left-3 border-4 border-transparent border-b-(--ui-bg-inverted)"
                 ></div>
               </div>
             </div>
@@ -210,7 +210,7 @@
                   <li>{{ t('admin.accounts.cnProviders.zhipuTeam.help.step3') }}</li>
                   <li>{{ t('admin.accounts.cnProviders.zhipuTeam.help.step4') }}</li>
                 </ol>
-                <p class="mt-2 break-all rounded-sm bg-inverted p-1.5 font-mono text-[11px] leading-relaxed">
+                <p class="mt-2 wrap-anywhere rounded-sm bg-inverted p-1.5 font-mono text-[11px] leading-relaxed">
                   {{ t('admin.accounts.cnProviders.zhipuTeam.help.example') }}
                 </p>
               </HelpTooltip>

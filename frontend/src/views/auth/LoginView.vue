@@ -78,7 +78,9 @@
                 type="button"
                 @click="showPassword = !showPassword"
                 :disabled="authActionDisabled"
-                class="absolute inset-y-0 right-0 flex items-center pr-3 text-dimmed transition-colors hover:text-default"
+                :aria-pressed="showPassword"
+                :aria-label="t('auth.passwordLabel')"
+                class="absolute inset-y-0 right-0 flex items-center justify-center rounded-md pr-3 text-dimmed transition-colors hover:text-default focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary [@media(pointer:coarse)]:min-w-11"
               >
                 <Icon v-if="showPassword" name="eyeOff" size="md" />
                 <Icon v-else name="eye" size="md" />
@@ -89,7 +91,7 @@
               <router-link
                 v-if="passwordResetEnabled && !backendModeEnabled"
                 to="/forgot-password"
-                class="text-sm font-medium text-primary-600 transition-colors hover:text-primary-500 dark:text-primary-400 dark:hover:text-primary-300"
+                class="rounded-sm text-sm font-medium text-primary transition-colors hover:text-primary/80 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
               >
                 {{ t('auth.forgotPassword') }}
               </router-link>
@@ -123,7 +125,7 @@
           >
             <svg
               v-if="isLoading"
-              class="-ml-1 mr-2 h-4 w-4 animate-spin text-white"
+              class="-ml-1 mr-2 h-4 w-4 animate-spin text-white motion-reduce:animate-none"
               fill="none"
               viewBox="0 0 24 24"
             >
@@ -231,7 +233,7 @@
                    sentence that explains it is also the way out: one tap, with a comfortable target on a phone. -->
               <button
                 type="button"
-                class="-my-1 block w-full py-1 text-left text-[13px] text-muted transition-colors hover:text-highlighted focus-visible:text-highlighted disabled:opacity-60"
+                class="-my-1 block w-full rounded-md py-1 text-left text-[13px] text-muted transition-colors hover:text-highlighted focus-visible:text-highlighted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary disabled:opacity-60 [@media(pointer:coarse)]:min-h-11"
                 data-testid="login-challenge-back-hint"
                 :disabled="factorBusy"
                 @click="handle2FACancel"
@@ -267,11 +269,11 @@
 
     <!-- Footer -->
     <template v-if="shownPane === 'credentials' && !backendModeEnabled && publicSettingsLoaded && registrationEnabled" #footer>
-      <p class="text-gray-500 dark:text-dark-400">
+      <p class="text-muted">
         {{ t('auth.dontHaveAccount') }}
         <router-link
           :to="registerLocation"
-          class="font-medium text-primary-600 transition-colors hover:text-primary-500 dark:text-primary-400 dark:hover:text-primary-300"
+          class="rounded-sm font-medium text-primary transition-colors hover:text-primary/80 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
         >
           {{ t('auth.signUp') }}
         </router-link>
@@ -314,7 +316,7 @@ import type {
 import { extractI18nErrorMessage } from '@/utils/apiError'
 import { clearAllAffiliateReferralCodes } from '@/utils/oauthAffiliate'
 import { isChunkLoadError, pushOrReload, recoverFromChunkLoadError } from '@/utils/chunkLoadError'
-import { sanitizeRedirectPath } from '@/utils/url'
+import { sanitizeInternalRedirectPath } from '@/utils/url'
 
 const { t } = useI18n()
 const LOGIN_AGREEMENT_STORAGE_KEY = 'sub2api_login_agreement_consent'
@@ -325,7 +327,7 @@ const router = useRouter()
 const authStore = useAuthStore()
 const appStore = useAppStore()
 const registerLocation = computed(() => {
-  const safeRedirect = sanitizeRedirectPath(router.currentRoute.value.query?.redirect, '')
+  const safeRedirect = sanitizeInternalRedirectPath(router.currentRoute.value.query?.redirect, '')
   return safeRedirect ? { path: '/register', query: { redirect: safeRedirect } } : '/register'
 })
 
@@ -458,10 +460,10 @@ const inputsLocked = computed(() => !publicSettingsLoaded.value || agreementGate
 const factorBusy = computed(() => passkeyVerifying.value || totpVerifying.value)
 
 // ---- Step panes -----------------------------------------------------------------------------------------------
-// Same contract as the sign-up page (auth-quiet.css): the pane that is going away plays its 320ms exit first, and only
+// Same contract as the sign-up page (auth-quiet.css): the pane that is going away plays its 150ms exit first, and only
 // then the next pane takes its place and plays its own 200ms enter, so there is never a moment with two panes stacked.
 type LoginPane = 'credentials' | 'factor'
-const STEP_EXIT_MS = 320
+const STEP_EXIT_MS = 150
 const shownPane = ref<LoginPane>('credentials')
 const leavingPane = ref<LoginPane | null>(null)
 const leftCredentialsOnce = ref<boolean>(false)
@@ -883,7 +885,8 @@ async function handlePasskeyLogin(): Promise<void> {
     await authStore.loginWithPasskey(proof)
     clearAllAffiliateReferralCodes()
     appStore.showSuccess(t('auth.loginSuccess'))
-    await pushOrReload(router, loginRedirect())
+    const redirectTo = loginRedirect()
+    await pushOrReload(router, redirectTo)
   } catch (error: unknown) {
     if (isChunkLoadError(error)) {
       recoverFromChunkLoadError(loginRedirect())
@@ -955,7 +958,7 @@ function maskLoginEmail(email: string): string {
 }
 
 const loginRedirect = (): string =>
-  sanitizeRedirectPath(router.currentRoute.value.query?.redirect)
+  sanitizeInternalRedirectPath(router.currentRoute.value.query?.redirect, '/dashboard')
 
 /** 全部因子通过后：清挑战、提示成功、跳转目标页。 */
 async function finishLoginSuccess(): Promise<void> {

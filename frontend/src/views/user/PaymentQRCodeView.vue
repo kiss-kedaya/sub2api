@@ -2,8 +2,8 @@
   <AppLayout>
     <div class="signal-payment-qr">
       <UserPageHeader flush :title="qrUrl ? scanTitle : t('payment.qr.payInNewWindow')" />
-      <section class="signal-payment-qr__panel">
-        <div v-if="qrUrl" class="signal-payment-qr__code">
+      <section class="signal-payment-qr__panel rounded-lg">
+        <div v-if="qrUrl" class="signal-payment-qr__code rounded-lg">
           <canvas ref="qrCanvas"></canvas>
         </div>
         <!-- Scan prompt for QR code -->
@@ -13,7 +13,7 @@
         <div v-if="expired" class="signal-payment-qr__status signal-payment-qr__status--expired">
           <UIcon name="i-lucide-circle-alert" class="size-6" />
           <p>{{ t('payment.qr.expired') }}</p>
-          <UButton class="mt-2" @click="router.push('/purchase')">{{ t('payment.result.backToRecharge') }}</UButton>
+          <UButton size="lg" class="mt-2 min-h-11 sm:min-h-0" @click="router.push('/purchase')">{{ t('payment.result.backToRecharge') }}</UButton>
         </div>
         <div v-else class="signal-payment-qr__status">
           <span>{{ qrUrl ? t('payment.qr.expiresIn') : t('payment.qr.payInNewWindowHint') }}</span>
@@ -45,6 +45,7 @@ import { paymentAPI } from '@/api/payment'
 import { extractI18nErrorMessage } from '@/utils/apiError'
 import { useAppStore } from '@/stores'
 import { isBuiltInAlipayMethod, isBuiltInWxpayMethod } from '@/components/payment/providerConfig'
+import { PAYMENT_RECOVERY_STORAGE_KEY, readPaymentRecoverySnapshot } from '@/components/payment/paymentFlow'
 import QRCode from 'qrcode'
 import alipayIcon from '@/assets/icons/alipay.svg'
 import wxpayIcon from '@/assets/icons/wxpay.svg'
@@ -194,14 +195,138 @@ function cleanup() {
 
 watch(qrUrl, () => renderQR())
 
+function readRouteQueryString(key: string): string {
+  const value = route.query[key]
+  if (Array.isArray(value)) {
+    return typeof value[0] === 'string' ? value[0] : ''
+  }
+  return typeof value === 'string' ? value : ''
+}
+
+function hasUnsafeUrlChar(value: string): boolean {
+  for (let i = 0; i < value.length; i += 1) {
+    const code = value.charCodeAt(i)
+    if (code <= 0x1f || code === 0x7f || code === 0x5c) {
+      return true
+    }
+  }
+  return false
+}
+
+function parseSafeExternalOrSameOriginPayUrl(raw: string): URL | null {
+  const trimmed = raw.trim()
+  if (!trimmed || hasUnsafeUrlChar(trimmed)) {
+    return null
+  }
+  if (typeof window === 'undefined') {
+    return null
+  }
+  try {
+    if (trimmed.startsWith('/')) {
+      if (trimmed.startsWith('//')) {
+        return null
+      }
+      const resolved = new URL(trimmed, window.location.origin)
+      if (resolved.origin !== window.location.origin || resolved.username || resolved.password) {
+        return null
+      }
+      return resolved
+    }
+    if (!/^https?:\/\//i.test(trimmed)) {
+      return null
+    }
+    const parsed = new URL(trimmed)
+    if ((parsed.protocol !== 'https:' && parsed.protocol !== 'http:') || parsed.username || parsed.password) {
+      return null
+    }
+    return parsed
+  } catch {
+    return null
+  }
+}
+
+function readTrustedRecoverySnapshotForOrder(currentOrderId: number) {
+  if (typeof window === 'undefined' || currentOrderId <= 0) {
+    return null
+  }
+  let rawSnapshot: string | null = null
+  try {
+    rawSnapshot = window.localStorage.getItem(PAYMENT_RECOVERY_STORAGE_KEY)
+  } catch {
+    return null
+  }
+  const snapshot = readPaymentRecoverySnapshot(rawSnapshot)
+  if (!snapshot || snapshot.orderId !== currentOrderId) {
+    return null
+  }
+  return snapshot
+}
+
+function resolveSafeQrUrl(rawQr: string, currentOrderId: number): string {
+  const trimmed = rawQr.trim()
+  if (!trimmed || hasUnsafeUrlChar(trimmed)) {
+    return ''
+  }
+  // Bind QR payloads strictly to the active local checkout recovery snapshot
+  // for this order so attacker-crafted query parameters cannot render phishing
+  // payment QR codes under our UI.
+  const snapshot = readTrustedRecoverySnapshotForOrder(currentOrderId)
+  if (!snapshot) {
+    return ''
+  }
+  const expectedQr = snapshot.qrCode.trim()
+  const expectedPayUrl = snapshot.payUrl.trim()
+  if ((expectedQr && expectedQr === trimmed) || (expectedPayUrl && expectedPayUrl === trimmed)) {
+    return trimmed
+  }
+  return ''
+}
+
+function resolveSafePayUrl(rawPayUrl: string, currentOrderId: number): string {
+  const parsed = parseSafeExternalOrSameOriginPayUrl(rawPayUrl)
+  if (!parsed || typeof window === 'undefined') {
+    return ''
+  }
+
+  // Same-origin internal payment pages (e.g. /payment/stripe, /payment/airwallex) are safe.
+  if (parsed.origin === window.location.origin && parsed.pathname.startsWith('/payment/')) {
+    return parsed.toString()
+  }
+
+  // External payment gateway URLs must use HTTPS and match the active local
+  // checkout recovery snapshot for this order so crafted query strings cannot
+  // turn /payment/qrcode into an open redirect or phishing launcher.
+  if (parsed.protocol !== 'https:' || currentOrderId <= 0) {
+    return ''
+  }
+  const snapshot = readTrustedRecoverySnapshotForOrder(currentOrderId)
+  if (!snapshot || !snapshot.payUrl) {
+    return ''
+  }
+  const snapshotUrl = parseSafeExternalOrSameOriginPayUrl(snapshot.payUrl)
+  if (!snapshotUrl || snapshotUrl.protocol !== 'https:') {
+    return ''
+  }
+  return snapshotUrl.toString() === parsed.toString() ? parsed.toString() : ''
+}
+
+function parsePositiveOrderId(raw: string): number {
+  const trimmed = raw.trim()
+  if (!trimmed) {
+    return 0
+  }
+  const parsed = Number(trimmed)
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : 0
+}
+
 onMounted(() => {
-  orderId.value = Number(route.query.order_id) || 0
-  qrUrl.value = String(route.query.qr || '')
-  payUrl.value = String(route.query.pay_url || '')
-  paymentType.value = String(route.query.payment_type || '')
+  orderId.value = parsePositiveOrderId(readRouteQueryString('order_id'))
+  qrUrl.value = resolveSafeQrUrl(readRouteQueryString('qr'), orderId.value)
+  payUrl.value = resolveSafePayUrl(readRouteQueryString('pay_url'), orderId.value)
+  paymentType.value = readRouteQueryString('payment_type')
 
   // Calculate countdown from expiresAt
-  const expiresAtStr = String(route.query.expires_at || '')
+  const expiresAtStr = readRouteQueryString('expires_at')
   let seconds = 30 * 60 // fallback: 30 minutes
   if (expiresAtStr) {
     const expiresAt = new Date(expiresAtStr)
@@ -218,15 +343,15 @@ onUnmounted(() => cleanup())
 
 <style scoped>
 .signal-payment-qr { display: grid; width: min(100%, 480px); gap: 16px; margin-inline: auto; padding-block: 8px 24px; color: var(--ui-text-highlighted); letter-spacing: 0; }
-.signal-payment-qr__panel { display: grid; gap: 16px; padding: 20px; border-radius: 8px; background: var(--ui-bg); box-shadow: 0 0 0 1px var(--ui-border), 0 1px 2px rgba(10, 10, 10, 0.05); }
-.dark .signal-payment-qr__panel { box-shadow: 0 0 0 1px var(--ui-border); }
+.signal-payment-qr__panel { display: grid; gap: 16px; padding: 20px; border-radius: 8px; background: var(--ui-bg); box-shadow: 0 0 0 1px var(--ui-border), var(--app-shadow-card, 0 1px 2px rgba(10, 10, 10, 0.05)); }
+.dark .signal-payment-qr__panel { box-shadow: 0 0 0 1px var(--ui-border), var(--app-shadow-card); }
 .signal-payment-qr__code { display: grid; place-items: center; width: fit-content; max-width: 100%; margin-inline: auto; padding: 12px; border: 1px solid var(--ui-border); border-radius: 8px; background: #ffffff; }
 .signal-payment-qr__code canvas { display: block; max-width: 100%; height: auto !important; }
-.signal-payment-qr__hint { margin: 0; color: var(--ui-text-muted); font-size: 13px; line-height: 1.55; text-align: center; }
-.signal-payment-qr__status { display: grid; gap: 4px; padding: 14px 0; border-block: 1px solid var(--ui-border); text-align: center; }
+.signal-payment-qr__hint { margin: 0; color: var(--ui-text-muted); font-size: 13px; line-height: 1.55; overflow-wrap: anywhere; text-align: center; }
+.signal-payment-qr__status { display: grid; gap: 4px; padding: 14px 0; border-block: 1px solid var(--ui-border); overflow-wrap: anywhere; text-align: center; }
 .signal-payment-qr__status span, .signal-payment-qr__status p { margin: 0; color: var(--ui-text-muted); font-size: 12px; }
 .signal-payment-qr__status strong { color: var(--ui-text-highlighted); font-size: 30px; font-weight: 600; font-variant-numeric: tabular-nums; line-height: 1.2; }
-.signal-payment-qr__status--expired { place-items: center; color: #b45309; }
+.signal-payment-qr__status--expired { place-items: center; color: var(--signal-amber, #b45309); }
 .dark .signal-payment-qr__status--expired { color: var(--ui-warning); }
 .signal-payment-qr__status--expired p { color: inherit; font-size: 15px; font-weight: 600; }
 .signal-payment-qr__actions { display: grid; gap: 8px; }

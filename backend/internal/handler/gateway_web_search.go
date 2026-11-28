@@ -78,7 +78,33 @@ func (h *GatewayHandler) WebSearch(c *gin.Context) {
 		return
 	}
 
+	if h.concurrencyHelper != nil {
+		userID, userConcurrency := resolveConcurrencyUserSubject(c, apiKey)
+		if userID > 0 {
+			var streamStarted bool
+			userRelease, slotErr := h.concurrencyHelper.AcquireUserSlotWithWait(c, userID, userConcurrency, false, &streamStarted)
+			if slotErr != nil {
+				h.handleConcurrencyError(c, slotErr, "user", false)
+				return
+			}
+			if userRelease != nil {
+				defer userRelease()
+			}
+		} else {
+			keyRelease, keyErr := h.concurrencyHelper.AcquireAPIKeySlot(c.Request.Context(), apiKey.ID, apiKey.ConcurrencyLimit)
+			if keyErr != nil {
+				h.handleConcurrencyError(c, keyErr, "API key", false)
+				return
+			}
+			if keyRelease != nil {
+				defer keyRelease()
+			}
+		}
+	}
+
 	// Billing eligibility (same as other requests)
+	pricingCtx, pricingAt := service.WithGatewayTokenRequestPricing(c.Request.Context())
+	c.Request = c.Request.WithContext(pricingCtx)
 	subscription, _ := middleware2.GetSubscriptionFromContext(c)
 	if err := h.billingCacheService.CheckBillingEligibility(c.Request.Context(), apiKey.User, apiKey, apiKey.Group, subscription, service.QuotaPlatform(c.Request.Context(), apiKey)); err != nil {
 		status, code, message, retryAfter := billingErrorDetails(err)
@@ -126,6 +152,29 @@ func (h *GatewayHandler) WebSearch(c *gin.Context) {
 		return
 	}
 
+	// Request IDs are billing idempotency keys, so they must be unique per invocation.
+	// Query/IP/UA hashes would collapse repeated identical searches into one charge.
+	searchRequestID := searchLabel + ":" + uuid.NewString()
+	estimateSearchHold := func(routeCtx context.Context, key *service.APIKey) (float64, error) {
+		return h.gatewayService.EstimateSearchPreauthorizationCost(routeCtx, key, 1, pricingAt), nil
+	}
+	searchHoldAmount, _ := estimateSearchHold(c.Request.Context(), apiKey)
+	balanceGuard, preauthErr := preauthorizeFixedAmountGatewayRequest(
+		c.Request.Context(), h.balancePreauthorizer, apiKey, subscription, searchRequestID, []byte(req.Query), searchHoldAmount,
+	)
+	if preauthErr != nil {
+		status, code, message, retryAfter := billingErrorDetails(preauthErr)
+		if retryAfter > 0 {
+			c.Header("Retry-After", strconv.Itoa(retryAfter))
+		}
+		c.JSON(status, gin.H{"error": gin.H{"type": code, "message": message}})
+		return
+	}
+	defer func() { deferBalancePreauthorizationRefund(reqLog, balanceGuard) }()
+	if balanceGuard != nil {
+		c.Request = c.Request.WithContext(service.ContextWithBalancePreauthorizationGuard(c.Request.Context(), balanceGuard))
+	}
+
 	// Use exactly the same scheduling as other requests (SelectAccountWithLoadAwareness handles load, rate limit, sticky, etc.)
 	groupID := apiKey.GroupID
 	if groupID == nil {
@@ -156,9 +205,16 @@ func (h *GatewayHandler) WebSearch(c *gin.Context) {
 			c.Request.Context(), apiKey, "", searchModel, failedAccounts, "", 0, service.PlatformFromAPIKey(apiKey),
 		)
 		if selectErr == nil && routedKey != nil {
-			if bindErr := h.bindSelectedKeyRoute(c, keyRouteBinding{Previous: apiKey, Selected: routedKey, Subscription: &subscription}); bindErr != nil {
+			if bindErr := h.bindSelectedKeyRoute(c, keyRouteBinding{
+				Previous: apiKey, Selected: routedKey, Subscription: &subscription,
+				Guard: &balanceGuard, Body: []byte(req.Query), Model: searchModel, PricingAt: pricingAt,
+				FixedRequestID: searchRequestID, FixedAmount: estimateSearchHold,
+			}); bindErr != nil {
 				releaseRejectedKeyRouteSelection(selected)
-				status, code, message, _ := billingErrorDetails(bindErr)
+				status, code, message, retryAfter := billingErrorDetails(bindErr)
+				if retryAfter > 0 {
+					c.Header("Retry-After", strconv.Itoa(retryAfter))
+				}
 				c.JSON(status, gin.H{"error": gin.H{"type": code, "message": message}})
 				return
 			}
@@ -242,9 +298,6 @@ func (h *GatewayHandler) WebSearch(c *gin.Context) {
 	upstreamEndpoint := GetUpstreamEndpoint(c, account.Platform)
 	requestPayloadHash := service.HashUsageRequestPayload([]byte(req.Query))
 	quotaPlatform := service.QuotaPlatform(c.Request.Context(), apiKey)
-	// Request IDs are billing idempotency keys, so they must be unique per invocation.
-	// Query/IP/UA hashes would collapse repeated identical searches into one charge.
-	searchRequestID := searchLabel + ":" + uuid.NewString()
 	if apiKey.Group != nil {
 		if p := apiKey.Group.GetSearchPricePer1k(); p != nil && *p == 0 {
 			logger.L().With(
@@ -265,6 +318,7 @@ func (h *GatewayHandler) WebSearch(c *gin.Context) {
 			User:               apiKey.User,
 			Account:            account,
 			Subscription:       subscription,
+			PricingAt:          pricingAt,
 			InboundEndpoint:    inboundEndpoint,
 			UpstreamEndpoint:   upstreamEndpoint,
 			UserAgent:          userAgent,

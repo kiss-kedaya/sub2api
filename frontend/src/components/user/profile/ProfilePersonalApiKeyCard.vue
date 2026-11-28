@@ -372,7 +372,7 @@
       <div class="space-y-4" data-test="personal-api-key-reveal-dialog">
         <div class="flex items-start gap-2 rounded-lg bg-elevated/70 p-3 ring ring-inset ring-default">
           <code
-            class="min-w-0 flex-1 break-all font-mono text-xs leading-5 text-highlighted"
+            class="min-w-0 flex-1 wrap-anywhere font-mono text-xs leading-5 text-highlighted"
             data-test="personal-api-key-reveal-value"
           >{{ revealedSecret }}</code>
           <UButton
@@ -433,7 +433,7 @@
               </UButton>
             </div>
           </div>
-          <pre class="overflow-x-auto whitespace-pre-wrap break-all rounded-md bg-elevated/60 p-3 font-mono text-xs leading-5 text-highlighted ring ring-inset ring-default">{{ createKeyCurlExample(revealedSecret) }}</pre>
+          <pre class="overflow-x-auto whitespace-pre-wrap wrap-anywhere rounded-md bg-elevated/60 p-3 font-mono text-xs leading-5 text-highlighted ring ring-inset ring-default">{{ createKeyCurlExample(revealedSecret) }}</pre>
         </div>
 
         <p v-if="!canCloseReveal" class="sr-only" role="status">

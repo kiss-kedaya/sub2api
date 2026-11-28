@@ -31,7 +31,7 @@ describe('EndpointPopover', () => {
     vi.clearAllMocks()
   })
 
-  it('将说明提示渲染到 URL 上方而不是旧的 title 图标上', () => {
+  it('将说明提示渲染到 URL 上方而不是旧的 title 图标上', async () => {
     const wrapper = mount(EndpointPopover, {
       props: {
         apiBaseUrl: 'https://default.example.com/v1',
@@ -43,10 +43,13 @@ describe('EndpointPopover', () => {
           },
         ],
       },
+      global: { stubs: { teleport: true } },
     })
 
-    expect(wrapper.text()).toContain('自定义说明')
-    expect(wrapper.text()).toContain('点击可复制此端点')
+    await wrapper.findAll('[data-test="endpoint-trigger"]')[1]!.trigger('mouseenter')
+
+    expect(wrapper.get('[data-test="endpoint-popover-tooltip"]').text()).toContain('自定义说明')
+    expect(wrapper.get('[data-test="endpoint-popover-tooltip"]').text()).toContain('点击可复制此端点')
     expect(wrapper.find('[role="button"]').attributes('title')).toBeUndefined()
     expect(wrapper.find('[title="自定义说明"]').exists()).toBe(false)
   })
@@ -57,13 +60,15 @@ describe('EndpointPopover', () => {
         apiBaseUrl: 'https://default.example.com/v1',
         customEndpoints: [],
       },
+      global: { stubs: { teleport: true } },
     })
 
+    await wrapper.get('[data-test="endpoint-trigger"]').trigger('focusin')
     await wrapper.find('[role="button"]').trigger('click')
     await flushPromises()
 
     expect(copyToClipboard).toHaveBeenCalledWith('https://default.example.com/v1', '已复制')
-    expect(wrapper.text()).toContain('已复制到剪贴板')
+    expect(wrapper.get('[data-test="endpoint-popover-tooltip"]').text()).toContain('已复制到剪贴板')
     expect(wrapper.find('button[aria-label="已复制到剪贴板"]').exists()).toBe(true)
   })
 })

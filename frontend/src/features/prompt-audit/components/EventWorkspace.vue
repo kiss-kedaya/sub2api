@@ -81,7 +81,7 @@
         <UCheckbox :model-value="selectedIds.includes(row.original.id)" :aria-label="t('admin.promptAudit.events.selectEvent', { id: row.original.id })" @update:model-value="toggleOne(row.original.id)" />
       </template>
       <template #time-cell="{ row }">
-        <span class="whitespace-nowrap text-xs" :data-test="`event-${row.original.id}`">{{ formatDate(row.original.created_at) }}</span>
+        <span class="whitespace-nowrap text-xs tabular-nums" :data-test="`event-${row.original.id}`">{{ formatDate(row.original.created_at) }}</span>
       </template>
       <template #identity-cell="{ row }">
         <div class="grid w-64 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-2 text-xs">
@@ -94,6 +94,7 @@
               color="neutral"
               variant="ghost"
               size="xs"
+              class="max-sm:min-h-11 max-sm:min-w-11"
               :aria-label="`${t('common.copy')} ${line.label}`"
               :title="`${t('common.copy')} ${line.label}`"
               @click="copy(line.value)"
@@ -116,8 +117,8 @@
       </template>
       <template #actions-cell="{ row }">
         <div class="flex justify-end gap-1">
-          <UButton icon="i-lucide-eye" color="neutral" variant="ghost" size="sm" :aria-label="`${t('common.view')} #${row.original.id}`" :title="t('common.view')" @click="$emit('view', row.original.id)" />
-          <UButton icon="i-lucide-trash-2" color="error" variant="ghost" size="sm" :aria-label="`${t('common.delete')} #${row.original.id}`" :title="t('common.delete')" @click="$emit('delete', row.original.id)" />
+          <UButton icon="i-lucide-eye" color="neutral" variant="ghost" size="sm" class="max-sm:min-h-11 max-sm:min-w-11" :aria-label="`${t('common.view')} #${row.original.id}`" :title="t('common.view')" @click="$emit('view', row.original.id)" />
+          <UButton icon="i-lucide-trash-2" color="error" variant="ghost" size="sm" class="max-sm:min-h-11 max-sm:min-w-11" :aria-label="`${t('common.delete')} #${row.original.id}`" :title="t('common.delete')" @click="$emit('delete', row.original.id)" />
         </div>
       </template>
       <template #loading>
@@ -127,7 +128,7 @@
     </UTable>
 
     <div class="flex flex-col gap-1">
-      <p class="text-sm text-muted">{{ t('admin.promptAudit.events.selectedSummary', { selected: selectedIds.length, total }) }}</p>
+      <p class="text-sm tabular-nums text-muted">{{ t('admin.promptAudit.events.selectedSummary', { selected: selectedIds.length, total }) }}</p>
       <Pagination :total="total" :page="page" :page-size="pageSize" @update:page="$emit('page', $event)" @update:page-size="$emit('page-size', $event)" />
     </div>
   </section>
@@ -159,8 +160,8 @@ const emit = defineEmits<{
 const { t, locale } = useI18n()
 const localFilters = reactive<PromptEventFilters>(cloneData(props.filters))
 watch(() => props.filters, (value) => Object.assign(localFilters, cloneData(value)), { deep: true })
-const allSelected = computed(() => props.events.length > 0 && props.events.every((event) => props.selectedIds.includes(event.id)))
-const headerChecked = computed<boolean | 'indeterminate'>(() => allSelected.value ? true : props.events.some((event) => props.selectedIds.includes(event.id)) ? 'indeterminate' : false)
+const allSelected = computed(() => (props.events ?? []).length > 0 && props.events.every((event) => props.selectedIds.includes(event.id)))
+const headerChecked = computed<boolean | 'indeterminate'>(() => allSelected.value ? true : (props.events ?? []).some((event) => props.selectedIds.includes(event.id)) ? 'indeterminate' : false)
 
 // USelect items cannot carry an empty value, so "all" is a sentinel mapped back to ''.
 const ALL = '__all__'
@@ -278,7 +279,10 @@ function toggleAll() {
   emit('selection', allSelected.value ? [] : props.events.map((event) => event.id))
 }
 function formatDate(value: string): string {
-  return new Intl.DateTimeFormat(locale.value, { dateStyle: 'short', timeStyle: 'medium' }).format(new Date(value))
+  if (!value) return '—'
+  const d = new Date(value)
+  if (Number.isNaN(d.getTime())) return '—'
+  return new Intl.DateTimeFormat(locale.value, { dateStyle: 'short', timeStyle: 'medium' }).format(d)
 }
 function decisionColor(decision: string): 'error' | 'warning' | 'success' {
   if (decision === 'critical') return 'error'
@@ -303,7 +307,7 @@ function formatDecisionRisk(decision: string, riskLevel: string): string {
   return `${translateDecision(decision)} · ${translateRiskLevel(riskLevel)}`
 }
 function formatCategories(categories: string[]): string {
-  if (!categories.length) return '—'
+  if (!Array.isArray(categories) || !categories.length) return '—'
   return categories.map(translateCategory).join(', ')
 }
 </script>

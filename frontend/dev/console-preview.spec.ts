@@ -208,6 +208,57 @@ describe('preview server isolation', () => {
       document: { documentElement: { classList: { toggle: vi.fn() } }, addEventListener: vi.fn() },
     })
     expect(JSON.parse(storage.get('auth_user')!)).toMatchObject({ id: 900001, role: 'user' })
+    const clickListener = vi.fn()
+    const listeners = new Map<string, (event: unknown) => void>()
+    class MockElement {}
+    runInNewContext(bootstrap!, {
+      window: {},
+      location: { origin: `http://127.0.0.1:${port}`, href: `http://127.0.0.1:${port}/dashboard` },
+      URL,
+      Element: MockElement,
+      localStorage: {
+        setItem: (key: string, value: unknown) => storage.set(key, String(value)),
+        getItem: (key: string) => storage.get(key) ?? null,
+        removeItem: (key: string) => storage.delete(key),
+      },
+      document: {
+        documentElement: { classList: { toggle: vi.fn() } },
+        addEventListener: (name: string, fn: (event: unknown) => void) => {
+          listeners.set(name, fn)
+          clickListener(name)
+        },
+      },
+    })
+    const onClick = listeners.get('click')
+    expect(onClick).toBeTypeOf('function')
+    const dispatchAnchorClick = (href: string) => {
+      const anchor = Object.assign(new MockElement(), { href, closest: () => anchor })
+      const event = {
+        target: anchor,
+        preventDefault: vi.fn(),
+        stopImmediatePropagation: vi.fn(),
+      }
+      onClick!(event)
+      return event
+    }
+    const ccsEvent = dispatchAnchorClick('ccswitch://v1/import?resource=provider&name=kedaya')
+    expect(ccsEvent.preventDefault).not.toHaveBeenCalled()
+    expect(ccsEvent.stopImmediatePropagation).not.toHaveBeenCalled()
+
+    const sameOriginEvent = dispatchAnchorClick('/docs')
+    expect(sameOriginEvent.preventDefault).not.toHaveBeenCalled()
+
+    for (const blockedHref of [
+      'https://example.test/',
+      `http://127.0.0.1:${port + 1}/`,
+      'javascript:void(0)',
+      'data:text/plain,hello',
+      'http://[::invalid',
+    ]) {
+      const blocked = dispatchAnchorClick(blockedHref)
+      expect(blocked.preventDefault, blockedHref).toHaveBeenCalledTimes(1)
+      expect(blocked.stopImmediatePropagation, blockedHref).toHaveBeenCalledTimes(1)
+    }
     const publicSettings = JSON.parse((await http('/api/v1/settings/public')).text).data
     expect(publicSettings.site_name).toBe('kedaya.ai')
     expect(publicSettings.api_base_url).toBe(`http://127.0.0.1:${port}`)

@@ -121,7 +121,7 @@ let generation = 0
 
 const visible = computed(() => props.account.platform === 'anthropic' && props.account.type === 'oauth')
 
-watch(() => [props.account.id, props.account.platform, props.account.type], () => {
+watch([() => props.account.id, () => props.account.platform, () => props.account.type], () => {
   generation++
   status.value = null
   loading.value = false

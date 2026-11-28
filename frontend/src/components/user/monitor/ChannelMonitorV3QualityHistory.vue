@@ -1,19 +1,19 @@
 <template>
   <div
     v-if="enabled && groupId"
-    class="channel-signal-quality-history mt-3 border-t border-white/70 pt-3 dark:border-dark-700/60"
+    class="channel-signal-quality-history mt-3 border-t border-default pt-3"
     data-testid="channel-quality-history"
   >
-    <div class="channel-signal-timeline__legend mb-1.5 flex items-center justify-between text-[10px] font-semibold uppercase tracking-widest text-gray-400">
+    <div class="channel-signal-timeline__legend mb-1.5 flex items-center justify-between text-[10px] font-semibold uppercase tracking-widest text-dimmed">
       <span>{{ t('monitorCommon.qualityHistoryTitle', { n: events.length }) }}</span>
-      <span v-if="degradedCount" class="tabular-nums text-red-500/90 dark:text-red-400/90">
+      <span v-if="degradedCount" class="tabular-nums text-red-700 dark:text-red-400/90">
         {{ t('monitorCommon.qualityHistoryDegradedCount', { n: degradedCount }) }}
       </span>
     </div>
 
-    <div v-if="loading" class="pb-1 text-[10px] text-gray-400">{{ t('monitorCommon.qualityHistoryLoading') }}</div>
-    <div v-else-if="loadFailed" class="pb-1 text-[10px] text-red-500/90 dark:text-red-400/90">{{ t('monitorCommon.qualityHistoryFailed') }}</div>
-    <div v-else-if="!events.length" class="pb-1 text-[10px] text-gray-400">{{ t('monitorCommon.qualityHistoryEmpty') }}</div>
+    <div v-if="loading" class="pb-1 text-[10px] text-dimmed">{{ t('monitorCommon.qualityHistoryLoading') }}</div>
+    <div v-else-if="loadFailed" class="pb-1 text-[10px] text-red-700 dark:text-red-400/90">{{ t('monitorCommon.qualityHistoryFailed') }}</div>
+    <div v-else-if="!events.length" class="pb-1 text-[10px] text-dimmed">{{ t('monitorCommon.qualityHistoryEmpty') }}</div>
 
     <div v-else class="quality-history-strip flex flex-wrap justify-start gap-1.5" @mouseleave="clearHover">
       <button
@@ -37,7 +37,7 @@
       <Transition name="v3-timeline-tooltip">
         <div
           v-if="hovered && hoveredEvent"
-          class="quality-history-popover"
+          class="quality-history-popover rounded-xl"
           :style="popoverStyle"
           role="tooltip"
           data-testid="quality-history-popover"
@@ -49,10 +49,10 @@
             >
               {{ hoveredEvent.status === 'degraded' ? t('monitorCommon.qualityHistoryDegraded') : t('monitorCommon.qualityHistoryPass') }}
             </span>
-            <span class="font-mono text-amber-300/90" data-testid="quality-history-event-id">#{{ hoveredEvent.id }}</span>
+            <span class="font-mono tabular-nums text-amber-300/90" data-testid="quality-history-event-id">#{{ hoveredEvent.id }}</span>
             <span>{{ t(hoveredEvent.quality_provider === 'chanshui' ? 'monitorCommon.qualityChanshui' : 'monitorCommon.qualityPelican') }}</span>
-            <span class="text-gray-300">{{ formatFullTime(hoveredEvent.created_at) }}</span>
-            <span v-if="hoveredEvent.model_id && hoveredEvent.quality_provider !== 'chanshui'" class="truncate font-mono text-gray-400">{{ hoveredEvent.model_id }}</span>
+            <span class="tabular-nums text-white/80">{{ formatFullTime(hoveredEvent.created_at) }}</span>
+            <span v-if="hoveredEvent.model_id && hoveredEvent.quality_provider !== 'chanshui'" class="truncate font-mono text-white/60">{{ hoveredEvent.model_id }}</span>
           </div>
           <div
             v-if="hoveredEvent.status === 'degraded' && hoveredEvent.error_message"
@@ -60,20 +60,20 @@
           >
             {{ hoveredEvent.error_message }}
           </div>
-          <div v-if="hoveredEvent.quality_provider === 'chanshui'" class="space-y-2 p-3 text-xs text-gray-200" data-testid="quality-audit-summary">
-            <div>{{ t('monitorCommon.qualityAuditTotal') }}: {{ hoveredEvent.audit_summary?.score ?? '—' }} / 100</div>
-            <div class="break-all" data-testid="quality-tested-model">{{ t('monitorCommon.qualityAuditTestedModel') }}：{{ hoveredEvent.model_id || '—' }}</div>
-            <div class="break-all" data-testid="quality-actual-model">{{ t('monitorCommon.qualityAuditActualModel') }}：{{ hoveredEvent.audit_summary?.candidate_model || '—' }}</div>
+          <div v-if="hoveredEvent.quality_provider === 'chanshui'" class="space-y-2 p-3 text-xs text-white/90" data-testid="quality-audit-summary">
+            <div class="tabular-nums">{{ t('monitorCommon.qualityAuditTotal') }}: {{ hoveredEvent.audit_summary?.score ?? '—' }} / 100</div>
+            <div class="wrap-anywhere" data-testid="quality-tested-model">{{ t('monitorCommon.qualityAuditTestedModel') }}：{{ hoveredEvent.model_id || '—' }}</div>
+            <div class="wrap-anywhere" data-testid="quality-actual-model">{{ t('monitorCommon.qualityAuditActualModel') }}：{{ hoveredEvent.audit_summary?.candidate_model || '—' }}</div>
             <div v-for="section in (hoveredEvent.audit_summary?.sections || []).filter(section => section.name !== 'fingerprint')" :key="section.name" class="flex justify-between gap-3">
               <span>{{ t(`monitorCommon.qualitySections.${section.name}`) }}</span>
-              <span class="min-w-0 break-all text-right">
+              <span class="min-w-0 wrap-anywhere tabular-nums text-right">
                 {{ section.status || '—' }}
                 <template v-if="section.score != null"> · {{ section.score }}</template>
               </span>
             </div>
           </div>
-          <div v-else class="quality-history-popover__viewport">
-            <div v-if="artworkState === 'loading'" class="grid h-full place-items-center text-[10px] text-gray-400">
+          <div v-else class="quality-history-popover__viewport rounded-lg">
+            <div v-if="artworkState === 'loading'" class="grid h-full place-items-center text-[10px] text-white/60">
               {{ t('monitorCommon.qualityArtworkLoading') }}
             </div>
             <div v-else-if="artworkState === 'failed'" class="grid h-full place-items-center text-[10px] text-red-300">
@@ -124,18 +124,21 @@ const hoveredEvent = computed(() => (hoveredIndex.value === null ? null : events
 const degradedCount = computed(() => events.value.filter((event) => event.status === 'degraded').length)
 let loadGeneration = 0
 
-async function load() {
+async function load({ silent = false }: { silent?: boolean } = {}) {
   const generation = ++loadGeneration
   const groupId = props.groupId
   if (!props.enabled || !props.groupId) {
     events.value = []
     return
   }
-  loading.value = true
-  loadFailed.value = false
+  if (!silent) {
+    loading.value = true
+    loadFailed.value = false
+  }
   try {
     const list = await getQualityEvents(groupId!, 30)
     if (generation !== loadGeneration) return
+    loadFailed.value = false
     // Match the timeline's PAST → NOW direction, regardless of API ordering.
     events.value = Array.isArray(list)
       ? [...list].sort((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at) || a.id - b.id)
@@ -239,7 +242,7 @@ async function loadArtwork(event: MonitorQualityEvent) {
 }
 
 let refreshTimer: ReturnType<typeof setInterval> | undefined
-onMounted(() => { refreshTimer = setInterval(() => { if (props.enabled && !loading.value && !hovered.value && document.visibilityState !== 'hidden') void load() }, 60000) })
+onMounted(() => { refreshTimer = setInterval(() => { if (props.enabled && !loading.value && !hovered.value && document.visibilityState !== 'hidden') void load({ silent: true }) }, 60000) })
 onBeforeUnmount(() => {
   loadGeneration++
   if (refreshTimer) clearInterval(refreshTimer)
@@ -271,12 +274,17 @@ const popoverStyle = computed(() => ({
   font-weight: 600;
   color: rgb(71 85 105);
   cursor: crosshair;
-  transition: transform 160ms cubic-bezier(0.22, 1, 0.36, 1), box-shadow 160ms ease;
+  transition: transform 150ms var(--motion-out, cubic-bezier(0.23, 1, 0.32, 1)), border-color 150ms var(--motion-out, cubic-bezier(0.23, 1, 0.32, 1)), opacity 150ms var(--motion-out, cubic-bezier(0.23, 1, 0.32, 1));
 }
 
 .quality-history-chip.is-active {
-  transform: translateY(-1px);
-  box-shadow: 0 4px 10px rgb(15 118 110 / 0.18);
+  border-color: var(--ui-border-accented, #94a3b8);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .quality-history-chip.is-active {
+    transform: translateY(-1px);
+  }
 }
 
 .quality-history-chip__dot {
@@ -313,11 +321,10 @@ const popoverStyle = computed(() => ({
   max-width: min(360px, calc(100vw - 32px));
   transform: translateX(var(--tooltip-x, -50%)) translateY(-100%);
   border: 1px solid rgb(255 255 255 / 0.14);
-  border-radius: 10px;
   background: rgb(15 23 42 / 0.96);
   padding: 8px 10px;
   color: rgb(248 250 252);
-  box-shadow: 0 14px 30px rgb(15 23 42 / 0.35);
+  box-shadow: var(--app-shadow-popover, 0 14px 30px rgb(15 23 42 / 0.35));
   pointer-events: none;
 }
 
@@ -344,7 +351,6 @@ const popoverStyle = computed(() => ({
   height: 213px;
   margin-top: 6px;
   overflow: hidden;
-  border-radius: 8px;
   background: #fff;
 }
 
@@ -359,7 +365,11 @@ const popoverStyle = computed(() => ({
 
 @media (prefers-reduced-motion: reduce) {
   .quality-history-chip {
-    transition: none;
+    transition: border-color 120ms ease, opacity 120ms ease;
+  }
+
+  .quality-history-chip.is-active {
+    transform: none;
   }
 }
 </style>

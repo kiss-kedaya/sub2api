@@ -317,17 +317,23 @@ func (s *OpenAIGatewayService) streamChatCompletionsAsResponses(
 	var upstreamErr error
 	// A scan ended by the silence limit has already told the client and carries its
 	// own error; writing the upstream-error frame as well would send two errors.
-	if scan.NonBillableUpstreamError && !errors.Is(scan.Err, errOpenAIUpstreamWaitLimit) {
+	// A mid-stream balance abort already delivered output and must never be waived
+	// as a non-billable upstream error.
+	if scan.NonBillableUpstreamError && !errors.Is(scan.Err, errOpenAIUpstreamWaitLimit) && !isBalanceHoldTopUpError(scan.Err) {
 		upstreamErr = writeCompatUpstreamStreamError(c, "responses", originalModel, scan.UpstreamError)
 	}
 
 	// The stream ended without [DONE] and the client is gone: nothing more will come.
 	if gone := clientDisconnected || watch.Gone(); upstreamErr != nil || scan.Err != nil || (gone && !scan.SawDone) {
+		nonBillable := scan.NonBillableUpstreamError
+		if isBalanceHoldTopUpError(scan.Err) {
+			nonBillable = false
+		}
 		result := &OpenAIForwardResult{
 			RequestID:                   requestID,
 			UpstreamHeaders:             resp.Header,
 			Usage:                       scan.Usage,
-			NonBillableUpstreamError:    scan.NonBillableUpstreamError,
+			NonBillableUpstreamError:    nonBillable,
 			Model:                       originalModel,
 			BillingModel:                billingModel,
 			UpstreamModel:               upstreamModel,
@@ -346,10 +352,22 @@ func (s *OpenAIGatewayService) streamChatCompletionsAsResponses(
 		if cause == nil {
 			cause = errors.New("missing done sentinel")
 		}
+		replaceUpTo := 0
+		if !scan.SawFinalOutput {
+			replaceUpTo = result.Usage.OutputTokens
+		}
 		applyCompatIncompleteUsage(c, &result.Usage, compatIncompleteUsage{
 			Path: "responses_chat_stream", Model: originalModel, RequestID: requestID,
 			ClientGone: gone, Cause: cause, OutputEstimate: tally.EstimateTokens(),
+			ReplaceOutputUpTo: replaceUpTo,
 		})
+		if isBalanceHoldTopUpError(scan.Err) {
+			if c != nil && c.Writer != nil && !c.Writer.Written() {
+				status, errType, message := balanceHoldAbortClientError(scan.Err)
+				writeResponsesError(c, status, errType, message)
+			}
+			return result, scan.Err
+		}
 		if gone {
 			return result, nil
 		}

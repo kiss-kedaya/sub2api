@@ -83,21 +83,21 @@
           </template>
 
           <template #cell-group_count="{ row }">
-            <UBadge color="neutral" variant="subtle">
+            <UBadge color="neutral" variant="subtle" class="tabular-nums">
               {{ (row.group_ids || []).length }}
               {{ t('admin.channels.groupsUnit', 'groups') }}
             </UBadge>
           </template>
 
           <template #cell-pricing_count="{ row }">
-            <UBadge color="neutral" variant="subtle">
+            <UBadge color="neutral" variant="subtle" class="tabular-nums">
               {{ (row.model_pricing || []).length }}
               {{ t('admin.channels.pricingUnit', 'pricing rules') }}
             </UBadge>
           </template>
 
           <template #cell-created_at="{ value }">
-            <span class="text-sm text-muted">
+            <span class="text-sm tabular-nums text-muted">
               {{ formatDate(value) }}
             </span>
           </template>
@@ -474,7 +474,10 @@
                     </UBadge>
                   </div>
                   <!-- Account search input -->
-                  <div class="relative rule-account-search-container">
+                  <div
+                    :ref="(el) => setRuleAccountContainerRef(`${section.platform}-${ruleIndex}`, el)"
+                    class="relative rule-account-search-container"
+                  >
                     <UInput
                       :model-value="ruleAccountSearchKeyword[`${section.platform}-${ruleIndex}`]"
                       icon="i-lucide-search"
@@ -486,25 +489,30 @@
                       @focus="onRuleAccountSearchFocus(section.platform, ruleIndex)"
                     />
                     <!-- Search results dropdown -->
-                    <div
-                      v-if="showRuleAccountDropdown[`${section.platform}-${ruleIndex}`] && (ruleAccountSearchResults[`${section.platform}-${ruleIndex}`]?.length ?? 0) > 0"
-                      class="absolute z-50 mt-1 max-h-48 w-full overflow-auto rounded-md bg-default p-1 shadow-lg ring ring-default"
-                    >
-                      <UButton
-                        v-for="account in ruleAccountSearchResults[`${section.platform}-${ruleIndex}`]"
-                        :key="account.id"
-                        color="neutral"
-                        variant="ghost"
-                        size="sm"
-                        block
-                        class="justify-start"
-                        :disabled="rule.account_ids.includes(account.id)"
-                        @click="selectRuleAccount(rule, account, section.platform, ruleIndex)"
+                    <Teleport :to="ruleAccountTeleportTargets[`${section.platform}-${ruleIndex}`] || 'body'">
+                      <div
+                        v-if="showRuleAccountDropdown[`${section.platform}-${ruleIndex}`] && (ruleAccountSearchResults[`${section.platform}-${ruleIndex}`]?.length ?? 0) > 0"
+                        :ref="(el) => setRuleAccountDropdownRef(`${section.platform}-${ruleIndex}`, el)"
+                        data-rule-account-dropdown
+                        class="fixed z-50 max-h-48 overflow-auto rounded-md bg-default p-1 shadow-lg ring ring-default"
+                        :style="ruleAccountDropdownStyles[`${section.platform}-${ruleIndex}`]"
                       >
-                        <span>{{ account.name }}</span>
-                        <span class="text-xs text-dimmed">#{{ account.id }}</span>
-                      </UButton>
-                    </div>
+                        <UButton
+                          v-for="account in ruleAccountSearchResults[`${section.platform}-${ruleIndex}`]"
+                          :key="account.id"
+                          color="neutral"
+                          variant="ghost"
+                          size="sm"
+                          block
+                          class="justify-start"
+                          :disabled="rule.account_ids.includes(account.id)"
+                          @click="selectRuleAccount(rule, account, section.platform, ruleIndex)"
+                        >
+                          <span>{{ account.name }}</span>
+                          <span class="text-xs tabular-nums text-dimmed">#{{ account.id }}</span>
+                        </UButton>
+                      </div>
+                    </Teleport>
                   </div>
                 </UFormField>
 
@@ -1014,6 +1022,83 @@ const ruleAccountSearchResults = ref<Record<string, SimpleAccount[]>>({})
 const showRuleAccountDropdown = ref<Record<string, boolean>>({})
 // Cache: account ID → name, populated when search results are selected
 const ruleAccountNameCache = ref<Record<number, string>>({})
+const ruleAccountContainerRefs = ref<Record<string, HTMLElement | null>>({})
+const ruleAccountDropdownRefs = ref<Record<string, HTMLElement | null>>({})
+const ruleAccountDropdownStyles = ref<Record<string, Record<string, string>>>({})
+const ruleAccountTeleportTargets = ref<Record<string, string | HTMLElement>>({})
+const MAX_RULE_ACCOUNT_DROPDOWN_HEIGHT = 192
+
+function setRuleAccountContainerRef(key: string, el: unknown) {
+  if (el instanceof HTMLElement) {
+    ruleAccountContainerRefs.value[key] = el
+  } else {
+    delete ruleAccountContainerRefs.value[key]
+  }
+}
+
+function setRuleAccountDropdownRef(key: string, el: unknown) {
+  if (el instanceof HTMLElement) {
+    ruleAccountDropdownRefs.value[key] = el
+  } else {
+    delete ruleAccountDropdownRefs.value[key]
+  }
+}
+
+function resolveRuleAccountTeleportTarget(el: HTMLElement | null | undefined): string | HTMLElement {
+  return el?.closest('.base-dialog')?.querySelector<HTMLElement>('[data-base-dialog-portal]') ?? 'body'
+}
+
+function updateRuleAccountDropdownPosition(key: string) {
+  const container = ruleAccountContainerRefs.value[key]
+  const rect = container?.getBoundingClientRect()
+  if (!rect) return
+  ruleAccountTeleportTargets.value[key] = resolveRuleAccountTeleportTarget(container)
+  const padding = 8
+  const gap = 4
+  const width = Math.min(Math.max(rect.width, 200), window.innerWidth - padding * 2)
+  const left = Math.min(
+    Math.max(rect.left, padding),
+    Math.max(padding, window.innerWidth - width - padding),
+  )
+  const measuredHeight = ruleAccountDropdownRefs.value[key]?.offsetHeight || MAX_RULE_ACCOUNT_DROPDOWN_HEIGHT
+  const spaceBelow = window.innerHeight - padding - (rect.bottom + gap)
+  const spaceAbove = rect.top - gap - padding
+  const flipAbove = spaceBelow < measuredHeight && spaceAbove > spaceBelow
+  if (flipAbove) {
+    const maxHeight = Math.max(80, Math.min(MAX_RULE_ACCOUNT_DROPDOWN_HEIGHT, spaceAbove))
+    ruleAccountDropdownStyles.value[key] = {
+      top: 'auto',
+      bottom: `${window.innerHeight - (rect.top - gap)}px`,
+      left: `${left}px`,
+      width: `${width}px`,
+      maxHeight: `${maxHeight}px`,
+      transformOrigin: 'bottom left',
+    }
+  } else {
+    const maxHeight = Math.max(80, Math.min(MAX_RULE_ACCOUNT_DROPDOWN_HEIGHT, spaceBelow))
+    ruleAccountDropdownStyles.value[key] = {
+      top: `${Math.max(padding, rect.bottom + gap)}px`,
+      bottom: 'auto',
+      left: `${left}px`,
+      width: `${width}px`,
+      maxHeight: `${maxHeight}px`,
+      transformOrigin: 'top left',
+    }
+  }
+}
+
+function syncRuleAccountDropdown(key: string) {
+  updateRuleAccountDropdownPosition(key)
+  void nextTick(() => updateRuleAccountDropdownPosition(key))
+}
+
+function updateAllOpenRuleAccountDropdowns() {
+  for (const key of Object.keys(showRuleAccountDropdown.value)) {
+    if (showRuleAccountDropdown.value[key]) {
+      updateRuleAccountDropdownPosition(key)
+    }
+  }
+}
 
 const ruleAccountSearchRunner = useKeyedDebouncedSearch<SimpleAccount[]>({
   delay: 300,
@@ -1022,7 +1107,12 @@ const ruleAccountSearchRunner = useKeyedDebouncedSearch<SimpleAccount[]>({
     const res = await adminAPI.accounts.list(1, 20, { platform, search: keyword }, { signal })
     return res.items.map(a => ({ id: a.id, name: a.name, platform: a.platform }))
   },
-  onSuccess: (key, result) => { ruleAccountSearchResults.value[key] = result },
+  onSuccess: (key, result) => {
+    ruleAccountSearchResults.value[key] = result
+    if (showRuleAccountDropdown.value[key]) {
+      syncRuleAccountDropdown(key)
+    }
+  },
   onError: (key) => { ruleAccountSearchResults.value[key] = [] },
 })
 
@@ -1035,12 +1125,14 @@ function updateRuleAccountSearch(platform: string, ruleIndex: number, value: str
 function onRuleAccountSearchInput(platform: string, ruleIndex: number) {
   const key = `${platform}-${ruleIndex}`
   showRuleAccountDropdown.value[key] = true
+  syncRuleAccountDropdown(key)
   ruleAccountSearchRunner.trigger(key, ruleAccountSearchKeyword.value[key] || '')
 }
 
 function onRuleAccountSearchFocus(platform: string, ruleIndex: number) {
   const key = `${platform}-${ruleIndex}`
   showRuleAccountDropdown.value[key] = true
+  syncRuleAccountDropdown(key)
   if (!ruleAccountSearchResults.value[key]?.length) {
     ruleAccountSearchRunner.trigger(key, ruleAccountSearchKeyword.value[key] || '')
   }
@@ -1072,8 +1164,9 @@ function getRuleAccountLabel(accountId: number): string {
 }
 
 function handleRuleAccountClickOutside(event: MouseEvent) {
-  const target = event.target as HTMLElement
-  if (!target.closest('.rule-account-search-container')) {
+  const target = event.target as HTMLElement | null
+  if (!target?.closest) return
+  if (!target.closest('.rule-account-search-container') && !target.closest('[data-rule-account-dropdown]')) {
     Object.keys(showRuleAccountDropdown.value).forEach(key => {
       showRuleAccountDropdown.value[key] = false
     })
@@ -1084,6 +1177,8 @@ function clearAllRuleAccountSearchState() {
   ruleAccountSearchKeyword.value = {}
   ruleAccountSearchResults.value = {}
   showRuleAccountDropdown.value = {}
+  ruleAccountDropdownStyles.value = {}
+  ruleAccountTeleportTargets.value = {}
 }
 
 function accountStatsRulesToAPI(): AccountStatsPricingRule[] {
@@ -1727,12 +1822,16 @@ onMounted(() => {
   loadGroups()
   loadWebSearchGlobalState()
   document.addEventListener('click', handleRuleAccountClickOutside)
+  window.addEventListener('resize', updateAllOpenRuleAccountDropdowns)
+  window.addEventListener('scroll', updateAllOpenRuleAccountDropdowns, true)
 })
 
 onUnmounted(() => {
   clearTimeout(searchTimeout)
   abortController?.abort()
   document.removeEventListener('click', handleRuleAccountClickOutside)
+  window.removeEventListener('resize', updateAllOpenRuleAccountDropdowns)
+  window.removeEventListener('scroll', updateAllOpenRuleAccountDropdowns, true)
   ruleAccountSearchRunner.clearAll()
   clearAllRuleAccountSearchState()
 })
@@ -1743,8 +1842,8 @@ onUnmounted(() => {
 .channel-dialog-body {
   display: flex;
   flex-direction: column;
-  height: 70vh;
-  min-height: 400px;
+  height: 70dvh;
+  min-height: min(400px, 60dvh);
 }
 
 </style>

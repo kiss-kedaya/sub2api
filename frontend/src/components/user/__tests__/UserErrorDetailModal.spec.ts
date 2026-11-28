@@ -67,4 +67,14 @@ describe('user error detail requests', () => {
     expect(wrapper.text()).toContain('usage.errors.detail.loadFailed')
     expect(wrapper.find('.animate-spin').exists()).toBe(false)
   })
+
+  it('uses dvh and wrap-anywhere for the error response body', async () => {
+    getDetail.mockResolvedValueOnce({ ...detail('claude-sonnet-4-5'), error_body: 'long_error_body_token', message: 'msg' })
+    const wrapper = await open(); await flushPromises()
+    const pre = wrapper.get('pre')
+    expect(pre.classes()).toContain('max-h-[40dvh]')
+    expect(pre.classes()).toContain('wrap-anywhere')
+    expect(pre.classes()).not.toContain('max-h-[40vh]')
+    expect(pre.classes()).not.toContain('break-all')
+  })
 })

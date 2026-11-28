@@ -80,7 +80,14 @@ function onGranularity(value: unknown) {
   font-weight: 500;
 }
 
-.dash-range.dash-range :deep(.date-picker-trigger:hover),
+@media (hover: hover) and (pointer: fine) {
+  .dash-range.dash-range :deep(.date-picker-trigger:hover) {
+    border-color: transparent;
+    background: var(--ui-bg-elevated);
+    box-shadow: none;
+  }
+}
+
 .dash-range.dash-range :deep(.date-picker-trigger-open) {
   border-color: transparent;
   background: var(--ui-bg-elevated);

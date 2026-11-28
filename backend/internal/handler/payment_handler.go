@@ -7,8 +7,10 @@ import (
 	"time"
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/payment"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/ip"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
 	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -20,6 +22,7 @@ import (
 type PaymentHandler struct {
 	paymentService *service.PaymentService
 	configService  *service.PaymentConfigService
+	cfg            *config.Config
 }
 
 // NewPaymentHandler creates a new PaymentHandler.
@@ -28,6 +31,11 @@ func NewPaymentHandler(paymentService *service.PaymentService, configService *se
 		paymentService: paymentService,
 		configService:  configService,
 	}
+}
+
+// SetConfig attaches runtime server config (e.g. trusted proxy policy).
+func (h *PaymentHandler) SetConfig(cfg *config.Config) {
+	h.cfg = cfg
 }
 
 // GetPaymentConfig returns the payment system configuration.
@@ -285,7 +293,8 @@ func (h *PaymentHandler) CreateOrder(c *gin.Context) {
 		ClientIP:        c.ClientIP(),
 		IsMobile:        mobile,
 		IsWeChatBrowser: isWeChatBrowser(c),
-		SrcHost:         publicRequestHost(c),
+		SrcScheme:       h.publicRequestScheme(c),
+		SrcHost:         h.publicRequestHost(c),
 		SrcURL:          c.Request.Referer(),
 		ReturnURL:       req.ReturnURL,
 		PaymentSource:   req.PaymentSource,
@@ -484,25 +493,23 @@ func (h *PaymentHandler) VerifyOrder(c *gin.Context) {
 // proves possession of the checkout session, so the result keeps the legacy
 // frontend contract needed by payment result pages.
 type PublicOrderResult struct {
-	ID                  int64      `json:"id"`
-	OutTradeNo          string     `json:"out_trade_no"`
-	Amount              float64    `json:"amount"`
-	PayAmount           float64    `json:"pay_amount"`
-	FeeRate             float64    `json:"fee_rate"`
-	Currency            string     `json:"currency"`
-	PaymentType         string     `json:"payment_type"`
-	OrderType           string     `json:"order_type"`
-	Status              string     `json:"status"`
-	CreatedAt           time.Time  `json:"created_at"`
-	ExpiresAt           time.Time  `json:"expires_at"`
-	PaidAt              *time.Time `json:"paid_at,omitempty"`
-	CompletedAt         *time.Time `json:"completed_at,omitempty"`
-	RefundAmount        float64    `json:"refund_amount"`
-	RefundReason        *string    `json:"refund_reason,omitempty"`
-	RefundRequestedAt   *time.Time `json:"refund_requested_at,omitempty"`
-	RefundRequestedBy   *string    `json:"refund_requested_by,omitempty"`
-	RefundRequestReason *string    `json:"refund_request_reason,omitempty"`
-	PlanID              *int64     `json:"plan_id,omitempty"`
+	ID                int64      `json:"id"`
+	OutTradeNo        string     `json:"out_trade_no"`
+	Amount            float64    `json:"amount"`
+	PayAmount         float64    `json:"pay_amount"`
+	FeeRate           float64    `json:"fee_rate"`
+	Currency          string     `json:"currency"`
+	PaymentType       string     `json:"payment_type"`
+	OrderType         string     `json:"order_type"`
+	Status            string     `json:"status"`
+	CreatedAt         time.Time  `json:"created_at"`
+	ExpiresAt         time.Time  `json:"expires_at"`
+	PaidAt            *time.Time `json:"paid_at,omitempty"`
+	CompletedAt       *time.Time `json:"completed_at,omitempty"`
+	RefundAmount      float64    `json:"refund_amount"`
+	RefundReason      *string    `json:"refund_reason,omitempty"`
+	RefundRequestedAt *time.Time `json:"refund_requested_at,omitempty"`
+	PlanID            *int64     `json:"plan_id,omitempty"`
 }
 
 // PublicOrderVerifyResult is returned by the legacy anonymous out_trade_no
@@ -519,25 +526,23 @@ type PublicOrderVerifyResult struct {
 
 func buildPublicOrderResult(order *dbent.PaymentOrder) PublicOrderResult {
 	return PublicOrderResult{
-		ID:                  order.ID,
-		OutTradeNo:          order.OutTradeNo,
-		Amount:              order.Amount,
-		PayAmount:           order.PayAmount,
-		FeeRate:             order.FeeRate,
-		Currency:            service.PaymentOrderCurrency(order),
-		PaymentType:         order.PaymentType,
-		OrderType:           order.OrderType,
-		Status:              order.Status,
-		CreatedAt:           order.CreatedAt,
-		ExpiresAt:           order.ExpiresAt,
-		PaidAt:              order.PaidAt,
-		CompletedAt:         order.CompletedAt,
-		RefundAmount:        order.RefundAmount,
-		RefundReason:        order.RefundReason,
-		RefundRequestedAt:   order.RefundRequestedAt,
-		RefundRequestedBy:   order.RefundRequestedBy,
-		RefundRequestReason: order.RefundRequestReason,
-		PlanID:              order.PlanID,
+		ID:                order.ID,
+		OutTradeNo:        order.OutTradeNo,
+		Amount:            order.Amount,
+		PayAmount:         order.PayAmount,
+		FeeRate:           order.FeeRate,
+		Currency:          service.PaymentOrderCurrency(order),
+		PaymentType:       order.PaymentType,
+		OrderType:         order.OrderType,
+		Status:            order.Status,
+		CreatedAt:         order.CreatedAt,
+		ExpiresAt:         order.ExpiresAt,
+		PaidAt:            order.PaidAt,
+		CompletedAt:       order.CompletedAt,
+		RefundAmount:      order.RefundAmount,
+		RefundReason:      order.RefundReason,
+		RefundRequestedAt: order.RefundRequestedAt,
+		PlanID:            order.PlanID,
 	}
 }
 
@@ -693,14 +698,35 @@ func isWeChatBrowser(c *gin.Context) bool {
 	return strings.Contains(strings.ToLower(c.GetHeader("User-Agent")), "micromessenger")
 }
 
-// publicRequestHost returns the host the browser actually used. The Nuxt BFF
-// proxies from loopback and Node's fetch cannot set Host, so the forwarded
-// header is the only same-origin signal available behind SSR.
-func publicRequestHost(c *gin.Context) string {
-	if xfHost := strings.TrimSpace(c.GetHeader("X-Forwarded-Host")); xfHost != "" {
-		if first := strings.TrimSpace(strings.Split(xfHost, ",")[0]); first != "" {
-			return first
-		}
+func (h *PaymentHandler) publicRequestHost(c *gin.Context) string {
+	var cfg *config.Config
+	if h != nil {
+		cfg = h.cfg
 	}
-	return c.Request.Host
+	return publicRequestHostWithConfig(c, cfg)
+}
+
+func (h *PaymentHandler) publicRequestScheme(c *gin.Context) string {
+	var cfg *config.Config
+	if h != nil {
+		cfg = h.cfg
+	}
+	if isRequestHTTPSWithConfig(c, cfg) {
+		return "https"
+	}
+	return "http"
+}
+
+// publicRequestHostWithConfig returns the validated Host header from the
+// incoming request. X-Forwarded-Host is intentionally ignored even from
+// trusted proxy peers because upstream proxies/WAFs may forward client-supplied
+// X-Forwarded-Host values verbatim while preserving the authoritative Host.
+func publicRequestHostWithConfig(c *gin.Context, _ *config.Config) string {
+	if c == nil || c.Request == nil {
+		return ""
+	}
+	if host, ok := ip.ValidateRequestHost(c.Request.Host); ok {
+		return host
+	}
+	return ""
 }

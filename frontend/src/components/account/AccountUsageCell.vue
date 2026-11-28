@@ -1480,7 +1480,7 @@ onMounted(() => {
 })
 
 watch(
-  () => [props.batchedUsage, props.batchedUsageError, props.batchedUsageLoading, isBatchManaged.value] as const,
+  [() => props.batchedUsage, () => props.batchedUsageError, () => props.batchedUsageLoading, isBatchManaged],
   () => {
     syncManagedUsageState()
   },
@@ -1497,7 +1497,7 @@ watch(isBatchManaged, (managed, wasManaged) => {
 })
 
 watch(
-  () => [props.account.id, props.account.platform, props.account.type, isBatchManaged.value] as const,
+  [() => props.account.id, () => props.account.platform, () => props.account.type, isBatchManaged],
   ([accountID, platform, accountType, managed], [previousAccountID, previousPlatform, previousAccountType]) => {
     if (
       accountID === previousAccountID &&

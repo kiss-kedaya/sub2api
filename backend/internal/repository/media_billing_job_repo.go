@@ -147,10 +147,11 @@ func (r *usageBillingRepository) CreateMediaBillingJob(ctx context.Context, inpu
 			}
 		} else if created.ReservedAmount > 0 {
 			_, reserveErr := reserveUsageBillingBatchImageBalance(ctx, tx, &service.BatchImageBalanceHoldCommand{
-				UserID:     created.UserID,
-				APIKeyID:   created.APIKeyID,
-				BatchID:    created.ID,
-				HoldAmount: created.ReservedAmount,
+				UserID:           created.UserID,
+				APIKeyID:         created.APIKeyID,
+				BatchID:          created.ID,
+				HoldAmount:       created.ReservedAmount,
+				PreauthRequestID: job.PreauthRequestID,
 			})
 			if reserveErr != nil {
 				if errors.Is(reserveErr, service.ErrBatchImageInsufficientBalance) {
@@ -158,6 +159,7 @@ func (r *usageBillingRepository) CreateMediaBillingJob(ctx context.Context, inpu
 				}
 				return nil, reserveErr
 			}
+			created.PreauthRequestID = job.PreauthRequestID
 		}
 	}
 
@@ -177,6 +179,7 @@ func normalizeNewMediaBillingJob(input *service.MediaBillingJob) (*service.Media
 	job.Kind = strings.TrimSpace(job.Kind)
 	job.UpstreamTaskID = strings.TrimSpace(job.UpstreamTaskID)
 	job.Status = strings.TrimSpace(job.Status)
+	job.PreauthRequestID = strings.TrimSpace(job.PreauthRequestID)
 	job.ReservedAmount = service.QuantizeUsageBillingAmount(job.ReservedAmount)
 	if job.ID == "" || job.UserID <= 0 || job.APIKeyID <= 0 || job.AccountID <= 0 || job.GroupID <= 0 ||
 		job.ReservedAmount < 0 || math.IsNaN(job.ReservedAmount) || math.IsInf(job.ReservedAmount, 0) || job.Attempts < 0 {
@@ -427,7 +430,7 @@ func (r *usageBillingRepository) PrepareMediaBillingIntent(ctx context.Context, 
 	}
 	if _, err := tx.ExecContext(ctx, `
 		UPDATE media_billing_jobs
-		SET intent = $2, status = $3, available_at = NOW(), updated_at = NOW()
+		SET intent = $2, status = $3, attempts = 0, available_at = NOW(), updated_at = NOW()
 		WHERE id = $1 AND intent IS NULL
 	`, job.ID, []byte(intentJSON), service.MediaBillingReady); err != nil {
 		return nil, err
@@ -482,7 +485,16 @@ func (r *usageBillingRepository) ApplyMediaBillingJob(ctx context.Context, id st
 		return &service.UsageBillingApplyResult{}, nil
 	}
 	if job.Status == service.MediaBillingBilled {
-		result := mediaBillingAlreadyBilledResult(job)
+		result := &service.UsageBillingApplyResult{}
+		if job.Kind == service.MediaBillingKindImage && job.Intent != nil && job.Intent.Command.BalancePreauthorized {
+			cmd := job.Intent.Command
+			cmd.Normalize()
+			pending, pendingErr := r.isBalanceFinalizationPendingTx(ctx, tx, cmd.RequestID, cmd.APIKeyID)
+			if pendingErr != nil {
+				return nil, pendingErr
+			}
+			result.BalanceFinalizationPending = pending
+		}
 		if err := tx.Commit(); err != nil {
 			return nil, err
 		}
@@ -517,7 +529,13 @@ func (r *usageBillingRepository) ApplyMediaBillingJob(ctx context.Context, id st
 			}
 			result.NewBalance = holdResult.NewBalance
 		}
-		result.BalanceFinalizationPending = job.Kind == service.MediaBillingKindImage && cmd.BalancePreauthorized
+		if job.Kind == service.MediaBillingKindImage && cmd.BalancePreauthorized {
+			pending, pendingErr := r.isBalanceFinalizationPendingTx(ctx, tx, cmd.RequestID, cmd.APIKeyID)
+			if pendingErr != nil {
+				return nil, pendingErr
+			}
+			result.BalanceFinalizationPending = pending
+		}
 	} else {
 		effectsCommand := cmd
 		if job.Kind == service.MediaBillingKindGrokVideo && job.SubscriptionID == nil {
@@ -550,14 +568,6 @@ func (r *usageBillingRepository) ApplyMediaBillingJob(ctx context.Context, id st
 	}
 	tx = nil
 	return result, nil
-}
-
-func mediaBillingAlreadyBilledResult(job *service.MediaBillingJob) *service.UsageBillingApplyResult {
-	result := &service.UsageBillingApplyResult{}
-	if job != nil && job.Kind == service.MediaBillingKindImage && job.Intent != nil {
-		result.BalanceFinalizationPending = job.Intent.Command.BalancePreauthorized
-	}
-	return result
 }
 
 func (r *usageBillingRepository) captureMediaBillingVideoBalance(ctx context.Context, tx *sql.Tx, job *service.MediaBillingJob, actual float64) (*service.BatchImageBalanceHoldResult, error) {
@@ -685,6 +695,47 @@ func (r *usageBillingRepository) ReconcileMediaBillingJob(ctx context.Context, i
 		return service.ErrMediaBillingJobNotFound
 	}
 	return nil
+}
+
+// AbandonMediaBillingJob quarantines an unbilled poison-pill settlement job by
+// keeping status = "ready" (satisfying migration 262's CHECK constraint
+// `status <> 'reconciliation' OR (kind = 'grok_video' AND intent IS NULL)`,
+// preserving its frozen intent, frozen_balance hold, and subscription accounting,
+// and allowing immediate settlement once the user tops up) while pushing
+// available_at out by 24h so it leaves the 60s worker hot-loop via the partial
+// index on (available_at, created_at) WHERE status IN ('submitted','ready','billed').
+// Returns (true, nil) only when this call quarantined a "ready" row; already
+// billed/done/failed rows return (false, nil).
+func (r *usageBillingRepository) AbandonMediaBillingJob(ctx context.Context, id string) (bool, error) {
+	if err := r.validateMediaBillingRepository(); err != nil {
+		return false, err
+	}
+	id = strings.TrimSpace(id)
+	result, err := r.db.ExecContext(ctx, `
+		UPDATE media_billing_jobs
+		SET attempts = attempts + 1,
+			available_at = NOW() + INTERVAL '24 hours',
+			updated_at = NOW()
+		WHERE id = $1 AND status = $2 AND intent IS NOT NULL
+	`, id, service.MediaBillingReady)
+	if err != nil {
+		return false, err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	if affected == 1 {
+		return true, nil
+	}
+	var exists bool
+	if err := r.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM media_billing_jobs WHERE id = $1)`, id).Scan(&exists); err != nil {
+		return false, err
+	}
+	if !exists {
+		return false, service.ErrMediaBillingJobNotFound
+	}
+	return false, nil
 }
 
 func (r *usageBillingRepository) CompleteMediaBillingJob(ctx context.Context, id string) error {

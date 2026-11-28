@@ -17,12 +17,12 @@ beforeEach(() => {
 })
 
 async function openCodeStep(code = '123456') {
-  const wrapper = mount(TotpSetupModal, { attachTo: document.body })
+  const wrapper = mount(TotpSetupModal, { attachTo: document.body, global: { stubs: { teleport: true } } })
   await flushPromises()
   await wrapper.get('input[type="password"]').setValue('password')
-  await wrapper.get('.btn-primary').trigger('click')
+  await wrapper.get('[data-testid="totp-setup-next"]').trigger('click')
   await flushPromises()
-  await wrapper.get('.btn-primary').trigger('click')
+  await wrapper.get('[data-testid="totp-setup-next"]').trigger('click')
   await wrapper.get('input[autocomplete="one-time-code"]').setValue(code)
   return wrapper
 }
@@ -47,8 +47,8 @@ describe('TOTP setup input synchronization', () => {
 
   it('retains partial input when returning from the QR-code step and submits on completion', async () => {
     const wrapper = await openCodeStep('1234')
-    await wrapper.findAll('button').find(button => button.text() === 'common.back')!.trigger('click')
-    await wrapper.get('.btn-primary').trigger('click')
+    await wrapper.get('[data-testid="totp-setup-back"]').trigger('click')
+    await wrapper.get('[data-testid="totp-setup-next"]').trigger('click')
     expect(wrapper.get('input[autocomplete="one-time-code"]').element).toHaveProperty('value', '1234')
     expect(wrapper.findAll('.totp-code-input span').slice(0, 4).map(cell => cell.text())).toEqual(['1', '2', '3', '4'])
     expect(api.enable).not.toHaveBeenCalled()

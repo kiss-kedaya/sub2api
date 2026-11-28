@@ -7,6 +7,7 @@
         color="neutral"
         variant="outline"
         icon="i-lucide-chevron-left"
+        class="min-h-11"
         :label="t('pagination.previous')"
         :disabled="page === 1"
         @click="goToPage(page - 1)"
@@ -18,6 +19,7 @@
         color="neutral"
         variant="outline"
         trailing-icon="i-lucide-chevron-right"
+        class="min-h-11"
         :label="t('pagination.next')"
         :disabled="page === totalPages"
         @click="goToPage(page + 1)"
@@ -75,6 +77,7 @@
 
       <!-- Desktop pagination buttons -->
       <UPagination
+        class="pagination-desktop"
         :page="page"
         :total="total"
         :items-per-page="pageSize"
@@ -207,7 +210,14 @@ const submitJump = () => {
 
 <style scoped>
 @reference "../../style.css";
-.page-size-select :deep(.select-trigger) {
-  @apply px-3 py-1.5 text-sm;
+.page-size-select :deep(.select-menu-trigger) {
+  @apply min-h-8 px-3 py-1.5 text-sm;
+}
+
+@media (pointer: coarse) {
+  .pagination-desktop :deep(button) {
+    min-height: 2.75rem;
+    min-width: 2.75rem;
+  }
 }
 </style>

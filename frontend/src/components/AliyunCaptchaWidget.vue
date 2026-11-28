@@ -317,16 +317,23 @@ onUnmounted(() => {
   padding: 0.5rem 0.75rem;
   font-size: 0.875rem;
   font-weight: 500;
-  color: rgb(55 65 81);
+  color: var(--ui-text-toned, rgb(55 65 81));
   transition:
-    border-color 0.15s ease,
-    background-color 0.15s ease,
-    color 0.15s ease;
+    border-color 150ms var(--motion-out, cubic-bezier(0.23, 1, 0.32, 1)),
+    background-color 150ms var(--motion-out, cubic-bezier(0.23, 1, 0.32, 1)),
+    color 150ms var(--motion-out, cubic-bezier(0.23, 1, 0.32, 1)),
+    transform 120ms var(--motion-out, cubic-bezier(0.23, 1, 0.32, 1));
 }
 
-.aliyun-captcha-button:hover:not(:disabled) {
-  border-color: rgb(156 163 175);
-  background-color: rgb(243 244 246);
+@media (hover: hover) and (pointer: fine) {
+  .aliyun-captcha-button:hover:not(:disabled) {
+    border-color: var(--ui-border-accented, rgb(156 163 175));
+    background-color: rgb(243 244 246);
+  }
+}
+
+.aliyun-captcha-button:active:not(:disabled) {
+  transform: scale(0.98);
 }
 
 .aliyun-captcha-button--verified {
@@ -337,15 +344,17 @@ onUnmounted(() => {
 
 :root.dark .aliyun-captcha-button,
 .dark .aliyun-captcha-button {
-  border-color: rgb(55 65 81);
+  border-color: var(--ui-border, rgb(55 65 81));
   background-color: rgb(31 41 55);
   color: rgb(209 213 219);
 }
 
-:root.dark .aliyun-captcha-button:hover:not(:disabled),
-.dark .aliyun-captcha-button:hover:not(:disabled) {
-  border-color: rgb(75 85 99);
-  background-color: rgb(55 65 81);
+@media (hover: hover) and (pointer: fine) {
+  :root.dark .aliyun-captcha-button:hover:not(:disabled),
+  .dark .aliyun-captcha-button:hover:not(:disabled) {
+    border-color: rgb(75 85 99);
+    background-color: var(--ui-bg-accented, rgb(55 65 81));
+  }
 }
 
 :root.dark .aliyun-captcha-button--verified,

@@ -41,6 +41,8 @@ vi.mock('@/api/admin', () => ({
 }))
 
 describe('OpenAIFastPolicyUserSelector', () => {
+  let wrapper: ReturnType<typeof mount> | null = null
+
   beforeEach(() => {
     vi.useFakeTimers()
     mockSearchUsers.mockReset()
@@ -48,6 +50,8 @@ describe('OpenAIFastPolicyUserSelector', () => {
   })
 
   afterEach(() => {
+    wrapper?.unmount()
+    wrapper = null
     vi.useRealTimers()
   })
 
@@ -58,7 +62,7 @@ describe('OpenAIFastPolicyUserSelector', () => {
       deleted_at: null,
     })
 
-    const wrapper = mount(OpenAIFastPolicyUserSelector, {
+    wrapper = mount(OpenAIFastPolicyUserSelector, {
       props: { modelValue: [7] },
       global: { stubs: { Icon: true } },
     })
@@ -75,7 +79,7 @@ describe('OpenAIFastPolicyUserSelector', () => {
       { id: 9, email: 'alice@example.com', deleted: false },
     ])
 
-    const wrapper = mount(OpenAIFastPolicyUserSelector, {
+    wrapper = mount(OpenAIFastPolicyUserSelector, {
       props: { modelValue: [] },
       global: { stubs: { Icon: true } },
     })
@@ -87,11 +91,12 @@ describe('OpenAIFastPolicyUserSelector', () => {
     await flushPromises()
 
     expect(mockSearchUsers).toHaveBeenCalledWith('a')
-    const result = wrapper.findAll('button').find((button) =>
-      button.text().includes('alice@example.com'),
+    const result = Array.from(document.body.querySelectorAll('button')).find((button) =>
+      button.textContent?.includes('alice@example.com'),
     )
     expect(result).toBeDefined()
-    await result!.trigger('click')
+    result!.click()
+    await flushPromises()
 
     expect(wrapper.emitted('update:modelValue')).toEqual([[[9]]])
   })
@@ -99,7 +104,7 @@ describe('OpenAIFastPolicyUserSelector', () => {
   it('keeps an unresolved saved ID visible and removable', async () => {
     mockGetUserById.mockRejectedValue(new Error('not found'))
 
-    const wrapper = mount(OpenAIFastPolicyUserSelector, {
+    wrapper = mount(OpenAIFastPolicyUserSelector, {
       props: { modelValue: [42] },
       global: { stubs: { Icon: true } },
     })

@@ -100,4 +100,13 @@ describe('MonitorCard quota snapshot visibility', () => {
     expect(wrapper.text()).toContain('claude-sonnet-4-5')
     expect(wrapper.text()).not.toContain('monitorCommon.checkMode.quota')
   })
+
+  it('sets explicit relative z-0 stacking on the backdrop-blur card without animating box-shadow', () => {
+    const wrapper = mountCard(makeItem())
+    const classes = wrapper.classes()
+    expect(classes).toContain('backdrop-blur-xl')
+    expect(classes).toContain('relative')
+    expect(classes).toContain('z-0')
+    expect(classes.some(cls => cls.includes('box-shadow') || cls.includes('shadow-card-hover'))).toBe(false)
+  })
 })

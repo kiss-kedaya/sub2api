@@ -11,7 +11,35 @@ import type {
   ApiKey,
 } from '../src/types'
 import type { MonitorMatrixGroupBy, MonitorMatrixRow } from '../src/api/channelMonitorV2'
-import type { PaymentOrder } from '../src/types/payment'
+import type { DashboardStats as PaymentDashboardStats, PaymentOrder } from '../src/types/payment'
+import type { PluginInstallation } from '../src/api/admin/plugins'
+import type { TrafficDeliveryHealth, TrafficPeriod, TrafficReport } from '../src/api/traffic'
+import type { PenaltyConfig, PenaltyEvent, PenaltySummary } from '../src/api/securityPenalties'
+import type { PromptAuditConfig, PromptAuditRuntime } from '../src/features/prompt-audit/types'
+import type { IPRiskSnapshot } from '../src/features/ip-risk/api'
+import type { AuditPage } from '../src/features/ip-audit/api'
+import type { KeyRotationGateStatus } from '../src/api/keyRotationGate'
+import type { KeyQueueSnapshot } from '../src/api/keys'
+import type { DepositNetworkStatus } from '../src/api/crypto'
+import type {
+  AdminAddressSummary,
+  ChainStatusReport,
+  CryptoConfig,
+  DepositSummary,
+  HotWalletAddress,
+  PoolStatus,
+  SweepGate,
+  WalletSecurityStatus,
+  WalletStatus,
+} from '../src/api/admin/crypto'
+import type { SignerRiskNotice, SignerShardStatus } from '../src/api/admin/cryptoSigner'
+import type {
+  ContentModerationConfig,
+  ContentModerationRuntimeStatus,
+} from '../src/api/admin/riskControl'
+import type { UpstreamMonitorOverview } from '../src/api/admin/upstreamMonitor'
+import type { ExcelGrantRecord } from '../src/api/admin/excelGrants'
+import type { ConnectionTrace } from '../src/api/admin/usageConnections'
 import { readFileSync } from 'node:fs'
 import { operationsPreviewRead } from './operations-fixtures'
 
@@ -949,6 +977,9 @@ export function createMockApi(now = new Date()) {
         if (path === '/api/v1/admin/settings/admin-api-key') return { exists: false, masked_key: '' }
         if (path === '/api/v1/admin/settings/admin-api-keys') return { items: [] }
         if (path === '/api/v1/admin/affiliates/users') return page([], query)
+        if (path === '/api/v1/admin/affiliates/invites') return page([], query)
+        if (path === '/api/v1/admin/affiliates/rebates') return page([], query)
+        if (path === '/api/v1/admin/affiliates/transfers') return page([], query)
         if (path === '/api/v1/admin/settings/overload-cooldown') return { enabled: false, cooldown_minutes: 10 }
         if (path === '/api/v1/admin/settings/rate-limit-429-cooldown') return { enabled: false, cooldown_minutes: 5 }
         if (path === '/api/v1/admin/settings/registration-email-blacklist') return { domains: [] }
@@ -973,9 +1004,218 @@ export function createMockApi(now = new Date()) {
           return copy(found)
         }
         if (path === '/api/v1/admin/payment/config') return { enabled: true }
+        if (path === '/api/v1/admin/payment/dashboard') {
+          const days = integer(query.get('days'), 30, 365)
+          const seriesDays = Math.min(days, 7)
+          const daily_series = Array.from({ length: seriesDays }, (_, idx) => {
+            const d = new Date(now.getTime() - (seriesDays - 1 - idx) * 86_400_000)
+            return {
+              date: d.toISOString().slice(0, 10),
+              amount: { CNY: 240 + idx * 45, USD: 29 + (idx % 3) * 15 },
+              count: 2 + (idx % 3),
+            }
+          })
+          const dashboard: PaymentDashboardStats = {
+            today_amount: { CNY: 320, USD: 29 },
+            total_amount: { CNY: 2460, USD: 174 },
+            today_count: 3,
+            total_count: data.paymentOrders.length,
+            avg_amount: { CNY: 410, USD: 87 },
+            daily_series,
+            payment_methods: [
+              { type: 'epusdt', amount: { CNY: 1680 }, count: 5 },
+              { type: 'alipay', amount: { CNY: 780 }, count: 2 },
+              { type: 'stripe', amount: { USD: 174 }, count: 1 },
+            ],
+            top_users: {
+              CNY: [
+                { user_id: data.user.id, email: data.user.email, amount: 1680 },
+                { user_id: 910002, email: 'demo-user-2@example.test', amount: 780 },
+              ],
+              USD: [
+                { user_id: data.user.id, email: data.user.email, amount: 174 },
+              ],
+            },
+          }
+          return dashboard
+        }
         if (path === '/api/v1/admin/payment/orders') return page(data.paymentOrders, query)
         if (path === '/api/v1/admin/payment/plans') return data.paymentPlans
         if (path === '/api/v1/admin/payment/providers') return []
+        if (path === '/api/v1/admin/plugins') {
+          const plugins: PluginInstallation[] = [
+            {
+              id: 1,
+              plugin_key: 'demo.openai.outbound',
+              name: 'OpenAI Outbound Preview Transport',
+              version: '1.0.0',
+              description: '本地预览占位插件（未启用，仅用于展示插件列表与兼容性结构）',
+              author: 'sub2api-preview',
+              manifest: {
+                schema_version: 1,
+                id: 'demo.openai.outbound',
+                name: 'OpenAI Outbound Preview Transport',
+                version: '1.0.0',
+                requires: {
+                  sub2api: '>=2.0.0',
+                  recommended_sub2api_version: '2.3.0',
+                  plugin_protocol: 1,
+                  transport_api: 1,
+                  ui_bridge: 1,
+                },
+                capabilities: [
+                  { id: 'openai.oauth.outbound_transport.v1', platform: 'openai', account_type: 'oauth' },
+                ],
+                ui: { entrypoint: 'ui/index.html' },
+              },
+              binary_sha256: '0'.repeat(64),
+              signature_status: 'trusted',
+              state: 'disabled',
+              last_error: '',
+              installed_at: data.now,
+              updated_at: data.now,
+              bindings: [
+                {
+                  id: 1,
+                  plugin_id: 1,
+                  capability: 'openai.oauth.outbound_transport.v1',
+                  platform: 'openai',
+                  account_type: 'oauth',
+                  enabled: false,
+                  rollout_percent: 100,
+                },
+              ],
+              compatibility: {
+                compatible: true,
+                tested: true,
+                status: 'compatible',
+                message: '',
+                current_sub2api_version: '2.3.0',
+                required_sub2api_version: '>=2.0.0',
+                recommended_sub2api_version: '2.3.0',
+                plugin_protocol: 1,
+                transport_api: 1,
+                ui_bridge: 1,
+              },
+              runtime_healthy: false,
+              runtime_message: '',
+            },
+          ]
+          return plugins
+        }
+        if (path === '/api/v1/admin/security-penalties/config') {
+          const cfg: PenaltyConfig = {
+            enabled: false,
+            observe_only: true,
+            policy: 'session_block',
+            threshold: 5,
+            window_hours: 24,
+            duration_hours: 24,
+            target_group_id: null,
+            all_groups: true,
+            group_ids: [],
+            exempt_user_ids: [],
+            version: 1,
+            risk_control_enabled: true,
+          }
+          return cfg
+        }
+        if (path === '/api/v1/admin/security-penalties/events') {
+          const events: PenaltyEvent[] = []
+          return page(events, query)
+        }
+        if (path === '/api/v1/admin/prompt-audit/config') {
+          const cfg: PromptAuditConfig = {
+            enabled: false,
+            blocking_enabled: false,
+            blocking_latest_turn_only: false,
+            store_pass_events: false,
+            effective_mode: 'off',
+            strategy: 'priority',
+            worker_count: 2,
+            queue_capacity: 256,
+            scanners: ['prompt_injection', 'pii'],
+            all_groups: true,
+            group_ids: [],
+            endpoints: [],
+            config_version: 1,
+            updated_at: data.now,
+            updated_by: 1,
+            change_summary: '',
+          }
+          return cfg
+        }
+        if (path === '/api/v1/admin/prompt-audit/runtime') {
+          const runtime: PromptAuditRuntime = {
+            process_status: 'disabled',
+            effective_mode: 'off',
+            expected_config_version: 1,
+            active_config_version: 1,
+            worker_total: 2,
+            worker_active: 0,
+            queue_capacity: 256,
+            queue: { staging: 0, queued: 0, processing: 0, retry: 0, done: 0, failed: 0, active: 0 },
+            processed_total: 0,
+            failed_total: 0,
+            enqueued_total: 0,
+            dropped_total: 0,
+            database_status: 'ok',
+            redis_status: 'ok',
+            endpoints: {},
+            guard_metrics: {
+              total: 0, allowed: 0, flagged: 0, blocked: 0, unavailable: 0,
+              invalid: 0, timeouts: 0, failovers: 0, bulkhead_full: 0, record_failed: 0,
+            },
+          }
+          return runtime
+        }
+        if (path === '/api/v1/admin/prompt-audit/events') {
+          return page([], query)
+        }
+        if (path === '/api/v1/admin/settings/ip-risk') {
+          const snapshot: IPRiskSnapshot = {
+            config: {
+              anonymous_api: { enabled: false, threshold: 20, window_seconds: 60, ban_seconds: 600, max_tracked_ips: 10000, reset_on_success: true },
+              enabled: true,
+              observe_only: true,
+              whitelist: ['127.0.0.1'],
+              blacklist: [],
+              allowed_countries: [],
+              blocked_countries: [],
+              block_unknown_country: false,
+              deny_user_agents: [],
+              block_empty_ua: false,
+              ipv6_prefix: 64,
+              ban_seconds: 3600,
+              login_attempts: { limit: 10, window_seconds: 60 },
+              login_failures: { limit: 5, window_seconds: 300 },
+              register_attempts: { limit: 5, window_seconds: 300 },
+              register_failures: { limit: 5, window_seconds: 300 },
+              verification_attempts: { limit: 5, window_seconds: 300 },
+              event_retention_hours: 72,
+            },
+            health: { redis_available: true, emergency_disabled: false, config_error: '' },
+            current_ip: '127.0.0.1',
+            trusted_proxies_configured: true,
+          }
+          return snapshot
+        }
+        if (path === '/api/v1/admin/settings/ip-risk/events') return page([], query)
+        if (path === '/api/v1/admin/settings/ip-risk/bans') return { items: [] }
+        if (path === '/api/v1/admin/settings/ip-risk/anonymous-bans') return { items: [] }
+        if (path === '/api/v1/admin/settings/ip-audit') {
+          const auditPage: AuditPage = {
+            items: [],
+            sources: [
+              { id: 'anonymous_api', scope: 'invalid_credentials', storage: 'redis', enumeration: 'indexed', can_release: true, manage_url: '/admin/ip-risk' },
+            ],
+            has_more: false,
+            next_cursor: 0,
+            partial: false,
+            unrestricted: false,
+          }
+          return auditPage
+        }
         if (path === '/api/v1/admin/subscriptions') return page(data.subscriptions, query)
         if (path === '/api/v1/admin/proxies') return page(data.adminProxies, query)
         if (path === '/api/v1/admin/redeem-codes') return page([], query)
@@ -987,6 +1227,341 @@ export function createMockApi(now = new Date()) {
           current_version: 'local-preview', latest_version: 'local-preview', has_update: false,
           cached: true, build_type: 'source',
         }
+        if (path === '/api/v1/admin/system/mihomo') return {
+          installed: false,
+          running: false,
+          busy: false,
+          supported: false,
+          phase: 'idle',
+          nodes: 0,
+          subscriptions: 0,
+          subscription_items: [],
+          dynamic_proxies: 0,
+          endpoint: '',
+          node_states: [],
+          country_codes: [],
+        }
+        if (path === '/api/v1/admin/excel-grants') return { items: [] as ExcelGrantRecord[] }
+        if (path === '/api/v1/admin/channel-monitors') return page([], query)
+        if (path === '/api/v1/admin/usage/connections') {
+          return {
+            items: [] as ConnectionTrace[],
+            has_more: false,
+            page: integer(query.get('page'), 1, 1_000_000),
+            page_size: integer(query.get('page_size'), 20, 100),
+            retention_days: 7,
+          }
+        }
+        if (path === '/api/v1/admin/risk-control/config') {
+          const cfg: ContentModerationConfig = {
+            engine: 'openai',
+            enabled: false,
+            mode: 'off',
+            base_url: 'https://api.openai.com',
+            model: 'omni-moderation-latest',
+            proxy_id: null,
+            api_key_configured: false,
+            api_key_masked: '',
+            api_key_count: 0,
+            api_key_masks: [],
+            api_key_statuses: [],
+            timeout_ms: 3000,
+            sample_rate: 100,
+            all_groups: true,
+            group_ids: [],
+            record_non_hits: false,
+            thresholds: {},
+            worker_count: 4,
+            queue_size: 32768,
+            block_status: 403,
+            block_message: 'Content rejected by moderation policy',
+            email_on_hit: false,
+            auto_ban_enabled: false,
+            ban_threshold: 10,
+            violation_window_hours: 720,
+            retry_count: 2,
+            hit_retention_days: 180,
+            non_hit_retention_days: 3,
+            pre_hash_check_enabled: false,
+            blocked_keywords: [],
+            keyword_blocking_mode: 'keyword_and_api',
+            model_filter: { type: 'all', models: [] },
+            cyber_policy_exclude_from_ban_count: false,
+          }
+          return cfg
+        }
+        if (path === '/api/v1/admin/risk-control/status') {
+          const status: ContentModerationRuntimeStatus = {
+            engine: 'openai',
+            enabled: false,
+            risk_control_enabled: true,
+            mode: 'off',
+            worker_count: 4,
+            max_workers: 8,
+            active_workers: 0,
+            idle_workers: 4,
+            queue_size: 32768,
+            queue_length: 0,
+            queue_usage_percent: 0,
+            enqueued: 0,
+            dropped: 0,
+            processed: 0,
+            errors: 0,
+            pre_block_active: 0,
+            pre_block_checked: 0,
+            pre_block_allowed: 0,
+            pre_block_blocked: 0,
+            pre_block_errors: 0,
+            pre_block_avg_latency_ms: 0,
+            pre_block_api_key_active: 0,
+            pre_block_api_key_available_count: 0,
+            pre_block_api_key_total_calls: 0,
+            pre_block_api_key_loads: [],
+            api_key_statuses: [],
+            flagged_hash_count: 0,
+            last_cleanup_deleted_hit: 0,
+            last_cleanup_deleted_non_hit: 0,
+          }
+          return status
+        }
+        if (path === '/api/v1/admin/risk-control/logs') return page([], query)
+        if (path === '/api/v1/admin/upstream-monitor/overview') {
+          const overview: UpstreamMonitorOverview = {
+            generated_at: data.now,
+            total_accounts: 0,
+            with_balance: 0,
+            healthy: 0,
+            stale: 0,
+            failed: 0,
+            unsupported: 0,
+            rate_known: 0,
+            rate_changes_24h: 0,
+            currencies: [],
+            attention: [],
+            last_sample_at: null,
+            spend: [],
+            open_alerts: 0,
+          }
+          return overview
+        }
+        if (path === '/api/v1/admin/upstream-monitor/accounts') return page([], query)
+        if (path === '/api/v1/admin/upstream-monitor/rate-changes') return page([], query)
+        if (path === '/api/v1/admin/upstream-monitor/trend') {
+          return { days: integer(query.get('days'), 7, 90), points: [] }
+        }
+        if (path === '/api/v1/admin/upstream-monitor/alerts') return page([], query)
+        if (path === '/api/v1/admin/upstream-monitor/alert-rules') return { items: [] }
+        // Admin crypto endpoints: security + signer endpoints use the standard envelope,
+        // while legacy crypto endpoints return `{ data: ... }` because `admin/crypto.ts` reads `data.data`.
+        if (path === '/api/v1/admin/crypto/chains/status') {
+          const report: ChainStatusReport = {
+            generated_at: data.now,
+            summary: { enabled: 3, lagging: 0, stalled: 0, error: 0 },
+            chains: [
+              {
+                chain: 'ethereum',
+                enabled: true,
+                state: 'synced',
+                confirmations: 12,
+                scan_range: 500,
+                head: 21_480_120,
+                confirmed_head: 21_480_108,
+                cursor: 21_480_108,
+                unscanned: 0,
+                progress_pct: 100,
+                scan_speed_bpm: 18,
+                head_speed_bpm: 5,
+                eta_seconds: 0,
+                cursor_updated_at: data.now,
+                stalled_seconds: 4,
+                pending_deposits: 0,
+                last_error: null,
+                nodes: [
+                  {
+                    label: 'eth-primary#1',
+                    host: 'rpc-eth.example.test',
+                    status: 'ok',
+                    latency_ms: 42,
+                    head: 21_480_120,
+                    behind: 0,
+                    error_kind: null,
+                  },
+                ],
+              },
+              {
+                chain: 'bsc',
+                enabled: true,
+                state: 'synced',
+                confirmations: 3,
+                scan_range: 1000,
+                head: 49_812_010,
+                confirmed_head: 49_812_007,
+                cursor: 49_812_007,
+                unscanned: 0,
+                progress_pct: 100,
+                scan_speed_bpm: 45,
+                head_speed_bpm: 20,
+                eta_seconds: 0,
+                cursor_updated_at: data.now,
+                stalled_seconds: 2,
+                pending_deposits: 1,
+                last_error: null,
+                nodes: [
+                  {
+                    label: 'bsc-primary#1',
+                    host: 'rpc-bsc.example.test',
+                    status: 'ok',
+                    latency_ms: 28,
+                    head: 49_812_010,
+                    behind: 0,
+                    error_kind: null,
+                  },
+                ],
+              },
+              {
+                chain: 'polygon',
+                enabled: true,
+                state: 'catching_up',
+                confirmations: 30,
+                scan_range: 1000,
+                head: 64_120_500,
+                confirmed_head: 64_120_470,
+                cursor: 64_120_350,
+                unscanned: 120,
+                progress_pct: 99.2,
+                scan_speed_bpm: 60,
+                head_speed_bpm: 30,
+                eta_seconds: 180,
+                cursor_updated_at: data.now,
+                stalled_seconds: 6,
+                pending_deposits: 0,
+                last_error: null,
+                nodes: [
+                  {
+                    label: 'polygon-primary#1',
+                    host: 'rpc-polygon.example.test',
+                    status: 'ok',
+                    latency_ms: 65,
+                    head: 64_120_500,
+                    behind: 0,
+                    error_kind: null,
+                  },
+                ],
+              },
+            ],
+          }
+          return { data: report }
+        }
+        if (path === '/api/v1/admin/crypto/config') {
+          const cfg: CryptoConfig = {
+            enabled: true,
+            chains: ['ethereum', 'bsc', 'polygon'],
+            rpc: {},
+            rpc_configured: ['ethereum', 'bsc', 'polygon'],
+            sweep_global_threshold: 50,
+            sweep_min_per_address: { ethereum: 10, bsc: 5, polygon: 5 },
+            gas_topup: { ethereum: 0.005, bsc: 0.005, polygon: 1 },
+            hot_wallet_evm: demoDepositAddress,
+            hot_wallet_solana: '',
+            hot_index: 0,
+            sweep_auto: false,
+            confirmations: { ethereum: 12, bsc: 3, polygon: 30 },
+            scan_range: { ethereum: 500, bsc: 1000, polygon: 1000 },
+            scan_concurrency: { ethereum: 2, bsc: 2, polygon: 2 },
+            credit_min_amount: 0.001,
+            credit_max_amount: 10000,
+            credit_multiplier: 6.7,
+            native_price_url: '',
+          }
+          return { data: cfg }
+        }
+        if (path === '/api/v1/admin/crypto/addresses') {
+          if (query.has('user_id') && !query.has('page')) return { data: [] }
+          const summary: AdminAddressSummary = {
+            address_count: 0,
+            deposit_count: 0,
+            credited_total: 0,
+            swept_total: 0,
+          }
+          return { data: { items: [], total: 0, summary } }
+        }
+        if (path === '/api/v1/admin/crypto/wallet/status') {
+          const status: WalletStatus = {
+            ok: true,
+            configured: true,
+            ready: true,
+            enabled: true,
+            signer_locked: false,
+          }
+          return { data: status }
+        }
+        if (path === '/api/v1/admin/crypto/wallet/security') {
+          const status: WalletSecurityStatus = {
+            enabled: true,
+            initialized: true,
+            locked: false,
+            deposits_paused: false,
+            alert_pending: false,
+          }
+          return status
+        }
+        if (path === '/api/v1/admin/crypto/signer/status') {
+          const status: SignerShardStatus = {
+            configured: false,
+            vault_version: 2,
+            locked: false,
+            auto_enabled: false,
+          }
+          return status
+        }
+        if (path === '/api/v1/admin/crypto/signer/risk-notice') {
+          const notice: SignerRiskNotice = {
+            points: { zh: [], en: [] },
+            phrases: { zh: '', en: '' },
+            display_once: false,
+            schemes: [],
+          }
+          return notice
+        }
+        if (path === '/api/v1/admin/crypto/sweep/readiness') {
+          const gate: SweepGate = {
+            ready: true,
+            reason: '',
+            channel_enabled: true,
+            wallet_ok: true,
+            wallet_ready: true,
+            signer_locked: false,
+            security_locked: false,
+            destination_configured: true,
+            destination_locked: false,
+          }
+          return { data: gate }
+        }
+        if (path === '/api/v1/admin/crypto/sweep/records') return { data: [] }
+        if (path === '/api/v1/admin/crypto/sweep/blocked') return { data: [] }
+        if (path === '/api/v1/admin/crypto/sweep/runs') return { data: [] }
+        if (path === '/api/v1/admin/crypto/deposits') {
+          const summary: DepositSummary = {
+            total: 0,
+            credited: 0,
+            pending: 0,
+            ignored: 0,
+            amount: 0,
+            provisional: 0,
+            revoked: 0,
+          }
+          return { data: { items: [], summary } }
+        }
+        if (path === '/api/v1/admin/crypto/scan/runs') return { data: [] }
+        if (path === '/api/v1/admin/crypto/pool') {
+          const pool: PoolStatus = { free: { evm: 20 }, low_watermark: 5 }
+          return { data: pool }
+        }
+        if (path === '/api/v1/admin/crypto/hot-wallet/address') {
+          const addr: HotWalletAddress = { index: 0, evm: demoDepositAddress, solana: '' }
+          return { data: addr }
+        }
+        if (path === '/api/v1/admin/crypto/hot-wallet') return { data: [] }
         if (path === '/api/v1/admin/dashboard/stats') return adminDashboardStats()
         if (path === '/api/v1/admin/dashboard/realtime') return {
           active_requests: 7, requests_per_minute: 42, average_response_time: 1380, error_rate: 0.018,
@@ -1071,7 +1646,7 @@ export function createMockApi(now = new Date()) {
               prompt_text: '请生成可直接运行的单文件HTML，使用内联SVG绘制鹈鹕骑自行车的二维循环动画。',
               cron_expression: '*/30 * * * *', enabled: false, max_results: 50,
               auto_recover: false, quality_check_enabled: true, quality_provider: 'chanshui',
-              quality_config: { base_url: 'https://chanshui.dev', protocol: 'auto', timeout: 360, sections: ['fingerprint'],
+              quality_config: { base_url: 'https://quality-audit.example.test', protocol: 'auto', timeout: 360, sections: ['fingerprint'],
                 stop_condition: { match: 'any', rules: [{ type: 'fingerprint_mismatch' }] } },
               last_run_at: null, next_run_at: null, created_at: data.now, updated_at: data.now,
             },
@@ -1205,6 +1780,122 @@ export function createMockApi(now = new Date()) {
             .map(key => ({ id: key.id, name: key.name, user_id: key.user_id }))
         }
         if (path === '/api/v1/admin/usage/cleanup-tasks') return page(copy(demoCleanupTasks), query)
+        if (path === '/api/v1/admin/usage/traffic/health') {
+          const health: TrafficDeliveryHealth = {
+            status: 'ok',
+            pending_events: 0,
+            quarantined_events: 0,
+            oldest_pending_at: null,
+            oldest_pending_age_seconds: 0,
+            delivered_events: 128,
+            delivery_failures: 0,
+            staging_failures: 0,
+            persistence_failures: 0,
+            last_delivery_at: data.now,
+            checked_at: data.now,
+            queued_events: 0,
+            queue_capacity: 1024,
+            processing_events: 0,
+            dropped_events: 0,
+            queue_dropped_events: 0,
+            shutdown_dropped_events: 0,
+            spool_limit_dropped_events: 0,
+            invalid_dropped_events: 0,
+            unavailable_dropped_events: 0,
+            worker_panics: 0,
+            worker_running: true,
+            storage_available: true,
+          }
+          return health
+        }
+        if (path === '/api/v1/usage/traffic/keys' || path === '/api/v1/admin/usage/traffic/keys') {
+          const isAdminTraffic = path.startsWith('/api/v1/admin/')
+          const keyword = (query.get('q') || '').toLowerCase()
+          const userId = query.get('user_id') ? Number(query.get('user_id')) : undefined
+          const sourceKeys = isAdminTraffic ? data.adminKeys : data.keys
+          return sourceKeys
+            .filter(key => (!isAdminTraffic || !userId || key.user_id === userId) && (!keyword || key.name.toLowerCase().includes(keyword)))
+            .slice(0, 30)
+            .map(key => ({ id: key.id, name: key.name, deleted: false }))
+        }
+        if (path === '/api/v1/usage/traffic' || path === '/api/v1/admin/usage/traffic') {
+          const isAdminTraffic = path.startsWith('/api/v1/admin/')
+          const periodParam = query.get('period')
+          const period: TrafficPeriod = periodParam === 'day' || periodParam === 'week' || periodParam === 'year' ? periodParam : 'month'
+          const anchor = query.get('date') && /^\d{4}-\d{2}-\d{2}$/.test(query.get('date')!)
+            ? new Date(`${query.get('date')}T00:00:00Z`)
+            : new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1))
+          const startDate = period === 'year'
+            ? new Date(Date.UTC(anchor.getUTCFullYear(), 0, 1))
+            : period === 'month'
+              ? new Date(Date.UTC(anchor.getUTCFullYear(), anchor.getUTCMonth(), 1))
+              : anchor
+          const endDate = period === 'year'
+            ? new Date(Date.UTC(startDate.getUTCFullYear() + 1, 0, 1))
+            : period === 'month'
+              ? new Date(Date.UTC(startDate.getUTCFullYear(), startDate.getUTCMonth() + 1, 1))
+              : new Date(startDate.getTime() + (period === 'week' ? 7 : 1) * 86_400_000)
+          const sourceRows = isAdminTraffic ? data.adminUsage : data.usage
+          const userId = isAdminTraffic && query.get('user_id') ? Number(query.get('user_id')) : undefined
+          const apiKeyId = query.get('api_key_id') ? Number(query.get('api_key_id')) : undefined
+          const matchedRows = sourceRows
+            .filter(row => (!userId || row.user_id === userId) && (!apiKeyId || row.api_key_id === apiKeyId))
+            .slice(0, 20)
+          const items = matchedRows.map((row, idx) => {
+            const up = 1280 + (idx % 5) * 640
+            const down = 4096 + (idx % 7) * 1536
+            return {
+              event_id: `evt-preview-${row.id}`,
+              user_id: row.user_id,
+              api_key_id: row.api_key_id,
+              group_id: row.group_id ?? 0,
+              request_id: row.request_id || `req-preview-${row.id}`,
+              endpoint: row.inbound_endpoint || '/v1/responses',
+              method: 'POST',
+              started_at: row.created_at,
+              finished_at: row.created_at,
+              upload_bytes: up,
+              download_bytes: down,
+              status_code: 200,
+              outcome: 'completed',
+              request_complete: true,
+              measurement_version: 1,
+            }
+          })
+          const trend = Array.from({ length: 6 }, (_, idx) => {
+            const bucketDate = new Date(now.getTime() - (5 - idx) * 86_400_000).toISOString().slice(0, 10)
+            const up = items.length ? 4200 + idx * 900 : 0
+            const down = items.length ? 12800 + idx * 2400 : 0
+            return {
+              bucket: bucketDate,
+              upload_bytes: up,
+              download_bytes: down,
+              total_bytes: up + down,
+              requests: items.length ? 12 + idx * 3 : 0,
+            }
+          })
+          const totalUp = trend.reduce((sum, p) => sum + p.upload_bytes, 0)
+          const totalDown = trend.reduce((sum, p) => sum + p.download_bytes, 0)
+          const totalReqs = trend.reduce((sum, p) => sum + p.requests, 0)
+          const report: TrafficReport = {
+            upload_bytes: totalUp,
+            download_bytes: totalDown,
+            total_bytes: totalUp + totalDown,
+            requests: totalReqs,
+            items,
+            trend,
+            has_more: false,
+            page: 1,
+            page_size: integer(query.get('page_size'), 20, 100),
+            period,
+            start: startDate.toISOString(),
+            end: endDate.toISOString(),
+            timezone: 'UTC',
+            recorded_since: new Date(now.getTime() - 30 * 86_400_000).toISOString(),
+            measurement_version: 1,
+          }
+          return report
+        }
         if (path === '/api/v1/admin/ops/errors') return page([], query)
         if (path === '/api/v1/groups/available') return data.groups
         if (path === '/api/v1/groups/rates') return {}
@@ -1304,6 +1995,41 @@ export function createMockApi(now = new Date()) {
               credited: 670, credited_known: true, created_at: new Date(Date.now() - 55 * 60_000).toISOString() }
           ] }
         }
+        if (path === '/api/v1/crypto/deposit-network-status') {
+          const baseMs = Math.max(now.getTime(), Date.now())
+          const observedAt = new Date(baseMs - 30_000).toISOString()
+          const expiresAt = new Date(baseMs + 5 * 60_000).toISOString()
+          const networks: DepositNetworkStatus[] = [
+            {
+              chain: 'ethereum',
+              status: 'available',
+              observed_at: observedAt,
+              expires_at: expiresAt,
+              eta_seconds: 90,
+              backlog_seconds: 12,
+              required_confirmations: 12,
+            },
+            {
+              chain: 'bsc',
+              status: 'available',
+              observed_at: observedAt,
+              expires_at: expiresAt,
+              eta_seconds: 35,
+              backlog_seconds: 3,
+              required_confirmations: 3,
+            },
+            {
+              chain: 'polygon',
+              status: 'slow',
+              observed_at: observedAt,
+              expires_at: expiresAt,
+              eta_seconds: 180,
+              backlog_seconds: 48,
+              required_confirmations: 30,
+            },
+          ]
+          return { data: { networks } }
+        }
         if (path === '/api/v1/payment/orders/my') {
           const status = query.get('status')
           const orders = data.paymentOrders.filter(order => !status || order.status === status).sort((a, b) => b.id - a.id)
@@ -1340,6 +2066,34 @@ export function createMockApi(now = new Date()) {
         if (path === '/api/v1/user/passkeys') return []
         if (path === '/api/v1/user/bark') return { data: { ...demoBarkSettings } }
         if (path === '/api/v1/user/security/verification-factors') return verificationFactors()
+        if (path === '/api/v1/user/key-rotation-gate') {
+          const activeCount = data.keys.filter(key => key.status === 'active').length
+          const gate: KeyRotationGateStatus = {
+            enabled: false,
+            required: false,
+            cutoff: '2026-01-01T00:00:00Z',
+            active_key_count: activeCount,
+            compliant_key_count: activeCount,
+            pending_key_count: 0,
+            reason: '',
+            remediation_path: '/keys',
+            risk_ack_enabled: false,
+            risk_ack_hours: 24,
+          }
+          return gate
+        }
+        if (path === '/api/v1/user/security/summary') {
+          const summary: PenaltySummary = {
+            enabled: false,
+            observe_only: true,
+            policy: 'session_block',
+            threshold: 5,
+            restricted: false,
+            states: [],
+          }
+          return summary
+        }
+        if (path === '/api/v1/user/security/events') return page([], query)
         if (path === '/api/v1/user/personal-api-key') return copy(demoPersonalApiKey)
         if (path === '/v1/models') {
           const ids = modelsForBearer(headers.authorization)
@@ -1379,6 +2133,13 @@ export function createMockApi(now = new Date()) {
               }
             }),
           }
+        }
+        if (path === '/api/v1/keys/concurrency') {
+          const snapshot: KeyQueueSnapshot = {
+            queue_policy: { max_waiting: 8, timeout_seconds: 30 },
+            items: [],
+          }
+          return snapshot
         }
         if (path === '/api/v1/keys') {
           const items = data.keys.filter(key => {
@@ -1437,6 +2198,9 @@ export function createMockApi(now = new Date()) {
           return { ...result, days, items: result.trend.map(row => ({ ...row, cache_write_tokens: row.cache_creation_tokens })) }
         }
         throw new PreviewError(404, '此接口未提供演示数据，不会连接真实后端')
+      }
+      if (method === 'POST' && path === '/api/v1/auth/oauth/pending/exchange') {
+        return { error: 'invitation_required', resolved_email: 'preview@example.test' }
       }
       if (method === 'POST' && path === '/api/v1/__preview/role') {
         if (body.role !== 'admin' && body.role !== 'user') throw new PreviewError(422, '预览身份仅支持 admin 或 user')

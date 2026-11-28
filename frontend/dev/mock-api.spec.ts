@@ -8,6 +8,23 @@ import type { MonitorMatrixResponse } from '../src/api/channelMonitorV2'
 import type { UserMonitorListResponse } from '../src/api/channelMonitor'
 import type { UserAvailableChannel } from '../src/api/channels'
 import type { CheckoutInfoResponse, CreateOrderResult, PaymentOrder } from '../src/types/payment'
+import type { KeyRotationGateStatus } from '../src/api/keyRotationGate'
+import type { KeyQueueSnapshot } from '../src/api/keys'
+import type { DepositNetworkStatus } from '../src/api/crypto'
+import type {
+  ChainStatusReport,
+  CryptoConfig,
+  PoolStatus,
+  SweepGate,
+  WalletSecurityStatus,
+  WalletStatus,
+} from '../src/api/admin/crypto'
+import type { SignerRiskNotice, SignerShardStatus } from '../src/api/admin/cryptoSigner'
+import type {
+  ContentModerationConfig,
+  ContentModerationRuntimeStatus,
+} from '../src/api/admin/riskControl'
+import type { UpstreamMonitorOverview } from '../src/api/admin/upstreamMonitor'
 
 const date = new Date('2026-09-17T13:00:00Z')
 const query = (value = '') => new URLSearchParams(value)
@@ -303,6 +320,118 @@ describe('local demo API contracts', () => {
     expect(() => api.handle('GET', '/api/v1/usage', query('timezone=invalid'))).toThrow('时区')
     expect(() => api.handle('GET', '/api/v1/usage', query('start_date=2026-10-01&end_date=2026-09-01'))).toThrow('开始日期')
   })
+
+  it('serves read-only mount contracts for key-rotation gate, deposit network status, crypto, risk control, upstream monitor and admin tables without fetch', () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(() => { throw new Error('External request forbidden') })
+    try {
+      const api = createMockApi(date)
+
+      // Standard envelope endpoints (direct payload)
+      const activeKeys = api.handle('GET', '/api/v1/keys', query('status=active&page_size=1')) as PaginatedResponse<ApiKey>
+      const gate = api.handle('GET', '/api/v1/user/key-rotation-gate', query()) as KeyRotationGateStatus
+      expect(gate).toMatchObject({
+        enabled: false,
+        required: false,
+        active_key_count: activeKeys.total,
+        compliant_key_count: activeKeys.total,
+        pending_key_count: 0,
+        remediation_path: '/keys',
+      })
+      expect(gate.active_key_count).toBe(23)
+
+      const concurrency = api.handle('GET', '/api/v1/keys/concurrency', query('ids=1,2')) as KeyQueueSnapshot
+      expect(concurrency).toEqual({ queue_policy: { max_waiting: 8, timeout_seconds: 30 }, items: [] })
+
+      // Legacy crypto { data: ... } envelope endpoints
+      const networkStatus = api.handle('GET', '/api/v1/crypto/deposit-network-status', query()) as { data: { networks: DepositNetworkStatus[] } }
+      expect(networkStatus.data.networks.map(n => n.chain)).toEqual(['ethereum', 'bsc', 'polygon'])
+      for (const row of networkStatus.data.networks) {
+        expect(row.expires_at).toBeTypeOf('string')
+        expect(Date.parse(row.expires_at!)).toBeGreaterThan(Date.now())
+      }
+
+      const chainReport = api.handle('GET', '/api/v1/admin/crypto/chains/status', query()) as { data: ChainStatusReport }
+      expect(chainReport.data.summary).toEqual({ enabled: 3, lagging: 0, stalled: 0, error: 0 })
+      expect(chainReport.data.chains.map(c => c.chain)).toEqual(['ethereum', 'bsc', 'polygon'])
+      expect(chainReport.data.chains.every(c => c.nodes.every(n => n.host.endsWith('.example.test')))).toBe(true)
+
+      const cryptoCfg = api.handle('GET', '/api/v1/admin/crypto/config', query()) as { data: CryptoConfig }
+      expect(cryptoCfg.data).toMatchObject({ enabled: true, chains: ['ethereum', 'bsc', 'polygon'], hot_index: 0 })
+      expect(api.handle('GET', '/api/v1/admin/crypto/addresses', query('page=1&page_size=50'))).toEqual({
+        data: { items: [], total: 0, summary: { address_count: 0, deposit_count: 0, credited_total: 0, swept_total: 0 } },
+      })
+      expect(api.handle('GET', '/api/v1/admin/crypto/addresses', query('user_id=1'))).toEqual({ data: [] })
+      expect((api.handle('GET', '/api/v1/admin/crypto/wallet/status', query()) as { data: WalletStatus }).data).toMatchObject({
+        ok: true, configured: true, ready: true, enabled: true, signer_locked: false,
+      })
+      expect((api.handle('GET', '/api/v1/admin/crypto/sweep/readiness', query()) as { data: SweepGate }).data).toMatchObject({
+        ready: true, channel_enabled: true, wallet_ok: true, wallet_ready: true,
+      })
+      expect(api.handle('GET', '/api/v1/admin/crypto/sweep/records', query())).toEqual({ data: [] })
+      expect(api.handle('GET', '/api/v1/admin/crypto/sweep/blocked', query())).toEqual({ data: [] })
+      expect(api.handle('GET', '/api/v1/admin/crypto/sweep/runs', query())).toEqual({ data: [] })
+      expect(api.handle('GET', '/api/v1/admin/crypto/deposits', query('page=1&page_size=50'))).toEqual({
+        data: { items: [], summary: { total: 0, credited: 0, pending: 0, ignored: 0, amount: 0, provisional: 0, revoked: 0 } },
+      })
+      expect(api.handle('GET', '/api/v1/admin/crypto/scan/runs', query())).toEqual({ data: [] })
+      expect((api.handle('GET', '/api/v1/admin/crypto/pool', query()) as { data: PoolStatus }).data).toEqual({
+        free: { evm: 20 }, low_watermark: 5,
+      })
+      expect(api.handle('GET', '/api/v1/admin/crypto/hot-wallet/address', query())).toMatchObject({
+        data: { index: 0, evm: expect.stringMatching(/^0x[0-9a-f]{40}$/), solana: '' },
+      })
+      expect(api.handle('GET', '/api/v1/admin/crypto/hot-wallet', query())).toEqual({ data: [] })
+
+      // Standard-envelope crypto security & signer endpoints
+      expect(api.handle('GET', '/api/v1/admin/crypto/wallet/security', query()) as WalletSecurityStatus).toEqual({
+        enabled: true, initialized: true, locked: false, deposits_paused: false, alert_pending: false,
+      })
+      expect(api.handle('GET', '/api/v1/admin/crypto/signer/status', query()) as SignerShardStatus).toEqual({
+        configured: false, vault_version: 2, locked: false, auto_enabled: false,
+      })
+      expect(api.handle('GET', '/api/v1/admin/crypto/signer/risk-notice', query()) as SignerRiskNotice).toEqual({
+        points: { zh: [], en: [] }, phrases: { zh: '', en: '' }, display_once: false, schemes: [],
+      })
+
+      // Risk control (standard envelope)
+      expect(api.handle('GET', '/api/v1/admin/risk-control/config', query()) as ContentModerationConfig).toMatchObject({
+        engine: 'openai', enabled: false, mode: 'off', worker_count: 4,
+      })
+      expect(api.handle('GET', '/api/v1/admin/risk-control/status', query()) as ContentModerationRuntimeStatus).toMatchObject({
+        engine: 'openai', enabled: false, risk_control_enabled: true, mode: 'off', worker_count: 4,
+      })
+      expect(api.handle('GET', '/api/v1/admin/risk-control/logs', query('page=1&page_size=20'))).toEqual({
+        items: [], total: 0, page: 1, page_size: 20, pages: 0,
+      })
+
+      // Upstream monitor (standard envelope)
+      expect(api.handle('GET', '/api/v1/admin/upstream-monitor/overview', query()) as UpstreamMonitorOverview).toMatchObject({
+        generated_at: date.toISOString(), total_accounts: 0, open_alerts: 0, currencies: [],
+      })
+      expect(api.handle('GET', '/api/v1/admin/upstream-monitor/accounts', query())).toMatchObject({ items: [], total: 0 })
+      expect(api.handle('GET', '/api/v1/admin/upstream-monitor/rate-changes', query())).toMatchObject({ items: [], total: 0 })
+      expect(api.handle('GET', '/api/v1/admin/upstream-monitor/trend', query('days=14'))).toEqual({ days: 14, points: [] })
+      expect(api.handle('GET', '/api/v1/admin/upstream-monitor/alerts', query())).toMatchObject({ items: [], total: 0 })
+      expect(api.handle('GET', '/api/v1/admin/upstream-monitor/alert-rules', query())).toEqual({ items: [] })
+
+      // Remaining admin mount reads
+      expect(api.handle('GET', '/api/v1/admin/excel-grants', query())).toEqual({ items: [] })
+      expect(api.handle('GET', '/api/v1/admin/system/mihomo', query())).toMatchObject({
+        installed: false, running: false, busy: false, supported: false, phase: 'idle', nodes: 0,
+      })
+      expect(api.handle('GET', '/api/v1/admin/usage/connections', query('page=2&page_size=20'))).toEqual({
+        items: [], has_more: false, page: 2, page_size: 20, retention_days: 7,
+      })
+      expect(api.handle('GET', '/api/v1/admin/affiliates/invites', query())).toMatchObject({ items: [], total: 0 })
+      expect(api.handle('GET', '/api/v1/admin/affiliates/rebates', query())).toMatchObject({ items: [], total: 0 })
+      expect(api.handle('GET', '/api/v1/admin/affiliates/transfers', query())).toMatchObject({ items: [], total: 0 })
+      expect(api.handle('GET', '/api/v1/admin/channel-monitors', query())).toMatchObject({ items: [], total: 0 })
+
+      expect(fetchSpy).not.toHaveBeenCalled()
+    } finally {
+      fetchSpy.mockRestore()
+    }
+  })
 })
 
 
@@ -430,5 +559,72 @@ describe('local custom usage fixtures', () => {
     }
     expect(models.data.map(m => m.id)).toEqual(['gemini-2.5-pro', 'gemini-2.5-flash'])
     expect(models.models.map(m => m.name)).toEqual(['models/gemini-2.5-pro', 'models/gemini-2.5-flash'])
+  })
+
+  it('serves payment dashboard, plugins, traffic, security, prompt-audit, ip-risk, ip-audit and pending oauth exchange fixtures', () => {
+    const api = createMockApi(date)
+
+    expect(api.handle('GET', '/api/v1/admin/payment/dashboard', query('days=7'))).toMatchObject({
+      today_amount: expect.any(Object),
+      total_amount: expect.any(Object),
+      avg_amount: expect.any(Object),
+      daily_series: expect.any(Array),
+      payment_methods: expect.any(Array),
+      top_users: expect.any(Object),
+    })
+
+    const plugins = api.handle('GET', '/api/v1/admin/plugins', query()) as Array<{ compatibility: { status: string }; bindings: unknown[] }>
+    expect(Array.isArray(plugins)).toBe(true)
+    expect(plugins[0]?.compatibility?.status).toBe('compatible')
+    expect(Array.isArray(plugins[0]?.bindings)).toBe(true)
+
+    expect(api.handle('GET', '/api/v1/usage/traffic', query('period=month'))).toMatchObject({
+      requests: expect.any(Number),
+      trend: expect.any(Array),
+      items: expect.any(Array),
+    })
+    expect(api.handle('GET', '/api/v1/admin/usage/traffic', query('period=day'))).toMatchObject({
+      period: 'day',
+      trend: expect.any(Array),
+      items: expect.any(Array),
+    })
+    expect(Array.isArray(api.handle('GET', '/api/v1/usage/traffic/keys', query()))).toBe(true)
+    expect(Array.isArray(api.handle('GET', '/api/v1/admin/usage/traffic/keys', query()))).toBe(true)
+    expect(api.handle('GET', '/api/v1/admin/usage/traffic/health', query())).toMatchObject({
+      status: 'ok',
+      storage_available: true,
+    })
+
+    expect(api.handle('GET', '/api/v1/admin/security-penalties/config', query())).toMatchObject({
+      group_ids: expect.any(Array),
+      exempt_user_ids: expect.any(Array),
+    })
+    expect(api.handle('GET', '/api/v1/admin/security-penalties/events', query())).toMatchObject({ items: expect.any(Array), total: 0 })
+    expect(api.handle('GET', '/api/v1/user/security/summary', query())).toMatchObject({ restricted: false, states: [] })
+    expect(api.handle('GET', '/api/v1/user/security/events', query())).toMatchObject({ items: expect.any(Array), total: 0 })
+
+    expect(api.handle('GET', '/api/v1/admin/prompt-audit/config', query())).toMatchObject({ effective_mode: 'off', endpoints: [] })
+    expect(api.handle('GET', '/api/v1/admin/prompt-audit/runtime', query())).toMatchObject({
+      queue: expect.objectContaining({ active: 0, queued: 0 }),
+      endpoints: {},
+    })
+    expect(api.handle('GET', '/api/v1/admin/prompt-audit/events', query())).toMatchObject({ items: [], total: 0 })
+
+    expect(api.handle('GET', '/api/v1/admin/settings/ip-risk', query())).toMatchObject({
+      health: { redis_available: true, emergency_disabled: false, config_error: '' },
+      config: expect.objectContaining({ whitelist: expect.any(Array) }),
+    })
+    expect(api.handle('GET', '/api/v1/admin/settings/ip-risk/events', query())).toMatchObject({ items: [] })
+    expect(api.handle('GET', '/api/v1/admin/settings/ip-risk/bans', query())).toEqual({ items: [] })
+    expect(api.handle('GET', '/api/v1/admin/settings/ip-risk/anonymous-bans', query())).toEqual({ items: [] })
+    expect(api.handle('GET', '/api/v1/admin/settings/ip-audit', query())).toMatchObject({
+      items: [],
+      sources: expect.arrayContaining([expect.objectContaining({ id: 'anonymous_api' })]),
+    })
+
+    expect(api.handle('POST', '/api/v1/auth/oauth/pending/exchange', query(), {})).toEqual({
+      error: 'invitation_required',
+      resolved_email: 'preview@example.test',
+    })
   })
 })

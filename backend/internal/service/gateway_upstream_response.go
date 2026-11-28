@@ -761,7 +761,7 @@ func partialStreamUsageResult(c *gin.Context, resp *http.Response, streamResult 
 	if errors.As(err, &failoverErr) {
 		return nil
 	}
-	if !streamResult.usage.hasObservedTokens() && !errors.Is(err, ErrBalanceWithholdingFailed) {
+	if !streamResult.usage.hasObservedTokens() && !isBalanceHoldTopUpError(err) {
 		return nil
 	}
 	var streamErr *AnthropicPassthroughStreamError
@@ -820,7 +820,7 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 	var firstTokenMs *int
 	// 流式预扣补扣：仅当请求持有带 tracker 的活动预扣 guard 时非空；逐帧仅整数
 	// 累加，跨输出窗口时才原子补扣一次，补扣失败中止上游流。
-	streamBalanceGuard, _ := BalancePreauthorizationGuardFromContext(ctx)
+	streamBalanceGuardCtx, streamBalanceGuard := balancePreauthorizationGuardForRequest(ctx, c)
 	scanner := bufio.NewScanner(newUpstreamErrorFrameReader(resp.Body, resolveUpstreamResponseReadLimit(s.cfg)))
 	// 设置更大的buffer以处理长行
 	maxLineSize := defaultMaxLineSize
@@ -963,8 +963,10 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 	noopDeltaKeepaliveDeltaType := ""
 
 	pendingEventLines := make([]string, 0, 4)
+	lastObservedOutputBytes := 0
 
 	processSSEEvent := func(lines []string) ([]string, string, *sseUsagePatch, error) {
+		lastObservedOutputBytes = 0
 		if len(lines) == 0 {
 			return nil, "", nil, nil
 		}
@@ -1020,7 +1022,7 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 			return nil, dataLine, nil, &sseStreamErrorEventError{RawData: dataLine}
 		}
 		observer.ObserveAnthropic([]byte(dataLine))
-		progress.observeData(dataLine)
+		lastObservedOutputBytes = progress.observeData(dataLine)
 		if eventName == "" {
 			eventName = eventType
 		}
@@ -1227,12 +1229,32 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 							flusher.Flush()
 							lastDataAt = time.Now()
 							resetKeepaliveTimer()
-							// 输出块计量：累加已发字节作 token 上界，跨预扣窗口时补扣。
+							// 输出块计量：累加已发可见/思考/工具输出字节作 token 上界，跨预扣窗口时补扣。
 							// 补扣失败中止上游流并返回错误，避免继续产生无法结算的输出
 							// 成本。tracker 为 nil 时逐块零开销。
-							if topUpErr := streamBalanceGuard.ObserveStreamingOutput(ctx, len(restored)); topUpErr != nil {
-								logger.LegacyPrintf("service.gateway", "Stream output hold top-up failed, aborting upstream: account=%d error=%v", account.ID, topUpErr)
-								return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: clientDisconnected}, wrapStreamOutputHoldTopUpFailure(topUpErr)
+							observedBytes := lastObservedOutputBytes
+							lastObservedOutputBytes = 0
+							if observedBytes > 0 {
+								if topUpErr := streamBalanceGuard.ObserveStreamingOutput(streamBalanceGuardCtx, observedBytes); topUpErr != nil {
+									if data != "" {
+										if firstTokenMs == nil && data != "[DONE]" {
+											ms := int(time.Since(startTime).Milliseconds())
+											firstTokenMs = &ms
+										}
+										if usagePatch != nil {
+											mergeSSEUsagePatch(usage, usagePatch)
+										}
+									}
+									_ = resp.Body.Close()
+									logger.LegacyPrintf("service.gateway", "Stream output hold top-up failed, aborting upstream: account=%d error=%v", account.ID, topUpErr)
+									return &streamingResult{
+										usage:            usage,
+										firstTokenMs:     firstTokenMs,
+										clientDisconnect: clientDisconnected,
+										incompleteStream: !sawTerminalEvent,
+										progress:         progress,
+									}, wrapStreamOutputHoldTopUpFailure(topUpErr)
+								}
 							}
 						}
 					}

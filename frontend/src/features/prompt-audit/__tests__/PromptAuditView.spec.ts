@@ -4,6 +4,7 @@ import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import type { PromptAuditConfig, PromptAuditRuntime } from '../types'
 import { SCANNER_CATALOG } from '../viewModel'
 import PromptAuditView from '../PromptAuditView.vue'
+import RuntimeOverview from '../components/RuntimeOverview.vue'
 
 const mocks = vi.hoisted(() => ({
   getConfig: vi.fn(), updateConfig: vi.fn(), probeEndpoint: vi.fn(), getRuntime: vi.fn(), listEvents: vi.fn(),
@@ -248,5 +249,24 @@ describe('PromptAuditView', () => {
       confirmation_token: 'opaque-confirmation',
     }))
     expect(wrapper.find('[data-test="filter-delete-dialog"]').exists()).toBe(false)
+  })
+
+  it('keeps sticky config save bar at z-20 or below navbar/toolbar stack', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+    await openTab(wrapper, 'config')
+    await flushPromises()
+    const saveBar = wrapper.get('[data-test="save-config"]').element.parentElement?.parentElement
+    expect(saveBar?.className).toContain('z-20')
+    expect(saveBar?.className).not.toContain('z-30')
+  })
+
+  it('guards RuntimeOverview when queue or endpoints are missing', () => {
+    const partialRuntime = { process_status: 'disabled', effective_mode: 'off' } as unknown as PromptAuditRuntime
+    const wrapper = mount(RuntimeOverview, {
+      props: { runtime: partialRuntime, loading: false, error: '' },
+    })
+    expect(wrapper.find('section').exists()).toBe(true)
+    wrapper.unmount()
   })
 })

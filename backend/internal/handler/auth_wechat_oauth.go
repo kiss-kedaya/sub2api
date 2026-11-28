@@ -15,8 +15,10 @@ import (
 	dbent "github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/ent/authidentity"
 	"github.com/Wei-Shaw/sub2api/ent/authidentitychannel"
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/payment"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/ip"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/oauth"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -123,7 +125,7 @@ func (h *AuthHandler) WeChatOAuthStart(c *gin.Context) {
 	}
 
 	intent := normalizeWeChatOAuthIntent(c.Query("intent"))
-	secureCookie := isRequestHTTPS(c)
+	secureCookie := h.isRequestHTTPS(c)
 	wechatSetCookie(c, wechatOAuthStateCookieName, encodeCookieValue(state), wechatOAuthCookieMaxAgeSec, secureCookie)
 	wechatSetCookie(c, wechatOAuthRedirectCookieName, encodeCookieValue(redirectTo), wechatOAuthCookieMaxAgeSec, secureCookie)
 	wechatSetCookie(c, wechatOAuthIntentCookieName, encodeCookieValue(intent), wechatOAuthCookieMaxAgeSec, secureCookie)
@@ -168,7 +170,7 @@ func (h *AuthHandler) WeChatOAuthCallback(c *gin.Context) {
 		return
 	}
 
-	secureCookie := isRequestHTTPS(c)
+	secureCookie := h.isRequestHTTPS(c)
 	defer func() {
 		wechatClearCookie(c, wechatOAuthStateCookieName, secureCookie)
 		wechatClearCookie(c, wechatOAuthRedirectCookieName, secureCookie)
@@ -367,7 +369,7 @@ func (h *AuthHandler) WeChatPaymentOAuthStart(c *gin.Context) {
 	}
 
 	scope := normalizeWeChatPaymentScope(c.Query("scope"))
-	secureCookie := isRequestHTTPS(c)
+	secureCookie := h.isRequestHTTPS(c)
 	wechatPaymentSetCookie(c, wechatPaymentOAuthStateName, encodeCookieValue(state), wechatOAuthCookieMaxAgeSec, secureCookie)
 	wechatPaymentSetCookie(c, wechatPaymentOAuthRedirect, encodeCookieValue(redirectTo), wechatOAuthCookieMaxAgeSec, secureCookie)
 	wechatPaymentSetCookie(c, wechatPaymentOAuthContextName, encodeCookieValue(rawContext), wechatOAuthCookieMaxAgeSec, secureCookie)
@@ -401,7 +403,7 @@ func (h *AuthHandler) WeChatPaymentOAuthCallback(c *gin.Context) {
 		return
 	}
 
-	secureCookie := isRequestHTTPS(c)
+	secureCookie := h.isRequestHTTPS(c)
 	defer func() {
 		wechatPaymentClearCookie(c, wechatPaymentOAuthStateName, secureCookie)
 		wechatPaymentClearCookie(c, wechatPaymentOAuthRedirect, secureCookie)
@@ -501,7 +503,7 @@ func (h *AuthHandler) CompleteWeChatOAuthRegistration(c *gin.Context) {
 		return
 	}
 
-	secureCookie := isRequestHTTPS(c)
+	secureCookie := h.isRequestHTTPS(c)
 	sessionToken, err := readOAuthPendingSessionCookie(c)
 	if err != nil {
 		clearOAuthPendingSessionCookie(c, secureCookie)
@@ -987,14 +989,6 @@ func (h *AuthHandler) getWeChatOAuthConfig(ctx context.Context, rawMode string, 
 		return wechatOAuthConfig{}, infraerrors.ServiceUnavailable("CONFIG_NOT_READY", "wechat oauth settings service not ready")
 	}
 
-	apiBaseURL := ""
-	if h != nil && h.settingSvc != nil {
-		settings, err := h.settingSvc.GetAllSettings(ctx)
-		if err == nil && settings != nil {
-			apiBaseURL = strings.TrimSpace(settings.APIBaseURL)
-		}
-	}
-
 	effective, err := h.settingSvc.GetWeChatConnectOAuthConfig(ctx)
 	if err != nil {
 		return wechatOAuthConfig{}, err
@@ -1007,7 +1001,7 @@ func (h *AuthHandler) getWeChatOAuthConfig(ctx context.Context, rawMode string, 
 		mode:             mode,
 		appID:            strings.TrimSpace(effective.AppIDForMode(mode)),
 		appSecret:        strings.TrimSpace(effective.AppSecretForMode(mode)),
-		redirectURI:      firstNonEmpty(strings.TrimSpace(effective.RedirectURL), resolveWeChatOAuthAbsoluteURL(apiBaseURL, c, "/api/v1/auth/oauth/wechat/callback")),
+		redirectURI:      firstNonEmpty(strings.TrimSpace(effective.RedirectURL), h.resolveWeChatOAuthCallbackURL(ctx, c, "/api/v1/auth/oauth/wechat/callback")),
 		frontendCallback: firstNonEmpty(strings.TrimSpace(effective.FrontendRedirectURL), wechatOAuthDefaultFrontendCB),
 		scope:            effective.ScopeForMode(mode),
 		openEnabled:      effective.OpenEnabled,
@@ -1091,22 +1085,61 @@ func buildWeChatAuthorizeURL(cfg wechatOAuthConfig, state string) (string, error
 	return u.String(), nil
 }
 
-func resolveWeChatOAuthAbsoluteURL(apiBaseURL string, c *gin.Context, callbackPath string) string {
+func (h *AuthHandler) resolveWeChatOAuthCallbackURL(ctx context.Context, c *gin.Context, callbackPath string) string {
+	var dbFrontendURL, dbAPIBaseURL string
+	if h != nil && h.settingSvc != nil {
+		if settings, err := h.settingSvc.GetAllSettings(ctx); err == nil && settings != nil {
+			dbFrontendURL = strings.TrimSpace(settings.FrontendURL)
+			dbAPIBaseURL = strings.TrimSpace(settings.APIBaseURL)
+		}
+	}
+	var cfg *config.Config
+	var cfgFrontendURL string
+	if h != nil && h.cfg != nil {
+		cfg = h.cfg
+		cfgFrontendURL = strings.TrimSpace(h.cfg.Server.FrontendURL)
+	}
+	frontendOrigin := ""
+	for _, candidate := range []string{dbFrontendURL, cfgFrontendURL} {
+		if origin, ok := ip.ExtractHTTPOrigin(candidate); ok {
+			frontendOrigin = origin
+			break
+		}
+	}
+	return resolveWeChatOAuthAbsoluteURLWithConfig(
+		frontendOrigin,
+		dbAPIBaseURL,
+		c,
+		cfg,
+		callbackPath,
+	)
+}
+
+func resolveWeChatOAuthAbsoluteURLWithConfig(frontendURL string, apiBaseURL string, c *gin.Context, cfg *config.Config, callbackPath string) string {
 	callbackPath = strings.TrimSpace(callbackPath)
 	if callbackPath == "" {
 		return ""
 	}
 
-	if raw := strings.TrimSpace(apiBaseURL); raw != "" {
-		if parsed, err := url.Parse(raw); err == nil && parsed.Scheme != "" && parsed.Host != "" {
-			basePath := strings.TrimRight(parsed.EscapedPath(), "/")
-			targetPath := callbackPath
-			if basePath != "" && strings.HasSuffix(basePath, "/api/v1") && strings.HasPrefix(callbackPath, "/api/v1") {
-				targetPath = basePath + strings.TrimPrefix(callbackPath, "/api/v1")
-			} else if basePath != "" {
-				targetPath = basePath + callbackPath
+	if origin, ok := ip.ExtractHTTPOrigin(frontendURL); ok {
+		return origin + callbackPath
+	}
+
+	if raw := strings.TrimSpace(apiBaseURL); raw != "" && !strings.ContainsAny(raw, "\\\r\n\t") {
+		if parsed, err := url.Parse(raw); err == nil && parsed.IsAbs() && parsed.Opaque == "" && parsed.User == nil {
+			scheme := strings.ToLower(strings.TrimSpace(parsed.Scheme))
+			if validHost, ok := ip.ValidateRequestHost(parsed.Host); ok && (scheme == "http" || scheme == "https") {
+				basePath := strings.TrimRight(parsed.EscapedPath(), "/")
+				targetPath := callbackPath
+				if basePath == "/v1" {
+					targetPath = callbackPath
+				} else if basePath != "" && strings.HasSuffix(basePath, "/api/v1") && strings.HasPrefix(callbackPath, "/api/v1") {
+					targetPath = basePath + strings.TrimPrefix(callbackPath, "/api/v1")
+				} else if basePath != "" {
+					targetPath = basePath + callbackPath
+				}
+				return scheme + "://" + validHost + targetPath
 			}
-			return parsed.Scheme + "://" + parsed.Host + targetPath
 		}
 	}
 
@@ -1114,13 +1147,10 @@ func resolveWeChatOAuthAbsoluteURL(apiBaseURL string, c *gin.Context, callbackPa
 		return ""
 	}
 	scheme := "http"
-	if isRequestHTTPS(c) {
+	if isRequestHTTPSWithConfig(c, cfg) {
 		scheme = "https"
 	}
-	host := strings.TrimSpace(c.Request.Host)
-	if forwardedHost := strings.TrimSpace(c.GetHeader("X-Forwarded-Host")); forwardedHost != "" {
-		host = forwardedHost
-	}
+	host := publicRequestHostWithConfig(c, cfg)
 	if host == "" {
 		return ""
 	}
@@ -1295,7 +1325,8 @@ func normalizeWeChatPaymentScope(raw string) string {
 
 func normalizeWeChatPaymentRedirectPath(path string) string {
 	path = strings.TrimSpace(path)
-	if path == "" {
+	if path == "" || !strings.HasPrefix(path, "/") || strings.HasPrefix(path, "//") ||
+		strings.Contains(path, "://") || hasUnsafeRedirectControlOrBackslash(path) {
 		return wechatPaymentOAuthDefaultTo
 	}
 	if path == "/payment" {
@@ -1308,13 +1339,7 @@ func normalizeWeChatPaymentRedirectPath(path string) string {
 }
 
 func (h *AuthHandler) resolveWeChatPaymentOAuthCallbackURL(ctx context.Context, c *gin.Context) string {
-	apiBaseURL := ""
-	if h != nil && h.settingSvc != nil {
-		if settings, err := h.settingSvc.GetAllSettings(ctx); err == nil && settings != nil {
-			apiBaseURL = strings.TrimSpace(settings.APIBaseURL)
-		}
-	}
-	return resolveWeChatOAuthAbsoluteURL(apiBaseURL, c, "/api/v1/auth/oauth/wechat/payment/callback")
+	return h.resolveWeChatOAuthCallbackURL(ctx, c, "/api/v1/auth/oauth/wechat/payment/callback")
 }
 
 func encodeWeChatPaymentOAuthContext(ctx wechatPaymentOAuthContext) (string, error) {

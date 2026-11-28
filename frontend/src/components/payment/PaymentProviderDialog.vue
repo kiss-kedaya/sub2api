@@ -268,7 +268,7 @@
             <p>
               {{ t(providerWebhookHint) }}
             </p>
-            <code class="mt-1 block break-all rounded bg-info/10 px-2 py-1 font-mono">
+            <code class="mt-1 block wrap-anywhere rounded bg-info/10 px-2 py-1 font-mono">
               {{ providerWebhookUrl }}
             </code>
             <p v-if="form.provider_key === 'stripe'" class="mt-2 leading-relaxed">

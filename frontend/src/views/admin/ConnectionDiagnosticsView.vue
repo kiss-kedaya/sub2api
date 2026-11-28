@@ -1,4 +1,4 @@
-<template><AppLayout><div class="space-y-5"><AdminPageHeader :title="title" /><div class="flex flex-wrap gap-3"><input v-model="start" class="input w-auto" type="datetime-local" /><input v-model="end" class="input w-auto" type="datetime-local" /><button class="btn btn-primary" @click="apply">{{ refreshText }}</button></div><UsageConnections :filters="filters" :refresh-key="refreshKey" /></div></AppLayout></template>
+<template><AppLayout><div class="space-y-5"><AdminPageHeader :title="title" /><div class="flex flex-wrap items-center gap-3"><UInput v-model="start" class="w-auto" type="datetime-local" /><UInput v-model="end" class="w-auto" type="datetime-local" /><UButton :label="refreshText" @click="apply" /></div><UsageConnections :filters="filters" :refresh-key="refreshKey" /></div></AppLayout></template>
 <script setup lang="ts">
 import {computed,ref} from 'vue'
 import {useI18n} from 'vue-i18n'

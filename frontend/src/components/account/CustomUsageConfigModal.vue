@@ -189,7 +189,7 @@ async function save() {
   finally { if (!request.signal.aborted) saving.value = false }
 }
 function close() { if (!saving.value) { reset(); emit('close') } }
-watch(() => [props.show, props.account?.id], () => { if (props.show) void load(); else reset() }, { immediate: true })
+watch([() => props.show, () => props.account?.id], () => { if (props.show) void load(); else reset() }, { immediate: true })
 watch([draft, headersText, extractorText], () => { testResult.value = null; validation.value = null; actionError.value = null }, { deep: true })
 onUnmounted(reset)
 </script>

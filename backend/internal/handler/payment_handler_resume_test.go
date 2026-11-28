@@ -14,6 +14,7 @@ import (
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/ent/enttest"
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/payment"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
@@ -204,6 +205,8 @@ func TestResolveOrderPublicByResumeTokenReturnsFrontendContractFields(t *testing
 		SetPaidAt(time.Now()).
 		SetClientIP("127.0.0.1").
 		SetSrcHost("api.example.com").
+		SetRefundRequestedBy("user:99").
+		SetRefundRequestReason("private refund reason").
 		SetProviderSnapshot(map[string]any{"currency": "USD"}).
 		Save(context.Background())
 	require.NoError(t, err)
@@ -252,6 +255,8 @@ func TestResolveOrderPublicByResumeTokenReturnsFrontendContractFields(t *testing
 	require.Contains(t, resp.Data, "created_at")
 	require.Contains(t, resp.Data, "expires_at")
 	require.Contains(t, resp.Data, "refund_amount")
+	require.NotContains(t, resp.Data, "refund_requested_by")
+	require.NotContains(t, resp.Data, "refund_request_reason")
 }
 
 func TestResolveOrderPublicByResumeTokenReturnsBadRequestForMismatchedToken(t *testing.T) {
@@ -369,4 +374,68 @@ func TestVerifyOrderPublicRejectsBlankOutTradeNo(t *testing.T) {
 	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &resp))
 	require.Equal(t, http.StatusBadRequest, resp.Code)
 	require.Equal(t, "INVALID_OUT_TRADE_NO", resp.Reason)
+}
+
+func TestPaymentPublicRequestHostWithConfig(t *testing.T) {
+	t.Parallel()
+
+	makeCtx := func(host, remoteAddr string, xfHosts ...string) *gin.Context {
+		rec := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(rec)
+		req := httptest.NewRequest(http.MethodPost, "http://"+host+"/api/v1/payment/orders", nil)
+		req.Host = host
+		req.RemoteAddr = remoteAddr
+		for _, v := range xfHosts {
+			req.Header.Add("X-Forwarded-Host", v)
+		}
+		c.Request = req
+		return c
+	}
+
+	trustedCfg := &config.Config{
+		Server: config.ServerConfig{
+			TrustedProxiesConfigured: true,
+			TrustedProxies:           []string{"127.0.0.1/32", "::1/128"},
+		},
+	}
+
+	// Default (nil or unconfigured trusted proxies) ignores X-Forwarded-Host.
+	c := makeCtx("app.example.com", "127.0.0.1:43210", "evil.example")
+	require.Equal(t, "app.example.com", publicRequestHostWithConfig(c, nil))
+	require.Equal(t, "app.example.com", publicRequestHostWithConfig(c, &config.Config{
+		Server: config.ServerConfig{TrustedProxies: []string{"127.0.0.1/32"}, TrustedProxiesConfigured: false},
+	}))
+
+	// Wildcard trusted proxies (0.0.0.0/0, ::/0) are never trusted.
+	require.Equal(t, "app.example.com", publicRequestHostWithConfig(c, &config.Config{
+		Server: config.ServerConfig{TrustedProxies: []string{"0.0.0.0/0", "::/0"}, TrustedProxiesConfigured: true},
+	}))
+
+	// Untrusted peer cannot spoof X-Forwarded-Host.
+	cUntrusted := makeCtx("app.example.com", "203.0.113.50:443", "evil.example")
+	require.Equal(t, "app.example.com", publicRequestHostWithConfig(cUntrusted, trustedCfg))
+
+	// Trusted peer: multi-value comma, duplicate headers, and invalid host syntax fall back to Host.
+	require.Equal(t, "app.example.com", publicRequestHostWithConfig(makeCtx("app.example.com", "127.0.0.1:1234", "evil.example, app.example.com"), trustedCfg))
+	require.Equal(t, "app.example.com", publicRequestHostWithConfig(makeCtx("app.example.com", "127.0.0.1:1234", "first.example", "second.example"), trustedCfg))
+	for _, bad := range []string{
+		"user@evil.example",
+		"evil.example/path",
+		`evil.example\path`,
+		"evil.example?x=1",
+		"evil.example#frag",
+		"evil.example space",
+	} {
+		require.Equal(t, "app.example.com", publicRequestHostWithConfig(makeCtx("app.example.com", "127.0.0.1:1234", bad), trustedCfg), "bad=%q", bad)
+	}
+
+	// Even from a trusted proxy peer, a syntactically valid X-Forwarded-Host is
+	// intentionally ignored in favor of the validated Host header.
+	require.Equal(t, "127.0.0.1:8080", publicRequestHostWithConfig(makeCtx("127.0.0.1:8080", "127.0.0.1:1234", "pay.app.example.com:8443"), trustedCfg))
+	require.Equal(t, "app.example.com:17777", publicRequestHostWithConfig(makeCtx("app.example.com:17777", "127.0.0.1:1234", "evil.example"), trustedCfg))
+
+	// Invalid Host header fails closed to empty string even with valid X-Forwarded-Host.
+	cBadHost := makeCtx("app.example.com", "127.0.0.1:1234", "pay.app.example.com:8443")
+	cBadHost.Request.Host = "evil.example/path"
+	require.Equal(t, "", publicRequestHostWithConfig(cBadHost, trustedCfg))
 }

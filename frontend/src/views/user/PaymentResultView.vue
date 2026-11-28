@@ -3,21 +3,21 @@
     <main class="signal-payment-result__main">
       <!-- Loading -->
       <div v-if="loading" class="flex items-center justify-center py-20">
-        <UIcon name="i-lucide-loader-circle" class="size-8 animate-spin text-muted" />
+        <UIcon name="i-lucide-loader-circle" class="size-8 animate-spin text-muted motion-reduce:animate-none" />
       </div>
       <template v-else>
         <!-- Status Icon -->
         <header class="signal-payment-result__status">
           <div v-if="isSuccess"
-            class="signal-payment-result__status-icon signal-payment-result__status-icon--success">
+            class="signal-payment-result__status-icon signal-payment-result__status-icon--success rounded-lg">
             <UIcon name="i-lucide-check" class="size-7" />
           </div>
           <div v-else-if="isPending"
-            class="signal-payment-result__status-icon signal-payment-result__status-icon--pending">
+            class="signal-payment-result__status-icon signal-payment-result__status-icon--pending rounded-lg">
             <UIcon name="i-lucide-clock" class="size-7" />
           </div>
           <div v-else
-            class="signal-payment-result__status-icon signal-payment-result__status-icon--failed">
+            class="signal-payment-result__status-icon signal-payment-result__status-icon--failed rounded-lg">
             <UIcon name="i-lucide-x" class="size-7" />
           </div>
           <h1>
@@ -28,7 +28,7 @@
           </p>
         </header>
         <!-- Order Info -->
-        <section v-if="order" class="signal-payment-result__details">
+        <section v-if="order" class="signal-payment-result__details rounded-lg">
           <div>
             <div v-if="hasOrderId(order)" class="flex justify-between">
               <span>{{ t('payment.orders.orderId') }}</span>
@@ -43,7 +43,7 @@
               <span class="font-medium">{{ formatGatewayAmount(baseAmount) }}</span>
             </div>
             <div v-if="hasAmountFields(order) && order.fee_rate > 0" class="flex justify-between">
-              <span>{{ t('payment.orders.fee') }} ({{ order.fee_rate }}%)</span>
+              <span>{{ t('payment.orders.fee') }} (<span class="tabular-nums">{{ order.fee_rate }}%</span>)</span>
               <span class="font-medium">{{ formatGatewayAmount(feeAmount) }}</span>
             </div>
             <div v-if="hasAmountFields(order)" class="flex justify-between">
@@ -65,7 +65,7 @@
           </div>
         </section>
         <!-- EasyPay return info (when no order loaded) -->
-        <section v-else-if="returnInfo" class="signal-payment-result__details">
+        <section v-else-if="returnInfo" class="signal-payment-result__details rounded-lg">
           <div>
             <div v-if="returnInfo.outTradeNo" class="flex justify-between">
               <span>{{ t('payment.orders.orderId') }}</span>
@@ -138,6 +138,7 @@ const SUCCESS_STATUSES = new Set(['COMPLETED', 'PAID', 'RECHARGING'])
 const PENDING_STATUSES = new Set(['PENDING', 'CREATED', 'WAITING', 'PROCESSING'])
 const STATUS_REFRESH_INTERVAL_MS = 2000
 const STATUS_REFRESH_MAX_ATTEMPTS = 15
+const PAYMENT_RESULT_RESUME_STORAGE_PREFIX = 'payment.result.resume_token:'
 
 let statusRefreshTimer: ReturnType<typeof setTimeout> | null = null
 let userBalanceRefreshStarted = false
@@ -203,7 +204,7 @@ function setResolvedOrder(nextOrder: ResolvedOrder | null): void {
 }
 
 function refreshUserBalanceForSuccessfulOrder(nextOrder: ResolvedOrder | null): void {
-  if (!nextOrder || userBalanceRefreshStarted || normalizeOrderStatus(nextOrder.status) !== 'COMPLETED') {
+  if (!authStore.isAuthenticated || !nextOrder || userBalanceRefreshStarted || normalizeOrderStatus(nextOrder.status) !== 'COMPLETED') {
     return
   }
   if ('order_type' in nextOrder && nextOrder.order_type !== 'balance') {
@@ -247,9 +248,93 @@ function isPendingStatus(status: string | null | undefined): boolean {
 function readRouteQueryString(key: string): string {
   const value = route.query[key]
   if (Array.isArray(value)) {
+    const firstNonEmpty = value.find((item): item is string => typeof item === 'string' && item.trim() !== '')
+    if (firstNonEmpty !== undefined) {
+      return firstNonEmpty
+    }
     return typeof value[0] === 'string' ? value[0] : ''
   }
   return typeof value === 'string' ? value : ''
+}
+
+function parsePositiveOrderId(raw: string): number {
+  const trimmed = raw.trim()
+  if (!trimmed) {
+    return 0
+  }
+  const parsed = Number(trimmed)
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : 0
+}
+
+function serializeRemainingQueryForResumeKey(query: Record<string, unknown>): string {
+  const params = new URLSearchParams()
+  const keys = Object.keys(query)
+    .filter((key) => key !== 'resume_token')
+    .sort()
+  for (const key of keys) {
+    const raw = query[key]
+    if (Array.isArray(raw)) {
+      for (const item of raw) {
+        if (typeof item === 'string') {
+          params.append(key, item)
+        } else if (item === null) {
+          params.append(key, '')
+        }
+      }
+    } else if (typeof raw === 'string') {
+      params.append(key, raw)
+    } else if (raw === null) {
+      params.append(key, '')
+    }
+  }
+  return params.toString()
+}
+
+interface ResumeTokenStorageContext {
+  routeOrderId: number
+  routeOutTradeNo: string
+  remainingQueryKey: string
+}
+
+function resolveResumeSessionStorageKey(context: ResumeTokenStorageContext): string {
+  if (context.routeOrderId > 0 && context.routeOutTradeNo) {
+    return `${PAYMENT_RESULT_RESUME_STORAGE_PREFIX}order:${context.routeOrderId}:trade:${encodeURIComponent(context.routeOutTradeNo)}`
+  }
+  if (context.routeOrderId > 0) {
+    return `${PAYMENT_RESULT_RESUME_STORAGE_PREFIX}order:${context.routeOrderId}`
+  }
+  if (context.routeOutTradeNo) {
+    return `${PAYMENT_RESULT_RESUME_STORAGE_PREFIX}trade:${encodeURIComponent(context.routeOutTradeNo)}`
+  }
+  if (!context.remainingQueryKey) {
+    return `${PAYMENT_RESULT_RESUME_STORAGE_PREFIX}token_only`
+  }
+  return `${PAYMENT_RESULT_RESUME_STORAGE_PREFIX}query:${context.remainingQueryKey}`
+}
+
+function stashResumeToken(resumeToken: string, context: ResumeTokenStorageContext): void {
+  const trimmed = resumeToken.trim()
+  if (!trimmed || typeof window === 'undefined') {
+    return
+  }
+  const storageKey = resolveResumeSessionStorageKey(context)
+  try {
+    window.sessionStorage.setItem(storageKey, trimmed)
+  } catch {
+    // Ignore restricted storage environments (e.g. SecurityError / QuotaExceededError).
+  }
+}
+
+function readStashedResumeToken(context: ResumeTokenStorageContext): string {
+  if (typeof window === 'undefined') {
+    return ''
+  }
+  const storageKey = resolveResumeSessionStorageKey(context)
+  try {
+    return (window.sessionStorage.getItem(storageKey) || '').trim()
+  } catch {
+    return ''
+  }
 }
 
 function restoreRecoverySnapshot(context: {
@@ -261,7 +346,12 @@ function restoreRecoverySnapshot(context: {
     return null
   }
 
-  const rawSnapshot = window.localStorage.getItem(PAYMENT_RECOVERY_STORAGE_KEY)
+  let rawSnapshot: string | null = null
+  try {
+    rawSnapshot = window.localStorage.getItem(PAYMENT_RECOVERY_STORAGE_KEY)
+  } catch {
+    return null
+  }
   if (!rawSnapshot) {
     return null
   }
@@ -302,16 +392,19 @@ async function resolveOrderFromResumeToken(resumeToken: string): Promise<Resolve
 }
 
 async function resolveOrderFromOutTradeNo(outTradeNo: string): Promise<ResolvedOrder | null> {
-  try {
-    const result = await paymentAPI.verifyOrder(outTradeNo)
-    return result.data
-  } catch (_err: unknown) {
+  if (authStore.isAuthenticated) {
     try {
-      const result = await paymentAPI.verifyOrderPublic(outTradeNo)
+      const result = await paymentAPI.verifyOrder(outTradeNo)
       return result.data
-    } catch (_innerErr: unknown) {
-      return null
+    } catch (_err: unknown) {
+      // Fall through to public verification when authenticated verification fails.
     }
+  }
+  try {
+    const result = await paymentAPI.verifyOrderPublic(outTradeNo)
+    return result.data
+  } catch (_innerErr: unknown) {
+    return null
   }
 }
 
@@ -324,7 +417,11 @@ function clearStatusRefreshTimer(): void {
 
 function clearRecoverySnapshot(): void {
   if (typeof window === 'undefined') return
-  clearPaymentRecoverySnapshot(window.localStorage, PAYMENT_RECOVERY_STORAGE_KEY)
+  try {
+    clearPaymentRecoverySnapshot(window.localStorage, PAYMENT_RECOVERY_STORAGE_KEY)
+  } catch {
+    // Ignore restricted storage environments.
+  }
 }
 
 function clearRecoverySnapshotForTerminalStatus(status: string | null | undefined): void {
@@ -355,11 +452,40 @@ function scheduleStatusRefresh(refreshOrder: (() => Promise<ResolvedOrder | null
 }
 
 onMounted(async () => {
-  const resumeToken = readRouteQueryString('resume_token')
-  const routeOrderId = Number(readRouteQueryString('order_id')) || 0
-  let outTradeNo = readRouteQueryString('out_trade_no')
+  const queryResumeToken = readRouteQueryString('resume_token').trim()
+  const routeOrderId = parsePositiveOrderId(readRouteQueryString('order_id'))
+  const routeOutTradeNo = readRouteQueryString('out_trade_no').trim()
+  let outTradeNo = routeOutTradeNo
+  const routeTradeStatus = readRouteQueryString('trade_status')
+  const routeMoney = readRouteQueryString('money')
+  const routeType = readRouteQueryString('type')
   let orderId = 0
   let resumeTokenLookupFailed = false
+
+  const resumeStorageContext: ResumeTokenStorageContext = {
+    routeOrderId,
+    routeOutTradeNo,
+    remainingQueryKey: serializeRemainingQueryForResumeKey(route.query as Record<string, unknown>),
+  }
+  if (queryResumeToken) {
+    // Stash the signed resume_token in tab-scoped sessionStorage before
+    // scrubbing the URL so F5 reloads (including unauthenticated cross-origin
+    // returns and token-only URLs) continue using the public resolver without
+    // re-exposing resume_token in the address bar.
+    stashResumeToken(queryResumeToken, resumeStorageContext)
+  }
+  const resumeToken = queryResumeToken || readStashedResumeToken(resumeStorageContext)
+
+  // Scrub the signed resume_token from the browser address bar immediately so
+  // it does not linger in browser history or leak via outbound Referer headers.
+  const hasResumeTokenQuery = Object.prototype.hasOwnProperty.call(route.query, 'resume_token')
+  if ((queryResumeToken || hasResumeTokenQuery) && typeof router.replace === 'function') {
+    const sanitizedQuery = { ...route.query }
+    delete sanitizedQuery.resume_token
+    void Promise.resolve(router.replace({ query: sanitizedQuery })).catch(() => {
+      // Best-effort URL scrubbing; order resolution continues using the in-memory token.
+    })
+  }
 
   const restored = restoreRecoverySnapshot({
     resumeToken,
@@ -393,10 +519,10 @@ onMounted(async () => {
     orderId = routeOrderId
   }
 
-  const hasLegacyFallbackContext = readRouteQueryString('trade_status').trim() !== ''
+  const hasLegacyFallbackContext = routeTradeStatus.trim() !== ''
   const shouldUsePublicOutTradeNo = outTradeNo !== '' && (hasLegacyFallbackContext || routeOrderId > 0 || orderId > 0)
 
-  if (!order.value && orderId && (!resumeToken || routeOrderId > 0)) {
+  if (!order.value && authStore.isAuthenticated && orderId && (!resumeToken || routeOrderId > 0)) {
     try {
       setResolvedOrder(await paymentStore.pollOrderStatus(orderId))
     } catch (_err: unknown) {
@@ -417,9 +543,9 @@ onMounted(async () => {
   if (!order.value && !orderId && outTradeNo && hasLegacyFallbackContext) {
     returnInfo.value = {
       outTradeNo,
-      money: String(route.query.money || ''),
-      type: String(route.query.type || ''),
-      tradeStatus: String(route.query.trade_status || ''),
+      money: routeMoney,
+      type: routeType,
+      tradeStatus: routeTradeStatus,
     }
   }
 
@@ -431,7 +557,7 @@ onMounted(async () => {
       }
     }
 
-    if (orderId) {
+    if (authStore.isAuthenticated && orderId) {
       try {
         return await paymentStore.pollOrderStatus(orderId)
       } catch (_err: unknown) {
@@ -467,27 +593,45 @@ onBeforeUnmount(() => {
 .dark .signal-payment-result { background: transparent; }
 .signal-payment-result__main { display: grid; width: min(100%, 480px); gap: 16px; }
 .signal-payment-result__status { display: grid; justify-items: center; padding-bottom: 4px; text-align: center; }
-.signal-payment-result__status-icon { display: grid; width: 56px; height: 56px; place-items: center; margin-bottom: 14px; border-radius: 8px; background: var(--ui-bg); box-shadow: 0 0 0 1px var(--ui-border), 0 1px 2px rgba(10, 10, 10, 0.05); }
+.signal-payment-result__status-icon { display: grid; width: 56px; height: 56px; place-items: center; margin-bottom: 14px; border-radius: 8px; background: var(--ui-bg); box-shadow: 0 0 0 1px var(--ui-border), var(--app-shadow-card, 0 1px 2px rgba(10, 10, 10, 0.05)); }
 .signal-payment-result__status-icon--success { color: var(--ui-success); }
-.signal-payment-result__status-icon--pending { color: #b45309; }
+.signal-payment-result__status-icon--pending { color: var(--ui-warning, #b45309); }
 .dark .signal-payment-result__status-icon--pending { color: var(--ui-warning); }
 .signal-payment-result__status-icon--failed { color: var(--ui-error); }
 .signal-payment-result__status h1 { margin: 0; color: var(--ui-text-highlighted); font-size: 22px; font-weight: 600; line-height: 1.3; }
 .signal-payment-result__hint { margin: 6px 0 0; color: var(--ui-text-muted); font-size: 13px; line-height: 1.55; }
-.signal-payment-result__details { padding: 4px 18px; border-radius: 8px; background: var(--ui-bg); box-shadow: 0 0 0 1px var(--ui-border), 0 1px 2px rgba(10, 10, 10, 0.05); }
-.dark .signal-payment-result__details, .dark .signal-payment-result__status-icon { box-shadow: 0 0 0 1px var(--ui-border); }
+.signal-payment-result__details { padding: 4px 18px; border-radius: 8px; background: var(--ui-bg); box-shadow: 0 0 0 1px var(--ui-border), var(--app-shadow-card, 0 1px 2px rgba(10, 10, 10, 0.05)); }
+.dark .signal-payment-result__details, .dark .signal-payment-result__status-icon { box-shadow: 0 0 0 1px var(--ui-border), var(--app-shadow-card); }
 .signal-payment-result__details > div { display: grid; gap: 0; }
 .signal-payment-result__details > div > div { display: flex; min-width: 0; align-items: flex-start; justify-content: space-between; gap: 20px; padding: 11px 0; border-bottom: 1px solid var(--ui-border); font-size: 13px; }
 .signal-payment-result__details > div > div:last-child { border-bottom: 0; }
 .signal-payment-result__details > div > div > span:first-child { flex: 0 0 auto; color: var(--ui-text-muted); }
 .signal-payment-result__details > div > div > span:last-child { min-width: 0; overflow-wrap: anywhere; color: var(--ui-text-highlighted); font-variant-numeric: tabular-nums; text-align: right; }
 .signal-payment-result__actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
-@media (max-width: 374px) {
+.signal-payment-result__actions :deep(button:not(:disabled)),
+.signal-payment-result__actions :deep(a) {
+  transition: transform var(--cb-t-fast, 140ms) var(--cb-ease-press, cubic-bezier(0.3, 0, 0.2, 1));
+}
+.signal-payment-result__actions :deep(button:not(:disabled):active),
+.signal-payment-result__actions :deep(a:active) {
+  transform: scale(var(--cb-press, 0.97));
+}
+@media (max-width: 479px) {
   .signal-payment-result { padding: 16px 12px; }
   .signal-payment-result__status h1 { font-size: 20px; }
   .signal-payment-result__details { padding: 4px 14px; }
   .signal-payment-result__details > div > div { align-items: stretch; flex-direction: column; gap: 4px; }
   .signal-payment-result__details > div > div > span:last-child { text-align: left; }
   .signal-payment-result__actions { grid-template-columns: minmax(0, 1fr); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .signal-payment-result__actions :deep(button:not(:disabled)),
+  .signal-payment-result__actions :deep(a) {
+    transition: none;
+  }
+  .signal-payment-result__actions :deep(button:not(:disabled):active),
+  .signal-payment-result__actions :deep(a:active) {
+    transform: none;
+  }
 }
 </style>

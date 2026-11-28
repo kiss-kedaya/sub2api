@@ -853,6 +853,7 @@ type GatewayService struct {
 	billingService        *BillingService
 	rateLimitService      *RateLimitService
 	billingCacheService   *BillingCacheService
+	authCacheInvalidator  atomic.Pointer[APIKeyAuthCacheInvalidator]
 	identityService       *IdentityService
 	httpUpstream          HTTPUpstream
 	deferredService       *DeferredService

@@ -3,21 +3,21 @@
     <div class="mx-auto max-w-lg space-y-6 py-8">
       <UserPageHeader flush :title="t('nav.buySubscription')" />
       <div v-if="loading" class="flex items-center justify-center py-20">
-        <UIcon name="i-lucide-loader-circle" class="size-8 animate-spin text-muted" />
+        <UIcon name="i-lucide-loader-circle" class="size-8 animate-spin text-muted motion-reduce:animate-none" />
       </div>
 
-      <div v-else-if="errorMessage" class="rounded-lg bg-default shadow-xs ring ring-default dark:shadow-none p-8 text-center">
+      <div v-else-if="errorMessage" class="rounded-lg bg-default p-8 text-center shadow-(--app-shadow-card) ring ring-default">
         <div class="mx-auto mb-4 flex size-14 items-center justify-center rounded-lg bg-error/10">
           <UIcon name="i-lucide-circle-alert" class="size-7 text-error" />
         </div>
         <h2 class="text-base font-semibold text-highlighted">{{ t('payment.airwallexLoadFailed') }}</h2>
-        <p class="mt-2 text-sm text-muted">{{ errorMessage }}</p>
-        <button class="btn btn-primary mt-6" @click="router.push('/purchase')">{{ t('payment.result.backToRecharge') }}</button>
+        <p class="mt-2 wrap-anywhere text-sm text-muted">{{ errorMessage }}</p>
+        <button type="button" class="btn btn-primary mt-6 min-h-11 sm:min-h-0" @click="router.push('/purchase')">{{ t('payment.result.backToRecharge') }}</button>
       </div>
 
-      <div v-else class="rounded-lg bg-default shadow-xs ring ring-default dark:shadow-none p-6">
+      <div v-else class="rounded-lg bg-default p-6 shadow-(--app-shadow-card) ring ring-default">
         <div class="flex flex-col items-center space-y-4 py-4">
-          <UIcon name="i-lucide-loader-circle" class="size-9 animate-spin text-muted" />
+          <UIcon name="i-lucide-loader-circle" class="size-9 animate-spin text-muted motion-reduce:animate-none" />
           <p class="text-sm text-muted">{{ t('payment.qr.payInNewWindowHint') }}</p>
         </div>
       </div>

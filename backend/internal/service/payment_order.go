@@ -18,6 +18,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/payment"
 	"github.com/Wei-Shaw/sub2api/internal/payment/provider"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/ip"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/servertiming"
 	"github.com/shopspring/decimal"
 )
@@ -117,15 +118,17 @@ func (s *PaymentService) CreateOrder(ctx context.Context, req CreateOrderRequest
 		return oauthResp, nil
 	}
 	// Reject an attacker-controlled result-page query before an order is stored
-	// or a signed checkout request is sent to the provider.
-	if _, err := CanonicalizeReturnURL(req.ReturnURL, req.SrcHost, req.SrcURL); err != nil {
+	// or a signed checkout request is sent to the provider. Compute once and
+	// pass through to invokeProvider so server origin resolution is consistent.
+	canonicalReturnURL, err := s.canonicalizeOrderReturnURL(ctx, req, sel)
+	if err != nil {
 		return nil, err
 	}
 	order, err := s.createOrderInTx(ctx, req, user, plan, cfg, orderAmount, limitAmount, feeRate, payAmount, sel)
 	if err != nil {
 		return nil, err
 	}
-	resp, err := s.invokeProvider(ctx, order, req, cfg, limitAmount, payAmountStr, payAmount, plan, sel)
+	resp, err := s.invokeProvider(ctx, order, req, cfg, limitAmount, payAmountStr, payAmount, plan, sel, canonicalReturnURL)
 	if err != nil {
 		_, _ = s.entClient.PaymentOrder.UpdateOneID(order.ID).
 			SetStatus(OrderStatusFailed).
@@ -457,7 +460,48 @@ func (s *PaymentService) usesOfficialWxpayVisibleMethod(ctx context.Context) boo
 	return inst.ProviderKey == payment.TypeWxpay
 }
 
-func (s *PaymentService) invokeProvider(ctx context.Context, order *dbent.PaymentOrder, req CreateOrderRequest, cfg *PaymentConfig, limitAmount float64, payAmountStr string, payAmount float64, plan *dbent.SubscriptionPlan, sel *payment.InstanceSelection) (*CreateOrderResponse, error) {
+func (s *PaymentService) resolveAuthoritativeReturnOrigin(ctx context.Context, sel *payment.InstanceSelection) string {
+	var dbFrontendURL, dbAPIBaseURL string
+	if s != nil && s.configService != nil && s.configService.settingRepo != nil {
+		if vals, err := s.configService.settingRepo.GetMultiple(ctx, []string{
+			SettingKeyFrontendURL,
+			SettingKeyAPIBaseURL,
+		}); err == nil {
+			dbFrontendURL = vals[SettingKeyFrontendURL]
+			dbAPIBaseURL = vals[SettingKeyAPIBaseURL]
+		}
+	}
+	var cfgFrontendURL string
+	if s != nil && s.cfg != nil {
+		cfgFrontendURL = s.cfg.Server.FrontendURL
+	}
+	var providerReturnURL string
+	if sel != nil && sel.Config != nil {
+		providerReturnURL = sel.Config["returnUrl"]
+	}
+	for _, candidate := range []string{
+		dbFrontendURL,
+		cfgFrontendURL,
+		dbAPIBaseURL,
+		providerReturnURL,
+	} {
+		if origin, ok := ip.ExtractHTTPOrigin(candidate); ok {
+			return origin
+		}
+	}
+	return ""
+}
+
+func (s *PaymentService) canonicalizeOrderReturnURL(ctx context.Context, req CreateOrderRequest, sel *payment.InstanceSelection) (string, error) {
+	authoritativeOrigin := s.resolveAuthoritativeReturnOrigin(ctx, sel)
+	requestOrigin := strings.TrimSpace(req.SrcHost)
+	if scheme := strings.ToLower(strings.TrimSpace(req.SrcScheme)); (scheme == "http" || scheme == "https") && requestOrigin != "" && !strings.Contains(requestOrigin, "://") {
+		requestOrigin = scheme + "://" + requestOrigin
+	}
+	return CanonicalizeReturnURLWithOrigin(req.ReturnURL, requestOrigin, authoritativeOrigin)
+}
+
+func (s *PaymentService) invokeProvider(ctx context.Context, order *dbent.PaymentOrder, req CreateOrderRequest, cfg *PaymentConfig, limitAmount float64, payAmountStr string, payAmount float64, plan *dbent.SubscriptionPlan, sel *payment.InstanceSelection, canonicalReturnURL string) (*CreateOrderResponse, error) {
 	prov, err := provider.CreateProvider(sel.ProviderKey, sel.InstanceID, sel.Config)
 	if err != nil {
 		slog.Error("[PaymentService] CreateProvider failed", "provider", sel.ProviderKey, "instance", sel.InstanceID, "error", err)
@@ -475,10 +519,6 @@ func (s *PaymentService) invokeProvider(ctx context.Context, order *dbent.Paymen
 	}
 	subject := s.buildPaymentSubject(plan, limitAmount, cfg, sel)
 	outTradeNo := order.OutTradeNo
-	canonicalReturnURL, err := CanonicalizeReturnURL(req.ReturnURL, req.SrcHost, req.SrcURL)
-	if err != nil {
-		return nil, err
-	}
 	resumeToken := ""
 	if resume := s.paymentResume(); resume != nil {
 		if canonicalReturnURL != "" && resume.isSigningConfigured() {
@@ -499,14 +539,16 @@ func (s *PaymentService) invokeProvider(ctx context.Context, order *dbent.Paymen
 	if err != nil {
 		return nil, err
 	}
+	alipayMobilePrecreate := shouldUseAlipayMobilePrecreate(req, cfg, sel)
+	effectiveMobile := effectiveCreateOrderIsMobile(req, cfg, sel, alipayMobilePrecreate)
 	providerReq := buildProviderCreatePaymentRequest(CreateOrderRequest{
 		PaymentType: req.PaymentType,
 		OpenID:      req.OpenID,
 		ClientIP:    req.ClientIP,
-		IsMobile:    req.IsMobile,
+		IsMobile:    effectiveMobile,
 		ReturnURL:   providerReturnURL,
 	}, sel, outTradeNo, payAmountStr, subject)
-	providerReq.AlipayMobilePrecreate = shouldUseAlipayMobilePrecreate(req, cfg, sel)
+	providerReq.AlipayMobilePrecreate = alipayMobilePrecreate
 	// The built-in crypto channel needs the payer's per-user deposit
 	// address; every other provider ignores this field.
 	if sel != nil && sel.ProviderKey == payment.TypeCrypto && s.depositAddressResolver != nil {
@@ -564,6 +606,23 @@ func shouldUseAlipayMobilePrecreate(req CreateOrderRequest, cfg *PaymentConfig, 
 		req.IsMobile &&
 		sel != nil &&
 		strings.EqualFold(strings.TrimSpace(sel.ProviderKey), payment.TypeAlipay)
+}
+
+func effectiveCreateOrderIsMobile(req CreateOrderRequest, cfg *PaymentConfig, sel *payment.InstanceSelection, alipayMobilePrecreate bool) bool {
+	if !req.IsMobile {
+		return false
+	}
+	if cfg != nil && cfg.AlipayForceQRCode && !alipayMobilePrecreate && isAlipayOrderRequest(req, sel) {
+		return false
+	}
+	return true
+}
+
+func isAlipayOrderRequest(req CreateOrderRequest, sel *payment.InstanceSelection) bool {
+	if NormalizeVisibleMethod(req.PaymentType) == payment.TypeAlipay {
+		return true
+	}
+	return sel != nil && strings.EqualFold(strings.TrimSpace(sel.ProviderKey), payment.TypeAlipay)
 }
 
 func sanitizeCreatePaymentResponseDetails(pr *payment.CreatePaymentResponse) {
@@ -852,12 +911,25 @@ func buildWeChatPaymentOAuthStartURL(req CreateOrderRequest, scope string) (stri
 	return u.String(), nil
 }
 
+func hasUnsafePaymentRedirectChars(value string) bool {
+	for i := 0; i < len(value); i++ {
+		ch := value[i]
+		if ch < 0x20 || ch == 0x7f || ch == '\\' {
+			return true
+		}
+	}
+	return false
+}
+
 func paymentRedirectPathFromURL(rawURL string) string {
 	rawURL = strings.TrimSpace(rawURL)
-	if rawURL == "" {
+	if rawURL == "" || hasUnsafePaymentRedirectChars(rawURL) {
 		return "/purchase"
 	}
-	if strings.HasPrefix(rawURL, "/") && !strings.HasPrefix(rawURL, "//") {
+	if strings.HasPrefix(rawURL, "/") {
+		if strings.HasPrefix(rawURL, "//") || strings.Contains(rawURL, "://") {
+			return "/purchase"
+		}
 		return normalizePaymentRedirectPath(rawURL)
 	}
 	u, err := url.Parse(rawURL)
@@ -868,7 +940,8 @@ func paymentRedirectPathFromURL(rawURL string) string {
 	if path == "" {
 		path = strings.TrimSpace(u.Path)
 	}
-	if path == "" || !strings.HasPrefix(path, "/") || strings.HasPrefix(path, "//") {
+	if path == "" || !strings.HasPrefix(path, "/") || strings.HasPrefix(path, "//") ||
+		strings.Contains(path, "://") || hasUnsafePaymentRedirectChars(path) || hasUnsafePaymentRedirectChars(u.RawQuery) {
 		return "/purchase"
 	}
 	if strings.TrimSpace(u.RawQuery) != "" {
@@ -879,7 +952,8 @@ func paymentRedirectPathFromURL(rawURL string) string {
 
 func normalizePaymentRedirectPath(path string) string {
 	path = strings.TrimSpace(path)
-	if path == "" {
+	if path == "" || !strings.HasPrefix(path, "/") || strings.HasPrefix(path, "//") ||
+		strings.Contains(path, "://") || hasUnsafePaymentRedirectChars(path) {
 		return "/purchase"
 	}
 	if path == "/payment" {

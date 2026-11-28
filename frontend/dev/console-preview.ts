@@ -301,9 +301,13 @@ export function consolePreviewPlugin(): Plugin {
             document.addEventListener('click', function(event) {
               var anchor = event.target instanceof Element ? event.target.closest('a[href]') : null;
               if (!anchor) return;
-              var targetUrl = new URL(anchor.href, location.href);
-              if (targetUrl.protocol === 'ccswitch:') return;
-              if (targetUrl.origin !== location.origin) {
+              try {
+                var targetUrl = new URL(anchor.href, location.href);
+                if (targetUrl.protocol === 'ccswitch:') return;
+                if (targetUrl.origin !== location.origin) {
+                  event.preventDefault(); event.stopImmediatePropagation();
+                }
+              } catch (e) {
                 event.preventDefault(); event.stopImmediatePropagation();
               }
             }, true);

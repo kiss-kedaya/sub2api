@@ -4,57 +4,57 @@
       <UserPageHeader flush :title="t('affiliate.title')" :description="t('affiliate.description')" />
       <div v-if="loading" class="flex justify-center py-12">
         <div
-          class="h-8 w-8 animate-spin rounded-full border-2 border-primary-500 border-t-transparent"
+          class="h-8 w-8 animate-spin motion-reduce:animate-none rounded-full border-2 border-primary border-t-transparent"
         ></div>
       </div>
 
       <template v-else-if="detail">
-        <div class="signal-affiliate-metrics affiliate-metrics grid sm:grid-cols-2 lg:grid-cols-4">
+        <div class="signal-affiliate-metrics affiliate-metrics grid rounded-lg sm:grid-cols-2 lg:grid-cols-4">
           <div class="surface-card p-5">
-            <p class="flex items-center gap-1.5 text-sm text-gray-500 dark:text-dark-400">
-              <Icon name="dollar" size="sm" class="text-primary-500" />
+            <p class="flex items-center gap-1.5 text-sm text-muted">
+              <Icon name="dollar" size="sm" class="text-primary" />
               {{ t('affiliate.stats.rebateRate') }}
             </p>
-            <p class="mt-2 text-2xl font-semibold text-primary-600 dark:text-primary-400">
+            <p class="mt-2 text-2xl font-semibold tabular-nums text-primary">
               {{ formattedRebateRate }}<span class="ml-0.5 text-base font-medium">%</span>
             </p>
-            <p class="mt-1 text-xs text-gray-400 dark:text-dark-500">
+            <p class="mt-1 text-xs text-dimmed">
               {{ t('affiliate.stats.rebateRateHint') }}
             </p>
           </div>
           <div class="surface-card p-5">
-            <p class="text-sm text-gray-500 dark:text-dark-400">{{ t('affiliate.stats.invitedUsers') }}</p>
-            <p class="mt-2 text-2xl font-semibold text-gray-900 dark:text-white">
+            <p class="text-sm text-muted">{{ t('affiliate.stats.invitedUsers') }}</p>
+            <p class="mt-2 text-2xl font-semibold tabular-nums text-highlighted">
               {{ formatCount(detail.aff_count) }}
             </p>
           </div>
           <div class="surface-card p-5">
-            <p class="text-sm text-gray-500 dark:text-dark-400">{{ t('affiliate.stats.availableQuota') }}</p>
-            <p class="mt-2 text-2xl font-semibold text-emerald-600 dark:text-emerald-400">
+            <p class="text-sm text-muted">{{ t('affiliate.stats.availableQuota') }}</p>
+            <p class="mt-2 text-2xl font-semibold tabular-nums text-success">
               {{ formatCurrency(detail.aff_quota) }}
             </p>
           </div>
           <div class="surface-card p-5">
-            <p class="text-sm text-gray-500 dark:text-dark-400">{{ t('affiliate.stats.totalQuota') }}</p>
-            <p class="mt-2 text-2xl font-semibold text-gray-900 dark:text-white">
+            <p class="text-sm text-muted">{{ t('affiliate.stats.totalQuota') }}</p>
+            <p class="mt-2 text-2xl font-semibold tabular-nums text-highlighted">
               {{ formatCurrency(detail.aff_history_quota) }}
             </p>
-            <p v-if="detail.aff_frozen_quota > 0" class="mt-1 text-xs text-amber-600 dark:text-amber-400">
+            <p v-if="detail.aff_frozen_quota > 0" class="mt-1 text-xs tabular-nums text-warning">
               {{ t('affiliate.stats.frozenQuota') }}: {{ formatCurrency(detail.aff_frozen_quota) }}
             </p>
           </div>
         </div>
 
-        <section class="affiliate-section">
+        <section class="affiliate-section rounded-lg">
 
           <div class="grid gap-4 md:grid-cols-2">
             <div class="flex min-w-0 flex-col gap-2">
               <div class="flex min-h-5 items-center justify-between gap-2">
-                <p class="text-sm font-medium text-gray-700 dark:text-gray-300">{{ t('affiliate.yourCode') }}</p>
+                <p class="text-sm font-medium text-default">{{ t('affiliate.yourCode') }}</p>
               </div>
-              <div class="mt-auto flex flex-col items-stretch gap-2 rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 dark:border-dark-700 dark:bg-dark-900 sm:flex-row sm:items-center">
-                <code class="min-w-0 break-all text-sm font-semibold text-gray-900 dark:text-white sm:flex-1 sm:truncate">{{ detail.aff_code }}</code>
-                <button class="btn btn-secondary btn-sm w-full sm:w-auto sm:shrink-0" @click="copyCode">
+              <div class="mt-auto flex flex-col items-stretch gap-2 rounded-xl border border-default bg-muted px-3 py-2 sm:flex-row sm:items-center">
+                <code class="min-w-0 wrap-anywhere text-sm font-semibold text-highlighted sm:flex-1 sm:truncate">{{ detail.aff_code }}</code>
+                <button class="btn btn-secondary btn-sm min-h-11 w-full sm:min-h-0 sm:w-auto sm:shrink-0" @click="copyCode">
                   <Icon name="copy" size="sm" />
                   <span>{{ t('affiliate.copyCode') }}</span>
                 </button>
@@ -63,14 +63,14 @@
 
             <div class="flex min-w-0 flex-col gap-2">
               <div class="flex min-h-5 flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
-                <p class="text-sm font-medium text-gray-700 dark:text-gray-300">{{ t('affiliate.inviteLink') }}</p>
-                <p class="text-xs tabular-nums text-gray-500 dark:text-dark-400">
+                <p class="text-sm font-medium text-default">{{ t('affiliate.inviteLink') }}</p>
+                <p class="text-xs tabular-nums text-muted">
                   {{ t('affiliate.customCodes.stats', { count: detail.aff_code_invite_count ?? 0, amount: formatCurrency(detail.aff_code_rebate_amount ?? 0) }) }}
                 </p>
               </div>
-              <div class="mt-auto flex flex-col items-stretch gap-2 rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 dark:border-dark-700 dark:bg-dark-900 sm:flex-row sm:items-center">
-                <code class="min-w-0 break-all text-sm text-gray-700 dark:text-gray-300 sm:flex-1 sm:truncate">{{ inviteLink }}</code>
-                <button class="btn btn-secondary btn-sm w-full sm:w-auto sm:shrink-0" @click="copyInviteLink">
+              <div class="mt-auto flex flex-col items-stretch gap-2 rounded-xl border border-default bg-muted px-3 py-2 sm:flex-row sm:items-center">
+                <code class="min-w-0 wrap-anywhere text-sm text-default sm:flex-1 sm:truncate">{{ inviteLink }}</code>
+                <button class="btn btn-secondary btn-sm min-h-11 w-full sm:min-h-0 sm:w-auto sm:shrink-0" @click="copyInviteLink">
                   <Icon name="copy" size="sm" />
                   <span>{{ t('affiliate.copyLink') }}</span>
                 </button>
@@ -90,56 +90,56 @@
           </UAlert>
         </section>
 
-        <section class="affiliate-section">
+        <section class="affiliate-section rounded-lg">
           <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <h2 class="text-base font-semibold text-highlighted">{{ t('affiliate.customCodes.title') }}</h2>
-              <p class="mt-1 text-sm text-gray-500 dark:text-dark-400">
+              <p class="mt-1 text-sm text-muted">
                 {{ t('affiliate.customCodes.description', { max: customCodeQuota.max }) }}
               </p>
             </div>
-            <span class="badge badge-gray shrink-0">
+            <span class="badge badge-gray shrink-0 tabular-nums">
               {{ t('affiliate.customCodes.quota', { used: customCodeQuota.used, max: customCodeQuota.max }) }}
             </span>
           </div>
 
           <!-- 默认码：只读，锁死不可改 -->
-          <div class="mt-4 flex items-center gap-2 rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 dark:border-dark-700 dark:bg-dark-900">
+          <div class="mt-4 flex items-start gap-2 rounded-xl border border-default bg-muted px-3 py-2 sm:items-center">
             <span class="badge badge-gray shrink-0">{{ t('affiliate.customCodes.defaultBadge') }}</span>
-            <code class="min-w-0 flex-1 break-all text-sm font-semibold text-gray-900 dark:text-white">{{ detail.aff_code }}</code>
-            <span class="shrink-0 text-xs text-gray-500 dark:text-dark-400">
+            <code class="min-w-0 flex-1 wrap-anywhere text-sm font-semibold text-highlighted">{{ detail.aff_code }}</code>
+            <span class="shrink-0 text-xs tabular-nums text-muted">
               {{ t('affiliate.customCodes.stats', { count: detail.aff_code_invite_count ?? 0, amount: formatCurrency(detail.aff_code_rebate_amount ?? 0) }) }}
             </span>
-            <button class="btn btn-secondary btn-sm shrink-0" :disabled="copyingId === 'default'" @click="copyAny(detail.aff_code, 'default')">
+            <button class="btn btn-secondary btn-sm min-h-11 min-w-11 shrink-0 sm:min-h-0 sm:min-w-0" :disabled="copyingId === 'default'" @click="copyAny(detail.aff_code, 'default')">
               <Icon name="copy" size="sm" />
             </button>
           </div>
 
-          <div v-if="customCodes.length === 0" class="mt-3 rounded-xl border border-dashed border-gray-300 p-5 text-center text-sm text-gray-500 dark:border-dark-700 dark:text-dark-400">
+          <div v-if="customCodes.length === 0" class="mt-3 rounded-xl border border-dashed border-accented p-5 text-center text-sm text-muted">
             {{ t('affiliate.customCodes.empty') }}
           </div>
           <ul v-else class="mt-3 space-y-2">
             <li
               v-for="item in customCodes"
               :key="item.code"
-              class="flex items-center gap-2 rounded-xl border border-gray-200 px-3 py-2 dark:border-dark-700"
+              class="flex items-start gap-2 rounded-xl border border-default px-3 py-2 sm:items-center"
             >
               <span class="badge badge-gray shrink-0">{{ item.created_by_admin ? t('affiliate.customCodes.adminBadge') : t('affiliate.customCodes.customBadge') }}</span>
-              <code class="min-w-0 flex-1 break-all text-sm font-semibold text-gray-900 dark:text-white">{{ item.code }}</code>
-              <span class="shrink-0 text-xs text-gray-500 dark:text-dark-400">
+              <code class="min-w-0 flex-1 wrap-anywhere text-sm font-semibold text-highlighted">{{ item.code }}</code>
+              <span class="shrink-0 text-xs tabular-nums text-muted">
                 {{ t('affiliate.customCodes.stats', { count: item.invite_count ?? 0, amount: formatCurrency(item.rebate_amount ?? 0) }) }}
               </span>
               <span v-if="item.retired" class="badge badge-gray shrink-0">{{ t('affiliate.customCodes.retiredBadge') }}</span>
-              <button class="btn btn-secondary btn-sm shrink-0" :disabled="copyingId === item.code" @click="copyAny(item.code, item.code)">
+              <button class="btn btn-secondary btn-sm min-h-11 min-w-11 shrink-0 sm:min-h-0 sm:min-w-0" :disabled="copyingId === item.code" @click="copyAny(item.code, item.code)">
                 <Icon name="copy" size="sm" />
               </button>
               <button
                 v-if="!item.retired"
-                class="btn btn-secondary btn-sm shrink-0 text-red-600 dark:text-red-400"
+                class="btn btn-secondary btn-sm min-h-11 min-w-11 shrink-0 text-error sm:min-h-0 sm:min-w-0"
                 :disabled="deletingId === item.id"
                 @click="removeCode(item)"
               >
-                <Icon v-if="deletingId === item.id" name="refresh" size="sm" class="animate-spin" />
+                <Icon v-if="deletingId === item.id" name="refresh" size="sm" class="animate-spin motion-reduce:animate-none" />
                 <Icon v-else name="trash" size="sm" />
                 <span class="sr-only">{{ t('affiliate.customCodes.remove') }}</span>
               </button>
@@ -155,44 +155,44 @@
               :placeholder="t('affiliate.customCodes.addPlaceholder')"
               @keyup.enter="addCode"
             />
-            <button class="btn btn-primary shrink-0" :disabled="adding || !newCode.trim()" @click="addCode">
-              <Icon v-if="adding" name="refresh" size="sm" class="animate-spin" />
+            <button class="btn btn-primary min-h-11 shrink-0 sm:min-h-0" :disabled="adding || !newCode.trim()" @click="addCode">
+              <Icon v-if="adding" name="refresh" size="sm" class="animate-spin motion-reduce:animate-none" />
               <Icon v-else name="plus" size="sm" />
               <span>{{ adding ? t('affiliate.customCodes.adding') : t('affiliate.customCodes.addButton') }}</span>
             </button>
           </div>
         </section>
 
-        <section class="affiliate-section">
+        <section class="affiliate-section rounded-lg">
           <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <h2 class="text-base font-semibold text-highlighted">{{ t('affiliate.transfer.title') }}</h2>
-              <p class="mt-1 text-sm text-gray-500 dark:text-dark-400">{{ t('affiliate.transfer.description') }}</p>
+              <p class="mt-1 text-sm text-muted">{{ t('affiliate.transfer.description') }}</p>
             </div>
             <button
-              class="btn btn-primary"
+              class="btn btn-primary min-h-11 sm:min-h-0"
               :disabled="transferring || detail.aff_quota <= 0"
               @click="transferQuota"
             >
-              <Icon v-if="transferring" name="refresh" size="sm" class="animate-spin" />
+              <Icon v-if="transferring" name="refresh" size="sm" class="animate-spin motion-reduce:animate-none" />
               <Icon v-else name="dollar" size="sm" />
               <span>{{ transferring ? t('affiliate.transfer.transferring') : t('affiliate.transfer.button') }}</span>
             </button>
           </div>
-          <p v-if="detail.aff_quota <= 0" class="mt-3 text-sm text-amber-600 dark:text-amber-400">
+          <p v-if="detail.aff_quota <= 0" class="mt-3 text-sm text-warning">
             {{ t('affiliate.transfer.empty') }}
           </p>
         </section>
 
-        <section class="affiliate-section">
+        <section class="affiliate-section rounded-lg">
           <h2 class="text-base font-semibold text-highlighted">{{ t('affiliate.invitees.title') }}</h2>
-          <div v-if="detail.invitees.length === 0" class="mt-4 rounded-xl border border-dashed border-gray-300 p-6 text-center text-sm text-gray-500 dark:border-dark-700 dark:text-dark-400">
+          <div v-if="detail.invitees.length === 0" class="mt-4 rounded-xl border border-dashed border-accented p-6 text-center text-sm text-muted">
             {{ t('affiliate.invitees.empty') }}
           </div>
           <div v-else class="mt-4 overflow-x-auto">
             <table class="w-full min-w-[560px] text-left text-sm">
               <thead>
-                <tr class="border-b border-gray-200 text-gray-500 dark:border-dark-700 dark:text-dark-400">
+                <tr class="border-b border-default text-muted">
                   <th class="px-3 py-2 font-medium">{{ t('affiliate.invitees.columns.email') }}</th>
                   <th class="px-3 py-2 font-medium">{{ t('affiliate.invitees.columns.username') }}</th>
                   <th class="px-3 py-2 font-medium text-right">{{ t('affiliate.invitees.columns.rebate') }}</th>
@@ -203,12 +203,12 @@
                 <tr
                   v-for="item in detail.invitees"
                   :key="item.user_id"
-                  class="border-b border-gray-100 last:border-b-0 dark:border-dark-800"
+                  class="border-b border-muted last:border-b-0"
                 >
-                  <td class="px-3 py-3 text-gray-900 dark:text-white">{{ item.email || '-' }}</td>
-                  <td class="px-3 py-3 text-gray-700 dark:text-gray-300">{{ item.username || '-' }}</td>
-                  <td class="px-3 py-3 text-right font-medium text-emerald-600 dark:text-emerald-400">{{ formatCurrency(item.total_rebate) }}</td>
-                  <td class="px-3 py-3 text-gray-700 dark:text-gray-300">{{ formatDateTime(item.created_at) || '-' }}</td>
+                  <td class="px-3 py-3 text-highlighted">{{ item.email || '-' }}</td>
+                  <td class="px-3 py-3 text-default">{{ item.username || '-' }}</td>
+                  <td class="px-3 py-3 text-right font-medium tabular-nums text-success">{{ formatCurrency(item.total_rebate) }}</td>
+                  <td class="px-3 py-3 tabular-nums text-default">{{ formatDateTime(item.created_at) || '-' }}</td>
                 </tr>
               </tbody>
             </table>
@@ -375,16 +375,9 @@ onMounted(() => {
 
 <style scoped>
 /* Sections as cards; the four figures as one joined strip. */
-.affiliate-section { padding: 20px; border-radius: 8px; background: var(--ui-bg); box-shadow: 0 0 0 1px var(--ui-border), 0 1px 2px rgba(10, 10, 10, 0.05); }
-.affiliate-metrics { overflow: hidden; border-radius: 8px; box-shadow: 0 0 0 1px var(--ui-border), 0 1px 2px rgba(10, 10, 10, 0.05); }
+.affiliate-section { padding: 20px; border-radius: 8px; background: var(--ui-bg); box-shadow: var(--app-shadow-card); }
+.affiliate-metrics { overflow: hidden; border-radius: 8px; box-shadow: var(--app-shadow-card); }
 .console-signal .affiliate-metrics.signal-affiliate-metrics { border-block: 0; }
 .console-signal .affiliate-metrics > .card { box-shadow: none; }
 @media (min-width: 640px) { .affiliate-section { padding: 24px; } }
-</style>
-
-<style>
-html.dark .signal-affiliate .affiliate-section,
-html.dark .signal-affiliate .affiliate-metrics {
-  box-shadow: 0 0 0 1px var(--ui-border);
-}
 </style>

@@ -412,6 +412,21 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 			})
 		}
 		if err != nil {
+			if service.IsBalanceHoldTopUpError(err) {
+				if !service.IsResponseCommitted(c) && !openAIForwardErrorAlreadyCommunicated(c, writerSizeBeforeForward, err) && !failoverClientGone(c) {
+					status, code, message, retryAfter := billingErrorDetails(err)
+					if retryAfter > 0 {
+						c.Header("Retry-After", strconv.Itoa(retryAfter))
+					}
+					h.handleStreamingAwareError(c, status, code, message, streamStarted || c.Writer.Written())
+				}
+				reqLog.Warn("openai_chat_completions.balance_hold_topup_aborted",
+					zap.Int64("account_id", account.ID),
+					zap.Error(err),
+				)
+				retainedUsage.settle(openAISettleUsage(result, submitChatUsage))
+				return
+			}
 			if h.handleGrokModerationRefusal(c, apiKey, account, body, reqModel, reqStream, result, err, submitChatUsage) {
 				retainedUsage.discard()
 				return

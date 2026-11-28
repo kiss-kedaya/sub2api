@@ -6,18 +6,22 @@ const routeState = vi.hoisted(() => ({
 }))
 
 const routerPush = vi.hoisted(() => vi.fn())
+const routerReplace = vi.hoisted(() => vi.fn())
 const pollOrderStatus = vi.hoisted(() => vi.fn())
 const verifyOrder = vi.hoisted(() => vi.fn())
 const verifyOrderPublic = vi.hoisted(() => vi.fn())
 const resolveOrderPublicByResumeToken = vi.hoisted(() => vi.fn())
 const refreshUser = vi.hoisted(() => vi.fn())
+const authState = vi.hoisted(() => ({
+  isAuthenticated: true,
+}))
 
 vi.mock('vue-router', async () => {
   const actual = await vi.importActual<typeof import('vue-router')>('vue-router')
   return {
     ...actual,
     useRoute: () => routeState,
-    useRouter: () => ({ push: routerPush }),
+    useRouter: () => ({ push: routerPush, replace: routerReplace }),
   }
 })
 
@@ -39,6 +43,9 @@ vi.mock('@/stores/payment', () => ({
 
 vi.mock('@/stores/auth', () => ({
   useAuthStore: () => ({
+    get isAuthenticated() {
+      return authState.isAuthenticated
+    },
     refreshUser,
   }),
 }))
@@ -94,13 +101,16 @@ describe('PaymentResultView', () => {
   beforeEach(() => {
     routeState.query = {}
     routerPush.mockReset()
+    routerReplace.mockReset()
     pollOrderStatus.mockReset()
     verifyOrder.mockReset()
     verifyOrderPublic.mockReset()
     resolveOrderPublicByResumeToken.mockReset()
     refreshUser.mockReset()
     refreshUser.mockResolvedValue({})
+    authState.isAuthenticated = true
     window.localStorage.clear()
+    window.sessionStorage.clear()
   })
 
   afterEach(() => {
@@ -534,5 +544,428 @@ describe('PaymentResultView', () => {
 
     expect(wrapper.text()).toContain('payment.methods.alipay')
     expect(wrapper.text()).not.toContain('payment.methods.alipay_direct')
+  })
+
+  it('strips resume_token from the URL via router.replace while preserving order_id, out_trade_no, and status', async () => {
+    routeState.query = {
+      resume_token: 'sensitive-resume-token',
+      order_id: '42',
+      out_trade_no: 'sub2_20260420abcd1234',
+      status: 'success',
+    }
+    resolveOrderPublicByResumeToken.mockResolvedValue({
+      data: orderFactory('COMPLETED'),
+    })
+
+    const wrapper = mount(PaymentResultView, {
+      global: {
+        stubs: {
+          OrderStatusBadge: true,
+        },
+      },
+    })
+
+    await flushPromises()
+
+    expect(routerReplace).toHaveBeenCalledTimes(1)
+    expect(routerReplace).toHaveBeenCalledWith({
+      query: {
+        order_id: '42',
+        out_trade_no: 'sub2_20260420abcd1234',
+        status: 'success',
+      },
+    })
+    expect(resolveOrderPublicByResumeToken).toHaveBeenCalledWith('sensitive-resume-token')
+    expect(wrapper.text()).toContain('payment.result.success')
+  })
+
+  it('does not call router.replace when no resume_token is present in the URL', async () => {
+    routeState.query = {
+      order_id: '42',
+      status: 'success',
+    }
+    pollOrderStatus.mockResolvedValue(orderFactory('COMPLETED'))
+
+    mount(PaymentResultView, {
+      global: {
+        stubs: {
+          OrderStatusBadge: true,
+        },
+      },
+    })
+
+    await flushPromises()
+
+    expect(routerReplace).not.toHaveBeenCalled()
+  })
+
+  it('scrubs duplicated array resume_token query values and resolves the non-empty token', async () => {
+    routeState.query = {
+      resume_token: ['', 'sensitive-duplicate-token'],
+      order_id: '42',
+      status: 'success',
+    }
+    resolveOrderPublicByResumeToken.mockResolvedValue({
+      data: orderFactory('COMPLETED'),
+    })
+
+    mount(PaymentResultView, {
+      global: {
+        stubs: {
+          OrderStatusBadge: true,
+        },
+      },
+    })
+
+    await flushPromises()
+
+    expect(routerReplace).toHaveBeenCalledTimes(1)
+    expect(routerReplace).toHaveBeenCalledWith({
+      query: {
+        order_id: '42',
+        status: 'success',
+      },
+    })
+    expect(resolveOrderPublicByResumeToken).toHaveBeenCalledWith('sensitive-duplicate-token')
+  })
+
+  it('resolves order cleanly even when localStorage throws SecurityError', async () => {
+    const getItemSpy = vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+      throw new DOMException('storage blocked', 'SecurityError')
+    })
+    const removeItemSpy = vi.spyOn(Storage.prototype, 'removeItem').mockImplementation(() => {
+      throw new DOMException('storage blocked', 'SecurityError')
+    })
+    routeState.query = {
+      resume_token: 'resume-storage-blocked',
+      order_id: '42',
+      status: 'success',
+    }
+    resolveOrderPublicByResumeToken.mockResolvedValue({
+      data: orderFactory('COMPLETED'),
+    })
+
+    try {
+      const wrapper = mount(PaymentResultView, {
+        global: {
+          stubs: {
+            OrderStatusBadge: true,
+          },
+        },
+      })
+
+      await flushPromises()
+
+      expect(resolveOrderPublicByResumeToken).toHaveBeenCalledWith('resume-storage-blocked')
+      expect(wrapper.text()).toContain('payment.result.success')
+    } finally {
+      getItemSpy.mockRestore()
+      removeItemSpy.mockRestore()
+    }
+  })
+
+  it('survives unauthenticated F5 reload after scrubbing resume_token without calling authenticated endpoints', async () => {
+    authState.isAuthenticated = false
+    routeState.query = {
+      resume_token: 'cross-origin-resume-42',
+      order_id: '42',
+      out_trade_no: 'sub2_20260420abcd1234',
+      status: 'success',
+    }
+    resolveOrderPublicByResumeToken.mockResolvedValue({
+      data: orderFactory('COMPLETED'),
+    })
+
+    const firstMount = mount(PaymentResultView, {
+      global: {
+        stubs: {
+          OrderStatusBadge: true,
+        },
+      },
+    })
+    await flushPromises()
+
+    expect(routerReplace).toHaveBeenCalledTimes(1)
+    expect(routerReplace).toHaveBeenCalledWith({
+      query: {
+        order_id: '42',
+        out_trade_no: 'sub2_20260420abcd1234',
+        status: 'success',
+      },
+    })
+    expect(resolveOrderPublicByResumeToken).toHaveBeenCalledWith('cross-origin-resume-42')
+    expect(pollOrderStatus).not.toHaveBeenCalled()
+    expect(verifyOrder).not.toHaveBeenCalled()
+    expect(refreshUser).not.toHaveBeenCalled()
+    firstMount.unmount()
+
+    // Simulate F5 reload after router.replace scrubbed resume_token from the URL.
+    routerReplace.mockClear()
+    resolveOrderPublicByResumeToken.mockClear()
+    routeState.query = {
+      order_id: '42',
+      out_trade_no: 'sub2_20260420abcd1234',
+      status: 'success',
+    }
+
+    const reloadMount = mount(PaymentResultView, {
+      global: {
+        stubs: {
+          OrderStatusBadge: true,
+        },
+      },
+    })
+    await flushPromises()
+
+    expect(resolveOrderPublicByResumeToken).toHaveBeenCalledTimes(1)
+    expect(resolveOrderPublicByResumeToken).toHaveBeenCalledWith('cross-origin-resume-42')
+    expect(routerReplace).not.toHaveBeenCalled()
+    expect(pollOrderStatus).not.toHaveBeenCalled()
+    expect(verifyOrder).not.toHaveBeenCalled()
+    expect(refreshUser).not.toHaveBeenCalled()
+    expect(reloadMount.text()).toContain('payment.result.success')
+    reloadMount.unmount()
+  })
+
+  it('survives F5 reload on a token-only URL using sessionStorage while keeping the URL scrubbed', async () => {
+    authState.isAuthenticated = false
+    routeState.query = {
+      resume_token: 'token-only-resume-99',
+    }
+    resolveOrderPublicByResumeToken.mockResolvedValue({
+      data: orderFactory('COMPLETED'),
+    })
+
+    const firstMount = mount(PaymentResultView, {
+      global: {
+        stubs: {
+          OrderStatusBadge: true,
+        },
+      },
+    })
+    await flushPromises()
+
+    expect(routerReplace).toHaveBeenCalledTimes(1)
+    expect(routerReplace).toHaveBeenCalledWith({ query: {} })
+    expect(resolveOrderPublicByResumeToken).toHaveBeenCalledWith('token-only-resume-99')
+    firstMount.unmount()
+
+    // Simulate F5 reload on the scrubbed empty-query URL.
+    routerReplace.mockClear()
+    resolveOrderPublicByResumeToken.mockClear()
+    routeState.query = {}
+
+    const reloadMount = mount(PaymentResultView, {
+      global: {
+        stubs: {
+          OrderStatusBadge: true,
+        },
+      },
+    })
+    await flushPromises()
+
+    expect(resolveOrderPublicByResumeToken).toHaveBeenCalledTimes(1)
+    expect(resolveOrderPublicByResumeToken).toHaveBeenCalledWith('token-only-resume-99')
+    expect(routerReplace).not.toHaveBeenCalled()
+    expect(pollOrderStatus).not.toHaveBeenCalled()
+    expect(verifyOrder).not.toHaveBeenCalled()
+    expect(reloadMount.text()).toContain('payment.result.success')
+    reloadMount.unmount()
+  })
+
+  it('skips authenticated order endpoints and falls back directly to verifyOrderPublic when unauthenticated without resume_token', async () => {
+    authState.isAuthenticated = false
+    routeState.query = {
+      order_id: '42',
+      out_trade_no: 'sub2_unauth_reload',
+      status: 'success',
+    }
+    verifyOrderPublic.mockResolvedValue({
+      data: {
+        out_trade_no: 'sub2_unauth_reload',
+        status: 'COMPLETED',
+        paid: true,
+        created_at: '2026-04-20T12:00:00Z',
+        expires_at: '2026-04-20T12:30:00Z',
+      },
+    })
+
+    const wrapper = mount(PaymentResultView, {
+      global: {
+        stubs: {
+          OrderStatusBadge: true,
+        },
+      },
+    })
+    await flushPromises()
+
+    expect(pollOrderStatus).not.toHaveBeenCalled()
+    expect(verifyOrder).not.toHaveBeenCalled()
+    expect(refreshUser).not.toHaveBeenCalled()
+    expect(verifyOrderPublic).toHaveBeenCalledWith('sub2_unauth_reload')
+    expect(wrapper.text()).toContain('payment.result.success')
+    wrapper.unmount()
+  })
+
+  it('does not leak a stashed token-only resume_token to a different order or legacy return query', async () => {
+    authState.isAuthenticated = false
+    routeState.query = {
+      resume_token: 'token-only-secret',
+    }
+    resolveOrderPublicByResumeToken.mockResolvedValue({
+      data: orderFactory('COMPLETED'),
+    })
+
+    const firstMount = mount(PaymentResultView, {
+      global: { stubs: { OrderStatusBadge: true } },
+    })
+    await flushPromises()
+    firstMount.unmount()
+
+    resolveOrderPublicByResumeToken.mockClear()
+    routeState.query = {
+      order_id: '99',
+    }
+    const otherOrderMount = mount(PaymentResultView, {
+      global: { stubs: { OrderStatusBadge: true } },
+    })
+    await flushPromises()
+    expect(resolveOrderPublicByResumeToken).not.toHaveBeenCalled()
+    expect(pollOrderStatus).not.toHaveBeenCalled()
+    otherOrderMount.unmount()
+
+    routeState.query = {
+      trade_status: 'TRADE_SUCCESS',
+    }
+    const legacyMount = mount(PaymentResultView, {
+      global: { stubs: { OrderStatusBadge: true } },
+    })
+    await flushPromises()
+    expect(resolveOrderPublicByResumeToken).not.toHaveBeenCalled()
+    legacyMount.unmount()
+
+    for (const unrelatedQuery of [
+      { status: 'failed' },
+      { status: 'success' },
+      { order_id: 'invalid' },
+    ]) {
+      routeState.query = unrelatedQuery
+      const unrelatedMount = mount(PaymentResultView, {
+        global: { stubs: { OrderStatusBadge: true } },
+      })
+      await flushPromises()
+      expect(resolveOrderPublicByResumeToken).not.toHaveBeenCalled()
+      expect(unrelatedMount.text()).not.toContain('payment.result.success')
+      unrelatedMount.unmount()
+    }
+  })
+
+  it('survives F5 reload when resume_token arrives alongside trade_status without order_id or out_trade_no', async () => {
+    authState.isAuthenticated = false
+    routeState.query = {
+      resume_token: 'resume-with-trade-status',
+      trade_status: 'TRADE_SUCCESS',
+    }
+    resolveOrderPublicByResumeToken.mockResolvedValue({
+      data: orderFactory('COMPLETED'),
+    })
+
+    const firstMount = mount(PaymentResultView, {
+      global: { stubs: { OrderStatusBadge: true } },
+    })
+    await flushPromises()
+    expect(routerReplace).toHaveBeenCalledWith({
+      query: { trade_status: 'TRADE_SUCCESS' },
+    })
+    firstMount.unmount()
+
+    routerReplace.mockClear()
+    resolveOrderPublicByResumeToken.mockClear()
+    routeState.query = {
+      trade_status: 'TRADE_SUCCESS',
+    }
+
+    const reloadMount = mount(PaymentResultView, {
+      global: { stubs: { OrderStatusBadge: true } },
+    })
+    await flushPromises()
+    expect(resolveOrderPublicByResumeToken).toHaveBeenCalledTimes(1)
+    expect(resolveOrderPublicByResumeToken).toHaveBeenCalledWith('resume-with-trade-status')
+    expect(pollOrderStatus).not.toHaveBeenCalled()
+    expect(verifyOrder).not.toHaveBeenCalled()
+    expect(reloadMount.text()).toContain('payment.result.success')
+    reloadMount.unmount()
+  })
+
+  it('polls pending orders on unauthenticated F5 reload without calling authenticated endpoints', async () => {
+    vi.useFakeTimers()
+    authState.isAuthenticated = false
+    routeState.query = {
+      resume_token: 'cross-origin-pending-42',
+      order_id: '42',
+      out_trade_no: 'sub2_20260420abcd1234',
+      status: 'success',
+    }
+    resolveOrderPublicByResumeToken.mockResolvedValueOnce({
+      data: orderFactory('PENDING'),
+    })
+
+    const firstMount = mount(PaymentResultView, {
+      global: { stubs: { OrderStatusBadge: true } },
+    })
+    await flushPromises()
+    firstMount.unmount()
+
+    resolveOrderPublicByResumeToken.mockReset()
+    resolveOrderPublicByResumeToken
+      .mockResolvedValueOnce({ data: orderFactory('PENDING') })
+      .mockResolvedValueOnce({ data: orderFactory('COMPLETED') })
+    routeState.query = {
+      order_id: '42',
+      out_trade_no: 'sub2_20260420abcd1234',
+      status: 'success',
+    }
+
+    const reloadMount = mount(PaymentResultView, {
+      global: { stubs: { OrderStatusBadge: true } },
+    })
+    await flushPromises()
+    expect(reloadMount.text()).toContain('payment.result.processing')
+
+    await vi.advanceTimersByTimeAsync(2000)
+    await flushPromises()
+
+    expect(resolveOrderPublicByResumeToken).toHaveBeenCalledTimes(2)
+    expect(resolveOrderPublicByResumeToken).toHaveBeenCalledWith('cross-origin-pending-42')
+    expect(pollOrderStatus).not.toHaveBeenCalled()
+    expect(verifyOrder).not.toHaveBeenCalled()
+    expect(refreshUser).not.toHaveBeenCalled()
+    expect(reloadMount.text()).toContain('payment.result.success')
+    reloadMount.unmount()
+  })
+
+  it('resolves cleanly when sessionStorage.setItem throws SecurityError', async () => {
+    const setItemSpy = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new DOMException('storage blocked', 'SecurityError')
+    })
+    authState.isAuthenticated = false
+    routeState.query = {
+      resume_token: 'resume-session-blocked',
+    }
+    resolveOrderPublicByResumeToken.mockResolvedValue({
+      data: orderFactory('COMPLETED'),
+    })
+
+    try {
+      const wrapper = mount(PaymentResultView, {
+        global: { stubs: { OrderStatusBadge: true } },
+      })
+      await flushPromises()
+      expect(resolveOrderPublicByResumeToken).toHaveBeenCalledWith('resume-session-blocked')
+      expect(wrapper.text()).toContain('payment.result.success')
+      wrapper.unmount()
+    } finally {
+      setItemSpy.mockRestore()
+    }
   })
 })

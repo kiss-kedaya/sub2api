@@ -172,7 +172,7 @@ const groupSelectorKeyId = ref<number | null>(null)
 const scrollContainerRef = ref<HTMLElement | null>(null)
 
 
-watch(() => [props.show, props.user?.id] as const, ([show], _, onCleanup) => {
+watch([() => props.show, () => props.user?.id], ([show], _, onCleanup) => {
   onCleanup(() => { requestVersion++ })
   closeGroupSelector()
   apiKeys.value = []

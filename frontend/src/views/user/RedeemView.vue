@@ -64,7 +64,7 @@
             block
             :loading="submitting"
             :icon="submitting ? 'i-lucide-loader-circle' : 'i-lucide-circle-check'"
-            :ui="{ leadingIcon: submitting ? 'animate-spin' : '' }"
+            :ui="{ leadingIcon: submitting ? 'animate-spin motion-reduce:animate-none' : '' }"
             :disabled="!redeemCode.trim() || submitting"
             data-testid="redeem-submit"
           >
@@ -112,7 +112,7 @@
         <div class="px-5 py-4 sm:px-6" :aria-busy="loadingHistory" data-testid="redeem-history">
           <!-- Loading State -->
           <div v-if="loadingHistory && history.length === 0" class="flex items-center justify-center py-8">
-            <UIcon name="i-lucide-loader-circle" class="size-6 animate-spin text-muted" />
+            <UIcon name="i-lucide-loader-circle" class="size-6 animate-spin motion-reduce:animate-none text-muted" />
           </div>
 
           <!-- History List -->
@@ -120,7 +120,7 @@
             <li
               v-for="item in history"
               :key="item.id"
-              class="flex items-center justify-between gap-4 py-3"
+              class="flex items-start justify-between gap-4 py-3 sm:items-center"
             >
               <div class="flex min-w-0 items-center gap-3">
                 <div
@@ -144,7 +144,7 @@
                     size="md"
                     :class="
                       item.value >= 0
-                        ? 'text-emerald-600 dark:text-emerald-400'
+                        ? 'text-emerald-700 dark:text-emerald-400'
                         : 'text-red-600 dark:text-red-400'
                     "
                   />
@@ -163,7 +163,7 @@
                     :class="
                       item.value >= 0
                         ? 'text-blue-600 dark:text-blue-400'
-                        : 'text-orange-600 dark:text-orange-400'
+                        : 'text-orange-800 dark:text-orange-400'
                     "
                   />
                 </div>
@@ -182,20 +182,20 @@
                     'text-sm font-semibold tabular-nums',
                     isBalanceType(item.type)
                       ? item.value >= 0
-                        ? 'text-emerald-600 dark:text-emerald-400'
+                        ? 'text-emerald-700 dark:text-emerald-400'
                         : 'text-red-600 dark:text-red-400'
                       : isSubscriptionType(item.type)
                         ? 'text-purple-600 dark:text-purple-400'
                         : item.value >= 0
                           ? 'text-blue-600 dark:text-blue-400'
-                          : 'text-orange-600 dark:text-orange-400'
+                          : 'text-orange-800 dark:text-orange-400'
                   ]"
                 >
                   {{ formatHistoryValue(item) }}
                 </p>
                 <p
                   v-if="!isAdminAdjustment(item.type) && !isRevokeType(item.type)"
-                  class="font-mono text-xs text-dimmed"
+                  class="wrap-anywhere font-mono text-xs text-dimmed"
                 >
                   {{ item.code }}
                 </p>
@@ -225,28 +225,33 @@
           </div>
         </div>
         <footer class="flex flex-wrap items-center justify-between gap-3 border-t border-default px-5 py-3 text-sm text-muted sm:px-6">
-          <span>{{ t('common.total') }}: {{ historyTotal }} {{ t('pagination.results') }}</span>
+          <span class="tabular-nums">{{ t('common.total') }}: {{ historyTotal }} {{ t('pagination.results') }}</span>
           <div class="flex flex-wrap items-center gap-2">
-            <label class="flex items-center gap-2">
-              {{ t('pagination.perPage') }}
-              <select
-                v-model="historyPageSize"
-                class="input w-20 py-1.5"
+            <div class="flex items-center gap-2">
+              <span>{{ t('pagination.perPage') }}</span>
+              <Select
+                :model-value="historyPageSize"
+                :options="historyPageSizeOptions"
+                :searchable="false"
                 :disabled="loadingHistory || submitting"
+                :aria-label="t('pagination.perPage')"
+                class="w-24"
+                data-testid="redeem-history-page-size"
+                @update:model-value="historyPageSize = Number($event ?? 20)"
                 @change="fetchHistory(1)"
-              >
-                <option v-for="size in [20, 50, 100]" :key="size" :value="size">{{ size }}</option>
-              </select>
-            </label>
+              />
+            </div>
             <UButton
               color="neutral"
               variant="outline"
+              class="min-h-11 sm:min-h-9"
               :disabled="loadingHistory || submitting || historyPage <= 1"
               @click="fetchHistory(historyPage - 1)"
             >{{ t('pagination.previous') }}</UButton>
             <UButton
               color="neutral"
               variant="outline"
+              class="min-h-11 sm:min-h-9"
               :disabled="loadingHistory || submitting || historyPage * historyPageSize >= historyTotal"
               @click="fetchHistory(historyPage + 1)"
             >{{ t('pagination.next') }}</UButton>
@@ -320,6 +325,7 @@ import { useSubscriptionStore } from '@/stores/subscriptions'
 import { redeemAPI, authAPI, type RedeemHistoryItem } from '@/api'
 import type { RedeemCode } from '@/types'
 import AppLayout from '@/components/layout/AppLayout.vue'
+import Select from '@/components/common/Select.vue'
 import Icon from '@/components/icons/Icon.vue'
 import KeyRotationGateNotice from '@/components/user/KeyRotationGateNotice.vue'
 import KeyRotationRiskAckBanner from '@/components/user/KeyRotationRiskAckBanner.vue'
@@ -361,6 +367,11 @@ const history = ref<RedeemHistoryItem[]>([])
 const loadingHistory = ref(false)
 const historyPage = ref(1)
 const historyPageSize = ref(20)
+const historyPageSizeOptions = [
+  { value: 20, label: '20' },
+  { value: 50, label: '50' },
+  { value: 100, label: '100' }
+]
 const historyTotal = ref(0)
 let historyRequest = 0
 let loadedHistoryPageSize = 20
@@ -527,14 +538,29 @@ onMounted(async () => {
 </script>
 
 <style scoped>
-.fade-enter-active,
+.fade-enter-active {
+  transition: opacity 180ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1)), transform 180ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1));
+}
+
 .fade-leave-active {
-  transition: all 0.3s ease;
+  transition: opacity 140ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1)), transform 140ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1));
 }
 
 .fade-enter-from,
 .fade-leave-to {
   opacity: 0;
   transform: translateY(-8px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fade-enter-active,
+  .fade-leave-active {
+    transition: opacity 120ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1));
+  }
+
+  .fade-enter-from,
+  .fade-leave-to {
+    transform: none;
+  }
 }
 </style>

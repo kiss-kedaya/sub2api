@@ -66,12 +66,12 @@
           <div class="relative">
             <input
               id="email"
+              ref="emailInput"
               name="email"
               v-model="formData.email"
               type="email"
               maxlength="254"
               required
-              autofocus
               autocomplete="username"
               :disabled="registrationFieldsDisabled"
               class="input"
@@ -102,8 +102,10 @@
             <button
               type="button"
               :disabled="registrationFieldsDisabled"
+              :aria-pressed="showPassword"
+              :aria-label="t('auth.passwordLabel')"
               @click="showPassword = !showPassword"
-              class="absolute inset-y-0 right-0 flex items-center pr-3 text-dimmed transition-colors hover:text-default"
+              class="absolute inset-y-0 right-0 flex items-center justify-center rounded-md pr-3 text-dimmed transition-colors hover:text-default focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary [@media(pointer:coarse)]:min-w-11"
             >
               <Icon v-if="showPassword" name="eyeOff" size="md" />
               <Icon v-else name="eye" size="md" />
@@ -128,15 +130,15 @@
               :disabled="registrationFieldsDisabled"
               class="input pr-10"
               :class="{
-                'border-green-500 focus:border-green-500 focus:ring-green-500': invitationValidation.valid,
-                'border-red-500 focus:border-red-500 focus:ring-red-500': invitationValidation.invalid || errors.invitation_code
+                'ring-1 ring-inset ring-emerald-500': invitationValidation.valid,
+                'input-error': invitationValidation.invalid || errors.invitation_code
               }"
               :placeholder="t('auth.invitationCodePlaceholder')"
               @input="handleInvitationCodeInput"
             />
             <!-- Validation indicator -->
             <div v-if="invitationValidating" class="absolute inset-y-0 right-0 flex items-center pr-3.5">
-              <svg class="h-4 w-4 animate-spin text-gray-400" fill="none" viewBox="0 0 24 24">
+              <svg class="h-4 w-4 animate-spin text-dimmed motion-reduce:animate-none" fill="none" viewBox="0 0 24 24">
                 <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
                 <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
               </svg>
@@ -191,15 +193,15 @@
               :disabled="registrationFieldsDisabled"
               class="input pr-10"
               :class="{
-                'border-green-500 focus:border-green-500 focus:ring-green-500': promoValidation.valid,
-                'border-red-500 focus:border-red-500 focus:ring-red-500': promoValidation.invalid
+                'ring-1 ring-inset ring-emerald-500': promoValidation.valid,
+                'input-error': promoValidation.invalid
               }"
               :placeholder="t('auth.promoCodePlaceholder')"
               @input="handlePromoCodeInput"
             />
             <!-- Validation indicator -->
             <div v-if="promoValidating" class="absolute inset-y-0 right-0 flex items-center pr-3.5">
-              <svg class="h-4 w-4 animate-spin text-gray-400" fill="none" viewBox="0 0 24 24">
+              <svg class="h-4 w-4 animate-spin text-dimmed motion-reduce:animate-none" fill="none" viewBox="0 0 24 24">
                 <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
                 <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
               </svg>
@@ -319,7 +321,7 @@
           >
             <svg
               v-if="isLoading"
-              class="-ml-1 mr-2 h-4 w-4 animate-spin text-white"
+              class="-ml-1 mr-2 h-4 w-4 animate-spin text-white motion-reduce:animate-none"
               fill="none"
               viewBox="0 0 24 24"
             >
@@ -387,11 +389,11 @@
 
     <!-- Footer -->
     <template #footer>
-      <p class="text-gray-500 dark:text-dark-400">
+      <p class="text-muted">
         {{ t('auth.alreadyHaveAccount') }}
         <router-link
           :to="loginLocation"
-          class="font-medium text-primary-600 transition-colors hover:text-primary-500 dark:text-primary-400 dark:hover:text-primary-300"
+          class="rounded-sm font-medium text-primary transition-colors hover:text-primary/80 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
         >
           {{ t('auth.signIn') }}
         </router-link>
@@ -401,7 +403,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, reactive, onMounted, onUnmounted, watch } from 'vue'
+import { computed, nextTick, ref, reactive, onMounted, onUnmounted, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { AuthLayout } from '@/components/layout'
@@ -437,7 +439,7 @@ import {
   loadAffiliateReferralCode,
   resolveAffiliateReferralCode
 } from '@/utils/oauthAffiliate'
-import { sanitizeRedirectPath } from '@/utils/url'
+import { sanitizeInternalRedirectPath } from '@/utils/url'
 import type { LoginAgreementDocument, RegisterRequest } from '@/types'
 
 const { t, locale } = useI18n()
@@ -450,7 +452,7 @@ const route = useRoute()
 const authStore = useAuthStore()
 const appStore = useAppStore()
 const loginLocation = computed(() => {
-  const safeRedirect = sanitizeRedirectPath(route.query?.redirect, '')
+  const safeRedirect = sanitizeInternalRedirectPath(route.query?.redirect, '')
   return safeRedirect ? { path: '/login', query: { redirect: safeRedirect } } : '/login'
 })
 
@@ -460,6 +462,7 @@ const isLoading = ref<boolean>(false)
 const settingsLoaded = ref<boolean>(false)
 const errorMessage = ref<string>('')
 const showPassword = ref<boolean>(false)
+const emailInput = ref<HTMLInputElement | null>(null)
 
 // Quiet step flow. Presentation only: the form model, validation rules, error
 // copy, navigation targets and i18n keys are untouched.
@@ -574,9 +577,9 @@ function prefersReducedMotion(): boolean {
   )
 }
 
-// 320ms is the exit duration measured on the reference page; the incoming pane
-// then runs its own 200ms enter animation (see auth-quiet.css).
-const STEP_EXIT_MS = 320
+// 150ms matches the exit animation in auth-quiet.css; the incoming pane
+// then runs its own 200ms enter animation.
+const STEP_EXIT_MS = 150
 
 function goToStep(nextIndex: number): void {
   const clamped = Math.max(0, Math.min(nextIndex, stepKeys.value.length - 1))
@@ -646,7 +649,7 @@ function emailVerificationSignature(): string {
 async function beginEmailVerification(options: { requestProof?: boolean } = {}): Promise<void> {
   if (!emailVerifyEnabled.value) return
   if (options.requestProof !== false && !(await acquireActionProof())) return
-  const pendingRedirect = sanitizeRedirectPath(route.query?.redirect, '')
+  const pendingRedirect = sanitizeInternalRedirectPath(route.query?.redirect, '')
   sessionStorage.setItem(
     'register_data',
     JSON.stringify({
@@ -829,10 +832,19 @@ onMounted(async () => {
   } finally {
     settingsLoaded.value = true
   }
+
+  if (
+    registrationEnabled.value &&
+    !showAgreementModal.value &&
+    window.matchMedia?.('(pointer: fine)').matches
+  ) {
+    await nextTick()
+    emailInput.value?.focus()
+  }
 })
 
 watch(
-  () => [route.query.aff, route.query.aff_code],
+  [() => route.query.aff, () => route.query.aff_code],
   () => {
     syncAffiliateReferralCode()
   }
@@ -1287,7 +1299,7 @@ async function handleRegister(): Promise<void> {
     appStore.showSuccess(t('auth.accountCreatedSuccess', { siteName: siteName.value }))
 
     // Redirect to intended page or dashboard
-    await router.push(sanitizeRedirectPath(route.query?.redirect))
+    await router.push(sanitizeInternalRedirectPath(route.query?.redirect))
   } catch (error: unknown) {
     // Handle registration error
     errorMessage.value = buildRegistrationErrorMessage(error, t('auth.registrationFailed'))
@@ -1317,14 +1329,33 @@ function buildRegistrationErrorMessage(error: unknown, fallback: string): string
 </script>
 
 <style scoped>
-.fade-enter-active,
+.fade-enter-active {
+  transition:
+    opacity 180ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1)),
+    transform 180ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1));
+}
+
 .fade-leave-active {
-  transition: opacity 0.3s ease, transform 0.3s ease;
+  transition:
+    opacity 140ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1)),
+    transform 140ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1));
 }
 
 .fade-enter-from,
 .fade-leave-to {
   opacity: 0;
   transform: translateY(-8px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fade-enter-active,
+  .fade-leave-active {
+    transition: opacity 120ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1));
+  }
+
+  .fade-enter-from,
+  .fade-leave-to {
+    transform: none;
+  }
 }
 </style>

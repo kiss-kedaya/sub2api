@@ -17,17 +17,17 @@
           :key="user.user_id"
           class="flex items-center justify-between gap-3 py-1.5"
         >
-          <div class="flex items-center gap-3">
+          <div class="flex min-w-0 items-center gap-3">
             <UBadge
               :color="idx === 0 ? 'primary' : 'neutral'"
               :variant="idx < 3 ? 'subtle' : 'outline'"
               size="sm"
-              class="w-6 justify-center tabular-nums"
+              class="w-6 shrink-0 justify-center tabular-nums"
               :label="String(idx + 1)"
             />
             <span class="truncate text-sm text-default">{{ user.email }}</span>
           </div>
-          <span class="text-sm font-medium tabular-nums text-highlighted">
+          <span class="shrink-0 text-sm font-medium tabular-nums text-highlighted">
             {{ formatMoney(currency, user.amount) }}
           </span>
         </div>

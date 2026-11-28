@@ -169,13 +169,18 @@ func (h *OpenAIGatewayHandler) deepSeekTools(c *gin.Context, toolPath string, mo
 
 	// Recognition reserves the official maximum units; synthesis uses the original text.
 	estimate := service.InflightEstimateRequest{Model: modelLabel, BodyBytes: len(body), Kind: service.InflightEstimatePerRequest, SearchCalls: 1}
+	toolUnits := 1.0
 	switch toolPath {
 	case service.DeepSeekToolsPathASR:
-		estimate.Kind, estimate.SearchCalls, estimate.AudioMode, estimate.AudioUnits = service.InflightEstimateAudio, 0, "stt", 120.0/3600
+		toolUnits = 120.0 / 3600
+		estimate.Kind, estimate.SearchCalls, estimate.AudioMode, estimate.AudioUnits = service.InflightEstimateAudio, 0, "stt", toolUnits
 	case service.DeepSeekToolsPathTTS:
-		estimate.Kind, estimate.SearchCalls, estimate.AudioMode, estimate.AudioUnits = service.InflightEstimateAudio, 0, "tts", float64(service.DeepSeekTTSBillableCharacters(gjson.GetBytes(body, "text").String()))/1_000_000
+		toolUnits = float64(service.DeepSeekTTSBillableCharacters(gjson.GetBytes(body, "text").String())) / 1_000_000
+		estimate.Kind, estimate.SearchCalls, estimate.AudioMode, estimate.AudioUnits = service.InflightEstimateAudio, 0, "tts", toolUnits
 	case service.DeepSeekToolsPathOCR:
-		estimate.SearchCalls, estimate.Units = 0, service.EstimateDeepSeekOCRPages(c.GetHeader("Content-Type"), body)
+		ocrPages := service.EstimateDeepSeekOCRPages(c.GetHeader("Content-Type"), body)
+		toolUnits = float64(ocrPages)
+		estimate.SearchCalls, estimate.Units = 0, ocrPages
 	}
 	inflightDone, inflightErr := reserveInflightBalance(c, h.billingCacheService, h.gatewayService, apiKey, subscription, estimate)
 	if inflightErr != nil {
@@ -187,6 +192,21 @@ func (h *OpenAIGatewayHandler) deepSeekTools(c *gin.Context, toolPath string, mo
 		return
 	}
 	defer inflightDone()
+
+	estimateToolHold := func(routeCtx context.Context, key *service.APIKey) (float64, error) {
+		return h.gatewayService.EstimateDeepSeekToolPreauthorizationCost(routeCtx, key, modelLabel, toolUnits), nil
+	}
+	toolHoldAmount, _ := estimateToolHold(c.Request.Context(), apiKey)
+	balanceGuard, preauthErr := preauthorizeFixedAmountGatewayRequest(
+		c.Request.Context(), h.balancePreauthorizer, apiKey, subscription, "", body, toolHoldAmount,
+	)
+	if h.handlePreauthorizationError(c, preauthErr, false) {
+		return
+	}
+	defer func() { deferBalancePreauthorizationRefund(reqLog, balanceGuard) }()
+	if balanceGuard != nil {
+		c.Request = c.Request.WithContext(service.ContextWithBalancePreauthorizationGuard(c.Request.Context(), balanceGuard))
+	}
 
 	sessionHash := h.gatewayService.GenerateSessionHashWithFallback(c, nil, "")
 	failedAccountIDs := make(map[int64]struct{})
@@ -236,7 +256,8 @@ func (h *OpenAIGatewayHandler) deepSeekTools(c *gin.Context, toolPath string, mo
 		if err == nil && routedKey != nil {
 			if bindErr := h.bindSelectedKeyRoute(c, keyRouteBinding{
 				Previous: apiKey, Selected: routedKey, Subscription: &subscription,
-				Mapping: &channelMapping, Body: body, Model: routingModel, PricingAt: asPricingAt,
+				Mapping: &channelMapping, Guard: &balanceGuard, Body: body, Model: routingModel, PricingAt: asPricingAt,
+				FixedAmount: estimateToolHold,
 			}); bindErr != nil {
 				releaseRejectedKeyRouteSelection(selection)
 				h.handlePreauthorizationError(c, bindErr, false)

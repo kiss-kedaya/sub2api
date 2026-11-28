@@ -79,7 +79,7 @@ const windowItems = computed(() => [
   ...(windowId.value !== 'any' && !(props.account?.usage_windows ?? []).some(window => window.window === windowId.value) ? [{ value: windowId.value, label: windowId.value }] : [])
 ])
 let sequence = 0
-watch(() => [props.show, props.account?.account_id] as const, () => {
+watch([() => props.show, () => props.account?.account_id], () => {
   sequence++; busy.value = false
   const rule = isQuota.value ? props.quotaRule : props.balanceRule
   enabled.value = rule?.enabled ?? true

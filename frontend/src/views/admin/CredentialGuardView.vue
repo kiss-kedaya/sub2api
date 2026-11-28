@@ -15,20 +15,20 @@
       <UTable :data="visibleRows" :columns="columns" :loading="busy" :ui="tableUi">
         <template #account-cell="{ row }">
           <p class="font-medium text-highlighted">{{ row.original.account_name }}</p>
-          <p class="text-xs text-muted">#{{ row.original.account_id }}</p>
+          <p class="text-xs tabular-nums text-muted">#{{ row.original.account_id }}</p>
         </template>
         <template #status-cell="{ row }">
           <UBadge :color="statusColor(row.original)" variant="subtle">{{ statusLabel(row.original) }}</UBadge>
           <p v-if="codeLabel(row.original.code)" class="mt-1 max-w-xs whitespace-normal text-xs text-muted">{{ codeLabel(row.original.code) }}</p>
         </template>
-        <template #checked-cell="{ row }">{{ row.original.last_checked_at ? new Date(row.original.last_checked_at).toLocaleString() : '—' }}</template>
-        <template #failures-cell="{ row }">{{ row.original.failures }} / {{ row.original.config.max_failures }}</template>
+        <template #checked-cell="{ row }"><span class="tabular-nums">{{ row.original.last_checked_at ? new Date(row.original.last_checked_at).toLocaleString() : '—' }}</span></template>
+        <template #failures-cell="{ row }"><span class="tabular-nums">{{ row.original.failures }} / {{ row.original.config.max_failures }}</span></template>
         <template #actions-cell="{ row }">
           <div class="flex items-center justify-end gap-1">
-            <UButton icon="i-lucide-scan-search" color="neutral" variant="ghost" :aria-label="text('立即检测', 'Inspect now')" :title="text('立即检测', 'Inspect now')" :disabled="busy" @click="probe(row.original)" />
-            <UButton icon="i-lucide-settings-2" color="neutral" variant="ghost" :aria-label="text('设置', 'Settings')" :title="text('设置', 'Settings')" :disabled="busy" @click="edit(row.original)" />
+            <UButton icon="i-lucide-scan-search" color="neutral" variant="ghost" class="max-sm:min-h-11 max-sm:min-w-11 pointer-coarse:min-h-11 pointer-coarse:min-w-11" :aria-label="text('立即检测', 'Inspect now')" :title="text('立即检测', 'Inspect now')" :disabled="busy" @click="probe(row.original)" />
+            <UButton icon="i-lucide-settings-2" color="neutral" variant="ghost" class="max-sm:min-h-11 max-sm:min-w-11 pointer-coarse:min-h-11 pointer-coarse:min-w-11" :aria-label="text('设置', 'Settings')" :title="text('设置', 'Settings')" :disabled="busy" @click="edit(row.original)" />
             <UDropdownMenu v-if="canRelogin(row.original)" :items="rowMenu(row.original)" :content="{ align: 'end' }">
-              <UButton icon="i-lucide-ellipsis-vertical" color="neutral" variant="ghost" :aria-label="text('更多操作', 'More actions')" />
+              <UButton icon="i-lucide-ellipsis-vertical" color="neutral" variant="ghost" class="max-sm:min-h-11 max-sm:min-w-11 pointer-coarse:min-h-11 pointer-coarse:min-w-11" :aria-label="text('更多操作', 'More actions')" />
             </UDropdownMenu>
           </div>
         </template>
@@ -40,14 +40,14 @@
         </template>
       </UTable>
       <div class="flex flex-wrap items-center justify-between gap-3 border-t border-default pt-4 text-sm text-muted">
-        <span>{{ text(`${visibleRows.length} / ${rows.length} 个账号`, `${visibleRows.length} of ${rows.length} accounts`) }}</span>
+        <span class="tabular-nums">{{ text(`${visibleRows.length} / ${rows.length} 个账号`, `${visibleRows.length} of ${rows.length} accounts`) }}</span>
         <span class="sm:text-right">{{ text('保留手工停调及已有错误状态。需要恢复这类账号时，先检查原停调原因；本功能不会直接重新开启。', 'Manual scheduling choices and existing error states are preserved. Review their original cause before restoring an account; this feature never overrides them.') }}</span>
       </div>
     </div>
     <BaseDialog :show="dialog" :title="text('凭证巡检设置', 'Credential inspection settings')" @close="closeDialog">
       <div class="space-y-4">
         <UFormField v-if="!editingID" :label="text('账号 ID', 'Account ID')"><UInput v-model.number="accountID" type="number" min="1" class="w-full" /></UFormField>
-        <p v-else class="text-sm font-medium text-highlighted">{{ editingName }} · #{{ editingID }}</p>
+        <p v-else class="text-sm font-medium tabular-nums text-highlighted">{{ editingName }} · #{{ editingID }}</p>
         <USwitch v-model="draft.enabled" :label="text('开启定时巡检', 'Enable scheduled inspection')" />
         <div class="grid grid-cols-2 gap-3">
           <UFormField :label="text('检测间隔（秒）', 'Inspection interval (seconds)')"><UInput v-model.number="draft.interval_seconds" type="number" min="60" max="86400" class="w-full" /></UFormField>

@@ -1084,7 +1084,7 @@ defineExpose({
 /* 按下反馈：scale(0.97)。只给操作条里的按钮和「高级筛选」开关，不碰字段触发器。 */
 .usage-filters-press:is(button),
 .usage-filters-press :deep(button) {
-  transition-property: color, background-color, border-color, box-shadow, transform;
+  transition-property: color, background-color, border-color, transform;
   transition-duration: 160ms;
   transition-timing-function: var(--usage-ease-out);
 }

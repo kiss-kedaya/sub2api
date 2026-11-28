@@ -19,30 +19,30 @@ export type Platform =
 
 // ── Badge (bg + text + border, for inline badges with border) ───────
 const BADGE: Record<Platform, string> = {
-  anthropic: 'bg-orange-500/10 text-orange-600 border-orange-500/30 dark:text-orange-400',
-  openai: 'bg-green-500/10 text-green-600 border-green-500/30 dark:text-green-400',
-  antigravity: 'bg-purple-500/10 text-purple-600 border-purple-500/30 dark:text-purple-400',
-  gemini: 'bg-blue-500/10 text-blue-600 border-blue-500/30 dark:text-blue-400',
+  anthropic: 'bg-orange-500/10 text-orange-800 border-orange-500/30 dark:text-orange-400',
+  openai: 'bg-green-500/10 text-green-800 border-green-500/30 dark:text-green-400',
+  antigravity: 'bg-purple-500/10 text-purple-700 border-purple-500/30 dark:text-purple-400',
+  gemini: 'bg-blue-500/10 text-blue-700 border-blue-500/30 dark:text-blue-400',
   grok: 'bg-zinc-800/10 text-zinc-800 border-zinc-800/30 dark:bg-zinc-500/10 dark:text-zinc-200 dark:border-zinc-500/30',
-  kimi: 'bg-pink-500/10 text-pink-600 border-pink-500/30 dark:text-pink-400',
-  zhipu: 'bg-indigo-500/10 text-indigo-600 border-indigo-500/30 dark:text-indigo-400',
-  deepseek: 'bg-teal-500/10 text-teal-600 border-teal-500/30 dark:text-teal-400',
-  minimax: 'bg-rose-500/10 text-rose-600 border-rose-500/30 dark:text-rose-400',
+  kimi: 'bg-pink-500/10 text-pink-700 border-pink-500/30 dark:text-pink-400',
+  zhipu: 'bg-indigo-500/10 text-indigo-700 border-indigo-500/30 dark:text-indigo-400',
+  deepseek: 'bg-teal-500/10 text-teal-800 border-teal-500/30 dark:text-teal-400',
+  minimax: 'bg-rose-500/10 text-rose-700 border-rose-500/30 dark:text-rose-400',
   composite: 'bg-cyan-500/10 text-cyan-700 border-cyan-500/30 dark:text-cyan-300',
 }
-const BADGE_DEFAULT = 'bg-slate-500/10 text-slate-600 border-slate-500/30 dark:text-slate-400'
+const BADGE_DEFAULT = 'bg-slate-500/10 text-slate-700 border-slate-500/30 dark:text-slate-400'
 
 // ── Light badge (softer bg, no border) ──────────────────────────────
 const BADGE_LIGHT: Record<Platform, string> = {
-  anthropic: 'bg-orange-500/10 text-orange-600 dark:bg-orange-500/10 dark:text-orange-300',
-  openai: 'bg-green-500/10 text-green-600 dark:bg-green-500/10 dark:text-green-300',
-  antigravity: 'bg-purple-500/10 text-purple-600 dark:bg-purple-500/10 dark:text-purple-300',
-  gemini: 'bg-blue-500/10 text-blue-600 dark:bg-blue-500/10 dark:text-blue-300',
+  anthropic: 'bg-orange-500/10 text-orange-800 dark:bg-orange-500/10 dark:text-orange-300',
+  openai: 'bg-green-500/10 text-green-800 dark:bg-green-500/10 dark:text-green-300',
+  antigravity: 'bg-purple-500/10 text-purple-700 dark:bg-purple-500/10 dark:text-purple-300',
+  gemini: 'bg-blue-500/10 text-blue-700 dark:bg-blue-500/10 dark:text-blue-300',
   grok: 'bg-zinc-800/10 text-zinc-800 dark:bg-zinc-500/10 dark:text-zinc-200',
-  kimi: 'bg-pink-500/10 text-pink-600 dark:bg-pink-500/10 dark:text-pink-300',
-  zhipu: 'bg-indigo-500/10 text-indigo-600 dark:bg-indigo-500/10 dark:text-indigo-300',
-  deepseek: 'bg-teal-500/10 text-teal-600 dark:bg-teal-500/10 dark:text-teal-300',
-  minimax: 'bg-rose-500/10 text-rose-600 dark:bg-rose-500/10 dark:text-rose-300',
+  kimi: 'bg-pink-500/10 text-pink-700 dark:bg-pink-500/10 dark:text-pink-300',
+  zhipu: 'bg-indigo-500/10 text-indigo-700 dark:bg-indigo-500/10 dark:text-indigo-300',
+  deepseek: 'bg-teal-500/10 text-teal-800 dark:bg-teal-500/10 dark:text-teal-300',
+  minimax: 'bg-rose-500/10 text-rose-700 dark:bg-rose-500/10 dark:text-rose-300',
   composite: 'bg-cyan-500/10 text-cyan-700 dark:bg-cyan-500/10 dark:text-cyan-300',
 }
 
@@ -109,18 +109,18 @@ const ACCENT_BAR_DEFAULT = 'bg-linear-to-r/srgb from-primary-400 to-primary-500'
 
 // ── Text (price, icon) ─────────────────────────────────────────────
 const TEXT: Record<Platform, string> = {
-  anthropic: 'text-orange-600 dark:text-orange-400',
-  openai: 'text-emerald-600 dark:text-emerald-400',
-  antigravity: 'text-purple-600 dark:text-purple-400',
-  gemini: 'text-blue-600 dark:text-blue-400',
+  anthropic: 'text-orange-800 dark:text-orange-400',
+  openai: 'text-emerald-800 dark:text-emerald-400',
+  antigravity: 'text-purple-700 dark:text-purple-400',
+  gemini: 'text-blue-700 dark:text-blue-400',
   grok: 'text-zinc-800 dark:text-zinc-200',
-  kimi: 'text-pink-600 dark:text-pink-400',
-  zhipu: 'text-indigo-600 dark:text-indigo-400',
-  deepseek: 'text-teal-600 dark:text-teal-400',
-  minimax: 'text-rose-600 dark:text-rose-400',
+  kimi: 'text-pink-700 dark:text-pink-400',
+  zhipu: 'text-indigo-700 dark:text-indigo-400',
+  deepseek: 'text-teal-800 dark:text-teal-400',
+  minimax: 'text-rose-700 dark:text-rose-400',
   composite: 'text-cyan-700 dark:text-cyan-300',
 }
-const TEXT_DEFAULT = 'text-primary-600 dark:text-primary-400'
+const TEXT_DEFAULT = 'text-primary-700 dark:text-primary-400'
 
 // ── Icon (check mark etc.) ──────────────────────────────────────────
 const ICON: Record<Platform, string> = {

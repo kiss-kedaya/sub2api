@@ -22,6 +22,7 @@ import SocialLoginButtons from '@/components/common/SocialLoginButtons.vue'
 import type { SocialLoginProvider } from '@/components/common/socialLogin'
 import type { OAuthLoginStart } from '@/api/auth'
 import { resolveAffiliateReferralCode, storeOAuthAffiliateCode } from '@/utils/oauthAffiliate'
+import { sanitizeInternalRedirectPath } from '@/utils/url'
 
 const props = withDefaults(defineProps<{
   disabled?: boolean
@@ -51,7 +52,7 @@ const providers = computed<SocialLoginProvider[]>(() => [{
 }])
 
 function startLogin(): void {
-  const redirectTo = (route.query.redirect as string) || '/dashboard'
+  const redirectTo = sanitizeInternalRedirectPath(route.query.redirect, '/dashboard')
   storeOAuthAffiliateCode(resolveAffiliateReferralCode(props.affCode, route.query.aff, route.query.aff_code))
   emit('start', { provider: 'oidc', params: { redirect: redirectTo } })
 }

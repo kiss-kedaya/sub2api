@@ -94,7 +94,7 @@ const typeOptions = computed(() => [
 ])
 
 // Watch modal open
-watch(() => [props.show, props.user?.id] as const, ([show], _, onCleanup) => {
+watch([() => props.show, () => props.user?.id], ([show], _, onCleanup) => {
   onCleanup(() => { requestVersion++ })
   history.value = []
   total.value = 0

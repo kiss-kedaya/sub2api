@@ -231,10 +231,12 @@ function formatHeaderMoney(value: number) {
   color: var(--ui-text);
 }
 
-.console-navbar .header-bell > button:hover {
-  background: color-mix(in oklab, var(--ui-bg-elevated) 100%, transparent);
-  color: var(--ui-text-highlighted);
-  scale: none;
+@media (hover: hover) and (pointer: fine) {
+  .console-navbar .header-bell > button:hover {
+    background: color-mix(in oklab, var(--ui-bg-elevated) 100%, transparent);
+    color: var(--ui-text-highlighted);
+    scale: none;
+  }
 }
 
 /* Balance: an outline neutral chip; the details card opens on hover or keyboard focus. */
@@ -279,14 +281,20 @@ function formatHeaderMoney(value: number) {
   max-width: calc(100dvw - 32px);
   margin-top: 8px;
   padding: 12px;
+  border: 1px solid var(--ui-border);
   border-radius: calc(var(--ui-radius) * 1.5);
   background: var(--ui-bg);
-  box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.08), 0 4px 6px -4px rgb(0 0 0 / 0.06), 0 0 0 1px var(--ui-border);
+  box-shadow: var(--app-shadow-popover);
   font-size: 12px;
   pointer-events: none;
 }
 
-.console-navbar .header-balance:hover .header-balance-detail,
+@media (hover: hover) and (pointer: fine) {
+  .console-navbar .header-balance:hover .header-balance-detail {
+    display: block;
+  }
+}
+
 .console-navbar .header-balance:focus-visible .header-balance-detail,
 .console-navbar .header-balance:focus-within .header-balance-detail {
   display: block;
@@ -310,6 +318,7 @@ function formatHeaderMoney(value: number) {
   position: absolute;
   inset: 0;
   border-radius: inherit;
+  corner-shape: inherit;
   opacity: 0;
   pointer-events: none;
 }
@@ -390,11 +399,11 @@ function formatHeaderMoney(value: number) {
   }
 }
 
-/* Touch screens: Nuxt UI's 32px icon button is a pointer size. A finger needs 40px. */
+/* Touch screens: Nuxt UI's 32px icon button is a pointer size. A finger needs 44px. */
 @media (pointer: coarse) {
   .console-navbar :is(button, [role='button']) {
-    min-width: 40px;
-    min-height: 40px;
+    min-width: 44px;
+    min-height: 44px;
   }
 }
 </style>

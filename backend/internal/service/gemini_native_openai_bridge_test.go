@@ -425,7 +425,7 @@ func TestGeminiBridgeStreamingOutputHoldBeforeEmission(t *testing.T) {
 					require.Contains(t, rec.Body.String(), "hello")
 					require.NotContains(t, rec.Body.String(), text)
 					require.NotContains(t, rec.Body.String(), `"finishReason"`)
-					require.Contains(t, rec.Body.String(), `"code":403`)
+					require.Contains(t, rec.Body.String(), `"code":429`)
 					require.Equal(t, 2, body.reads, "top-up failure must stop reading upstream")
 				} else {
 					require.NoError(t, err)

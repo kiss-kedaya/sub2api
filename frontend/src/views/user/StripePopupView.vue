@@ -1,12 +1,12 @@
 <template>
-  <div class="flex min-h-screen items-center justify-center bg-muted p-4 dark:bg-transparent">
+  <main class="flex min-h-dvh items-center justify-center bg-muted p-4 dark:bg-(--app-page-bg)">
     <div
-      class="w-full max-w-md space-y-4 rounded-lg bg-default p-6 shadow-sm ring ring-default dark:shadow-none"
+      class="w-full max-w-md space-y-4 rounded-lg bg-default p-6 shadow-(--app-shadow-card) ring ring-default"
     >
       <!-- Amount + Order ID -->
       <div v-if="amount" class="text-center">
-        <p class="text-3xl font-semibold tabular-nums" :style="{ color: methodColor }">¥{{ amount }}</p>
-        <p v-if="orderId" class="mt-1 text-sm text-muted">
+        <p class="text-3xl font-semibold tabular-nums" :class="methodColorClass">¥{{ amount }}</p>
+        <p v-if="orderId" class="mt-1 text-sm tabular-nums wrap-anywhere text-muted">
           {{ t('payment.orders.orderId') }}: {{ orderId }}
         </p>
       </div>
@@ -14,13 +14,14 @@
       <!-- Error -->
       <div v-if="error" class="space-y-3">
         <div
-          class="rounded-md bg-error/10 p-3 text-sm text-error ring ring-inset ring-error/25"
+          class="rounded-md bg-error/10 p-3 text-sm wrap-anywhere text-error ring ring-inset ring-error/25"
         >
           {{ error }}
         </div>
         <button
-          class="w-full text-sm underline"
-          :style="{ color: methodColor }"
+          type="button"
+          class="inline-flex min-h-11 w-full items-center justify-center rounded-md px-3 text-sm font-medium underline underline-offset-4 transition-transform duration-150 active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary motion-reduce:transition-none motion-reduce:active:scale-100"
+          :class="methodColorClass"
           @click="closeWindow"
         >
           {{ t('common.close') }}
@@ -32,8 +33,9 @@
         <UIcon name="i-lucide-circle-check" class="mx-auto size-12 text-success" />
         <p class="text-sm text-muted">{{ t('payment.result.success') }}</p>
         <button
-          class="text-sm underline"
-          :style="{ color: methodColor }"
+          type="button"
+          class="inline-flex min-h-11 items-center justify-center rounded-md px-4 text-sm font-medium underline underline-offset-4 transition-transform duration-150 active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary motion-reduce:transition-none motion-reduce:active:scale-100"
+          :class="methodColorClass"
           @click="closeWindow"
         >
           {{ t('common.close') }}
@@ -43,13 +45,13 @@
       <!-- Loading / Redirecting -->
       <div v-else class="flex items-center justify-center py-8">
         <div
-          class="h-8 w-8 animate-spin rounded-full border-2 border-t-transparent"
-          :style="{ borderColor: methodColor, borderTopColor: 'transparent' }"
+          class="h-8 w-8 animate-spin rounded-full border-2 border-current border-t-transparent motion-reduce:animate-none"
+          :class="methodColorClass"
         />
         <span class="ml-3 text-sm text-muted">{{ hint }}</span>
       </div>
     </div>
-  </div>
+  </main>
 </template>
 
 <script setup lang="ts">
@@ -64,11 +66,11 @@ interface StripeWithWechatPay {
   confirmWechatPayPayment(clientSecret: string, options: Record<string, unknown>): Promise<{ error?: { message?: string }; paymentIntent?: { status: string } }>
 }
 
-const METHOD_COLORS: Record<string, string> = {
-  alipay: '#00AEEF',
-  wechat_pay: '#07C160',
+const METHOD_COLOR_CLASSES: Record<string, string> = {
+  alipay: 'text-[#0369a1] dark:text-[#38bdf8]',
+  wechat_pay: 'text-[#15803d] dark:text-[#4ade80]',
 }
-const DEFAULT_METHOD_COLOR = '#635bff'
+const DEFAULT_METHOD_COLOR_CLASS = 'text-[#4f46e5] dark:text-[#818cf8]'
 
 const { t } = useI18n()
 const route = useRoute()
@@ -77,7 +79,7 @@ const orderId = String(route.query.order_id || '')
 const method = String(route.query.method || 'alipay')
 const amount = String(route.query.amount || '')
 
-const methodColor = computed(() => METHOD_COLORS[method] || DEFAULT_METHOD_COLOR)
+const methodColorClass = computed(() => METHOD_COLOR_CLASSES[method] || DEFAULT_METHOD_COLOR_CLASS)
 
 const error = ref('')
 const success = ref(false)

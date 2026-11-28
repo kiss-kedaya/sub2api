@@ -23,10 +23,10 @@
         data-testid="dashboard-skeleton"
       >
         <div class="grid grid-cols-2 gap-4 xl:grid-cols-4">
-          <div v-for="i in 4" :key="i" class="h-28 animate-pulse rounded-lg bg-elevated/60 ring ring-default"></div>
+          <div v-for="i in 4" :key="i" class="h-28 animate-pulse motion-reduce:animate-none rounded-lg bg-elevated/60 ring ring-default"></div>
         </div>
-        <div class="h-64 animate-pulse rounded-lg bg-elevated/60 ring ring-default"></div>
-        <div class="h-48 animate-pulse rounded-lg bg-elevated/60 ring ring-default"></div>
+        <div class="h-64 animate-pulse motion-reduce:animate-none rounded-lg bg-elevated/60 ring ring-default"></div>
+        <div class="h-48 animate-pulse motion-reduce:animate-none rounded-lg bg-elevated/60 ring ring-default"></div>
       </div>
       <UAlert
         v-if="statsError"
@@ -255,7 +255,7 @@ const foldTrigger = {
   block: true,
   class: 'group justify-start gap-2.5 rounded-none px-4 py-0 min-h-13 text-sm font-medium text-highlighted sm:px-5',
 } as const
-const foldChevron = 'size-4 shrink-0 text-muted transition-transform duration-200 group-data-[state=open]:rotate-180 motion-reduce:transition-none'
+const foldChevron = 'size-4 shrink-0 text-muted transition-transform duration-200 ease-out group-data-[state=open]:rotate-180 motion-reduce:transition-none'
 
 function setPlatformsOpen(open: boolean) {
   platformsOpen.value = open
