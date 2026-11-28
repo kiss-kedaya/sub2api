@@ -310,6 +310,7 @@ function formatHeaderMoney(value: number) {
   position: absolute;
   inset: 0;
   border-radius: inherit;
+  corner-shape: inherit;
   opacity: 0;
   pointer-events: none;
 }
