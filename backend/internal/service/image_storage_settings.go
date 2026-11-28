@@ -5,11 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
+	"github.com/Wei-Shaw/sub2api/internal/util/urlvalidator"
 	"go.uber.org/zap"
 )
 
@@ -58,11 +61,15 @@ type ImageStorageSettingService struct {
 	// 保证升级前已用配置文件开启该功能的部署不被打断。
 	fallback config.ImageStorageConfig
 
-	mu       sync.Mutex
-	resolved bool
-	uploader *ImageResultUploader
-	enabled  bool
+	mu         sync.Mutex
+	resolved   bool
+	retryAfter time.Time
+	now        func() time.Time
+	uploader   *ImageResultUploader
+	enabled    bool
 }
+
+const imageStorageResolveRetryInterval = 30 * time.Second
 
 func NewImageStorageSettingService(
 	settingRepo SettingRepository,
@@ -96,30 +103,70 @@ func (s *ImageStorageSettingService) resolve() (*ImageResultUploader, bool) {
 	if s.resolved {
 		return s.uploader, s.enabled
 	}
+	nowFn := s.now
+	if nowFn == nil {
+		nowFn = time.Now
+	}
+	now := nowFn()
+	if !s.retryAfter.IsZero() && now.Before(s.retryAfter) {
+		return nil, false
+	}
 
 	ctx := context.Background()
-	s.resolved = true
 	s.uploader, s.enabled = nil, false
 
 	cfg, err := s.effectiveConfig(ctx)
 	if err != nil {
+		s.retryAfter = now.Add(imageStorageResolveRetryInterval)
 		logger.L().Warn("image_storage.settings_load_failed; async image tasks stay disabled", zap.Error(err))
 		return nil, false
 	}
 	if !cfg.Enabled {
+		s.resolved = true
+		s.retryAfter = time.Time{}
 		return nil, false
 	}
 	if !cfg.IsConfigured() {
+		s.resolved = true
+		s.retryAfter = time.Time{}
 		logger.L().Warn("image_storage is enabled but not fully configured; async image tasks are disabled",
 			zap.Strings("missing_keys", cfg.MissingCredentialKeys()))
 		return nil, false
 	}
+	if endpoint := strings.TrimSpace(cfg.Endpoint); endpoint != "" {
+		normalized, err := validateAdminOutboundTarget(ctx, endpoint)
+		if err != nil {
+			// Do not permanently disable on transient DNS/resolver errors; retry
+			// after a bounded backoff so recovery does not require a restart.
+			s.retryAfter = now.Add(imageStorageResolveRetryInterval)
+			logger.L().Warn("image_storage.endpoint_rejected; async image tasks stay disabled until retry", zap.Error(err))
+			return nil, false
+		}
+		cfg.Endpoint = normalized
+	}
+	if publicBase := strings.Trim(cfg.PublicBaseURL, " "); publicBase != "" {
+		normalized, err := validateImagePublicBaseURL(publicBase)
+		if err != nil {
+			s.resolved = true
+			s.retryAfter = time.Time{}
+			logger.L().Warn("image_storage.public_base_url_rejected; async image tasks stay disabled", zap.Error(err))
+			return nil, false
+		}
+		cfg.PublicBaseURL = normalized
+	}
 
-	storage, err := s.factory(ctx, cfg)
+	factoryCtx := ctx
+	if ObjectStoreHTTPClientFromContext(factoryCtx) == nil {
+		factoryCtx = WithObjectStoreHTTPClient(factoryCtx, newObjectStoreSafeHTTPClient())
+	}
+	storage, err := s.factory(factoryCtx, cfg)
 	if err != nil {
+		s.retryAfter = now.Add(imageStorageResolveRetryInterval)
 		logger.L().Error("image_storage.client_build_failed; async image tasks stay disabled", zap.Error(err))
 		return nil, false
 	}
+	s.resolved = true
+	s.retryAfter = time.Time{}
 	s.uploader = NewImageResultUploader(storage, cfg.Prefix, cfg.MaxDownloadByte, nil)
 	s.enabled = true
 	return s.uploader, true
@@ -132,6 +179,7 @@ func (s *ImageStorageSettingService) Invalidate() {
 	}
 	s.mu.Lock()
 	s.resolved = false
+	s.retryAfter = time.Time{}
 	s.uploader = nil
 	s.enabled = false
 	s.mu.Unlock()
@@ -165,27 +213,45 @@ func (s *ImageStorageSettingService) SecretConfigured(ctx context.Context) bool 
 
 // Update 保存设置并立即生效。SecretAccessKey 留空表示沿用已保存的值。
 func (s *ImageStorageSettingService) Update(ctx context.Context, in ImageStorageSettings) (*ImageStorageSettings, error) {
+	rawPublicBaseURL := strings.Trim(in.PublicBaseURL, " ")
 	normalizeImageStorageSettings(&in)
+
+	if rawPublicBaseURL != "" {
+		normalized, err := validateImagePublicBaseURL(rawPublicBaseURL)
+		if err != nil {
+			return nil, fmt.Errorf("invalid public_base_url: %w", err)
+		}
+		in.PublicBaseURL = normalized
+	}
 
 	if in.ReuseBackupS3 {
 		// 复用备份凭证时不落自己的密钥，避免同一份密钥在库里存两份。
 		in.Endpoint, in.Region, in.AccessKeyID, in.SecretAccessKey = "", "", "", ""
 		in.ForcePathStyle = false
-	} else if in.SecretAccessKey == "" {
-		if old, err := s.load(ctx); err == nil && old != nil {
-			in.SecretAccessKey = old.SecretAccessKey
-		}
 	} else {
-		// 拒绝用自动生成的临时密钥加密：重启后密文无法解密（#4524）。
-		// 与备份 S3 配置共用同一把密钥，故复用其配置状态判断。
-		if s.backup == nil || !s.backup.EncryptionKeyConfigured() {
-			return nil, ErrSecretEncryptionKeyNotConfigured
+		if in.Endpoint != "" {
+			normalized, err := validateAdminOutboundTarget(ctx, in.Endpoint)
+			if err != nil {
+				return nil, err
+			}
+			in.Endpoint = normalized
 		}
-		encrypted, err := s.encryptor.Encrypt(in.SecretAccessKey)
-		if err != nil {
-			return nil, fmt.Errorf("encrypt secret: %w", err)
+		if in.SecretAccessKey == "" {
+			if old, err := s.load(ctx); err == nil && old != nil {
+				in.SecretAccessKey = old.SecretAccessKey
+			}
+		} else {
+			// 拒绝用自动生成的临时密钥加密：重启后密文无法解密（#4524）。
+			// 与备份 S3 配置共用同一把密钥，故复用其配置状态判断。
+			if s.backup == nil || !s.backup.EncryptionKeyConfigured() {
+				return nil, ErrSecretEncryptionKeyNotConfigured
+			}
+			encrypted, err := s.encryptor.Encrypt(in.SecretAccessKey)
+			if err != nil {
+				return nil, fmt.Errorf("encrypt secret: %w", err)
+			}
+			in.SecretAccessKey = encrypted
 		}
-		in.SecretAccessKey = encrypted
 	}
 
 	data, err := json.Marshal(in)
@@ -330,6 +396,22 @@ func settingsFromConfig(cfg config.ImageStorageConfig) *ImageStorageSettings {
 		SecretAccessKey:  cfg.SecretAccessKey,
 		ForcePathStyle:   cfg.ForcePathStyle,
 	}
+}
+
+func validateImagePublicBaseURL(raw string) (string, error) {
+	if containsControlOrBackslash(raw) {
+		return "", errors.New("contains control characters or backslash")
+	}
+	trimmed := strings.TrimRight(strings.Trim(raw, " "), "/")
+	normalized, err := urlvalidator.ValidateURLFormat(trimmed, true)
+	if err != nil {
+		return "", err
+	}
+	parsed, err := url.Parse(normalized)
+	if err != nil || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" || parsed.Opaque != "" {
+		return "", errors.New("must be a plain http(s) base URL without userinfo, query, or fragment")
+	}
+	return normalized, nil
 }
 
 func normalizeImageStorageSettings(in *ImageStorageSettings) {

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/stretchr/testify/require"
@@ -251,4 +252,95 @@ func TestImageStorageSettingsFallBackToConfigFile(t *testing.T) {
 	require.True(t, fetched.Enabled)
 	require.Equal(t, "yaml-bucket", fetched.Bucket)
 	require.Empty(t, fetched.SecretAccessKey)
+}
+
+func TestImageStorageSettingsUpdateAndResolveRejectPrivateEndpoints(t *testing.T) {
+	restore := SetAdminOutboundAllowPrivateForTest(false)
+	defer restore()
+
+	svc, repo, built := newImageStorageFixture(t, config.ImageStorageConfig{})
+	ctx := context.Background()
+
+	for name, endpoint := range map[string]string{
+		"loopback":       "http://127.0.0.1:9000",
+		"rfc1918":        "https://10.0.0.5:9000",
+		"link-local":     "http://169.254.169.254",
+		"cgnat-metadata": "http://100.100.100.200/latest/meta-data",
+	} {
+		t.Run("update/"+name, func(t *testing.T) {
+			_, err := svc.Update(ctx, ImageStorageSettings{
+				Enabled: true, Bucket: "images", Endpoint: endpoint,
+				AccessKeyID: "ak", SecretAccessKey: "sk",
+			})
+			require.ErrorIs(t, err, ErrAdminOutboundTargetRejected)
+		})
+	}
+
+	t.Run("update rejects unsafe public_base_url", func(t *testing.T) {
+		stubOutboundResolver(t, "93.184.216.34")
+		for _, bad := range []string{
+			"javascript:alert(1)",
+			"https://cdn.example.com?token=1",
+			"https://cdn.example.com#frag",
+			"https://user:pass@cdn.example.com",
+			`https://cdn.example.com\evil`,
+			"https://cdn.example.com\r\n",
+		} {
+			_, err := svc.Update(ctx, ImageStorageSettings{
+				Enabled: true, Bucket: "images", Endpoint: "https://s3.example.com",
+				PublicBaseURL: bad,
+				AccessKeyID:   "ak", SecretAccessKey: "sk",
+			})
+			require.Error(t, err, "public_base_url %q must be rejected", bad)
+			require.Contains(t, err.Error(), "public_base_url")
+		}
+	})
+
+	t.Run("resolve blocks private endpoint even if written directly to settings", func(t *testing.T) {
+		raw, err := json.Marshal(ImageStorageSettings{
+			Enabled: true, Bucket: "images", Endpoint: "http://169.254.169.254",
+			AccessKeyID: "ak", SecretAccessKey: "enc:sk",
+		})
+		require.NoError(t, err)
+		require.NoError(t, repo.Set(ctx, settingKeyImageStorageConfig, string(raw)))
+		svc.Invalidate()
+
+		uploader, enabled := svc.resolve()
+		require.False(t, enabled)
+		require.Nil(t, uploader)
+		require.Empty(t, *built)
+	})
+
+	t.Run("transient endpoint validation failure retries after backoff without restart", func(t *testing.T) {
+		svc2, repo2, built2 := newImageStorageFixture(t, config.ImageStorageConfig{})
+		now := time.Date(2026, 11, 28, 12, 0, 0, 0, time.UTC)
+		svc2.now = func() time.Time { return now }
+
+		raw, err := json.Marshal(ImageStorageSettings{
+			Enabled: true, Bucket: "images", Endpoint: "https://transient.s3.example.com",
+			AccessKeyID: "ak", SecretAccessKey: "enc:sk",
+		})
+		require.NoError(t, err)
+		require.NoError(t, repo2.Set(ctx, settingKeyImageStorageConfig, string(raw)))
+
+		// Simulate transient validation failure (e.g. temporary bad resolver answer).
+		stubOutboundResolver(t, "127.0.0.1")
+		uploader, enabled := svc2.resolve()
+		require.False(t, enabled)
+		require.Nil(t, uploader)
+		require.Empty(t, *built2)
+
+		// Within retry backoff window, resolve stays disabled without retrying.
+		stubOutboundResolver(t, "93.184.216.34")
+		now = now.Add(10 * time.Second)
+		_, enabled = svc2.resolve()
+		require.False(t, enabled)
+
+		// After retry backoff window expires, resolve retries and recovers automatically.
+		now = now.Add(imageStorageResolveRetryInterval)
+		uploader, enabled = svc2.resolve()
+		require.True(t, enabled)
+		require.NotNil(t, uploader)
+		require.Len(t, *built2, 1)
+	})
 }

@@ -1,21 +1,65 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"image"
+	"image/color"
+	"image/gif"
+	"image/jpeg"
+	"image/png"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"testing"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/util/urlvalidator"
 	"github.com/stretchr/testify/require"
 )
 
-// pngBytes is a minimal payload whose signature makes http.DetectContentType
-// report image/png.
-var pngBytes = []byte("\x89PNG\r\n\x1a\nfake-png-payload")
+// pngBytes is a real 1x1 PNG image so both http.DetectContentType and
+// image.DecodeConfig validate it cleanly.
+var pngBytes = func() []byte {
+	img := image.NewNRGBA(image.Rect(0, 0, 1, 1))
+	img.Set(0, 0, color.NRGBA{R: 12, G: 34, B: 56, A: 255})
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		panic(err)
+	}
+	return buf.Bytes()
+}()
+
+var jpegBytes = func() []byte {
+	img := image.NewRGBA(image.Rect(0, 0, 1, 1))
+	img.Set(0, 0, color.RGBA{R: 100, G: 150, B: 200, A: 255})
+	var buf bytes.Buffer
+	if err := jpeg.Encode(&buf, img, nil); err != nil {
+		panic(err)
+	}
+	return buf.Bytes()
+}()
+
+var gifBytes = func() []byte {
+	img := image.NewPaletted(image.Rect(0, 0, 1, 1), color.Palette{color.Black, color.White})
+	var buf bytes.Buffer
+	if err := gif.Encode(&buf, img, nil); err != nil {
+		panic(err)
+	}
+	return buf.Bytes()
+}()
+
+// webpBytes is a minimal valid lossless 1x1 WebP (VP8L) image.
+var webpBytes = func() []byte {
+	raw, err := base64.StdEncoding.DecodeString("UklGRh4AAABXRUJQVlA4TBEAAAAvAAAAAAfQ//73v/+BiOh/AAA=")
+	if err != nil {
+		panic(err)
+	}
+	return raw
+}()
 
 type savedImage struct {
 	key         string
@@ -80,7 +124,7 @@ func TestImageResultUploaderRewritesURL(t *testing.T) {
 	defer upstream.Close()
 
 	storage := &fakeImageStorage{}
-	uploader := NewImageResultUploader(storage, "images/", 0, nil)
+	uploader := NewImageResultUploader(storage, "images/", 0, upstream.Client())
 
 	result := json.RawMessage(`{"created":1,"data":[{"url":"` + upstream.URL + `/pic.png"}]}`)
 	out, err := uploader.Rewrite(context.Background(), "imgtask_xyz", result)
@@ -286,4 +330,235 @@ func TestImageTaskServiceCompleteOffloadFailureMarksFailed(t *testing.T) {
 	require.Equal(t, http.StatusBadGateway, got.HTTPStatus)
 	require.Contains(t, string(got.Error), "object storage")
 	require.NotContains(t, string(got.Result), "b64_json", "failed offload must not persist base64 to Redis")
+}
+
+func TestImageResultUploaderBlocksSSRFAndLoopbackRedirects(t *testing.T) {
+	loopbackHits := 0
+	loopback := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		loopbackHits++
+		w.Header().Set("Content-Type", "image/png")
+		_, _ = w.Write(pngBytes)
+	}))
+	defer loopback.Close()
+
+	storage := &fakeImageStorage{}
+	// nil httpClient selects the production outbound-safe default client.
+	uploader := NewImageResultUploader(storage, "images/", 0, nil)
+
+	for name, target := range map[string]string{
+		"loopback httptest": loopback.URL + "/secret.png",
+		"loopback literal":  "http://127.0.0.1:8080/pic.png",
+		"aws metadata":      "http://169.254.169.254/latest/meta-data/",
+		"cgnat metadata":    "http://100.100.100.200/latest/meta-data/",
+		"rfc1918":           "http://10.0.0.1/pic.png",
+		"ipv6 loopback":     "http://[::1]:8080/pic.png",
+		"file scheme":       "file:///etc/passwd",
+	} {
+		t.Run(name, func(t *testing.T) {
+			result, err := json.Marshal(map[string]any{"data": []map[string]string{{"url": target}}})
+			require.NoError(t, err)
+			_, err = uploader.Rewrite(context.Background(), "imgtask_ssrf", result)
+			require.Error(t, err)
+			require.ErrorIs(t, err, urlvalidator.ErrOutboundTargetNotAllowed)
+		})
+	}
+	require.Zero(t, loopbackHits, "blocked SSRF target must never receive an HTTP request")
+	require.Empty(t, storage.saved)
+
+	t.Run("dns resolving to private ip blocked", func(t *testing.T) {
+		ctx := urlvalidator.WithResolver(context.Background(), func(context.Context, string) ([]netip.Addr, error) {
+			return []netip.Addr{netip.MustParseAddr("10.20.30.40")}, nil
+		})
+		result := json.RawMessage(`{"data":[{"url":"https://rebind.example.test/a.png"}]}`)
+		_, err := uploader.Rewrite(ctx, "imgtask_rebind", result)
+		require.ErrorIs(t, err, urlvalidator.ErrOutboundTargetNotAllowed)
+	})
+
+	t.Run("302 redirect to loopback or non-http scheme blocked", func(t *testing.T) {
+		defaultClient := defaultImageDownloadHTTPClient()
+		require.NotNil(t, defaultClient.CheckRedirect)
+
+		// End-to-end redirect test using defaultClient.CheckRedirect with a stub public transport.
+		redirectClient := &http.Client{
+			CheckRedirect: defaultClient.CheckRedirect,
+			Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				if req.URL.Hostname() == "public.example.test" {
+					return &http.Response{
+						StatusCode: http.StatusFound,
+						Header:     http.Header{"Location": []string{loopback.URL + "/internal.png"}},
+						Body:       http.NoBody,
+						Request:    req,
+					}, nil
+				}
+				return http.DefaultTransport.RoundTrip(req)
+			}),
+		}
+		ctx := urlvalidator.WithResolver(context.Background(), func(context.Context, string) ([]netip.Addr, error) {
+			return []netip.Addr{netip.MustParseAddr("93.184.216.34")}, nil
+		})
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://public.example.test/start.png", nil)
+		require.NoError(t, err)
+		_, err = redirectClient.Do(req)
+		require.ErrorIs(t, err, urlvalidator.ErrOutboundTargetNotAllowed)
+		require.Zero(t, loopbackHits, "redirect to loopback must be blocked before dialing")
+
+		// Non-http(s) scheme on redirect hop is also rejected.
+		badSchemeReq, err := http.NewRequestWithContext(ctx, http.MethodGet, "file:///etc/passwd", nil)
+		require.NoError(t, err)
+		require.ErrorIs(t, defaultClient.CheckRedirect(badSchemeReq, []*http.Request{req}), urlvalidator.ErrOutboundTargetNotAllowed)
+	})
+}
+
+func TestImageResultUploaderRejectsSVGAndNonImagesAcrossAllPaths(t *testing.T) {
+	svgPayload := []byte(`<svg xmlns="http://www.w3.org/2000/svg" onload="alert(1)"></svg>`)
+	htmlPayload := []byte(`<!DOCTYPE html><html><body><script>alert(1)</script></body></html>`)
+	jsonPayload := []byte(`{"secret":"aws-metadata-token"}`)
+	polyglotPNG := append([]byte("\x89PNG\r\n\x1a\n"), htmlPayload...)
+	// Valid PNG signature + 1x1 IHDR chunk (passes DecodeConfig) followed by HTML, with no IDAT/IEND.
+	headerOnlyPNGPolyglot := append(append([]byte(nil), pngBytes[:33]...), htmlPayload...)
+	// Valid GIF89a 1x1 logical screen descriptor (passes DecodeConfig) followed by HTML, with no image data.
+	headerOnlyGIFPolyglot := append([]byte("GIF89a\x01\x00\x01\x00\x00\x00\x00"), htmlPayload...)
+	// Valid PNG signature + IHDR declaring 65535x65535 pixels (4.29B pixel decompression bomb).
+	bombPNG := append([]byte(nil), pngBytes[:33]...)
+	bombPNG[16], bombPNG[17], bombPNG[18], bombPNG[19] = 0, 0, 0xff, 0xff
+	bombPNG[20], bombPNG[21], bombPNG[22], bombPNG[23] = 0, 0, 0xff, 0xff
+
+	t.Run("data URL rejects SVG and spoofed non-images", func(t *testing.T) {
+		cases := []struct {
+			name string
+			url  string
+		}{
+			{"svg data url", "data:image/svg+xml;base64," + base64.StdEncoding.EncodeToString(svgPayload)},
+			{"svg disguised as png data url", "data:image/png;base64," + base64.StdEncoding.EncodeToString(svgPayload)},
+			{"html disguised as png data url", "data:image/png;base64," + base64.StdEncoding.EncodeToString(htmlPayload)},
+			{"json disguised as png data url", "data:image/png;base64," + base64.StdEncoding.EncodeToString(jsonPayload)},
+			{"png magic prefix polyglot", "data:image/png;base64," + base64.StdEncoding.EncodeToString(polyglotPNG)},
+			{"png header-only ihdr polyglot", "data:image/png;base64," + base64.StdEncoding.EncodeToString(headerOnlyPNGPolyglot)},
+			{"gif header-only polyglot", "data:image/gif;base64," + base64.StdEncoding.EncodeToString(headerOnlyGIFPolyglot)},
+			{"png 65535x65535 decompression bomb", "data:image/png;base64," + base64.StdEncoding.EncodeToString(bombPNG)},
+		}
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				storage := &fakeImageStorage{}
+				uploader := NewImageResultUploader(storage, "images/", 0, nil)
+				raw, err := json.Marshal(map[string]any{"data": []map[string]string{{"url": tc.url}}})
+				require.NoError(t, err)
+				_, err = uploader.Rewrite(context.Background(), "imgtask_svg", raw)
+				require.Error(t, err)
+				require.Empty(t, storage.saved)
+			})
+		}
+	})
+
+	t.Run("b64_json rejects SVG, HTML, JSON, polyglot and oversized payloads", func(t *testing.T) {
+		for name, payload := range map[string][]byte{
+			"svg":                svgPayload,
+			"html":               htmlPayload,
+			"json":               jsonPayload,
+			"polyglot":           polyglotPNG,
+			"header-only png":    headerOnlyPNGPolyglot,
+			"header-only gif":    headerOnlyGIFPolyglot,
+			"decompression bomb": bombPNG,
+		} {
+			t.Run(name, func(t *testing.T) {
+				storage := &fakeImageStorage{}
+				uploader := NewImageResultUploader(storage, "images/", 0, nil)
+				raw, err := json.Marshal(map[string]any{"data": []map[string]string{{"b64_json": base64.StdEncoding.EncodeToString(payload)}}})
+				require.NoError(t, err)
+				_, err = uploader.Rewrite(context.Background(), "imgtask_b64_bad", raw)
+				require.Error(t, err)
+				require.Empty(t, storage.saved)
+			})
+		}
+
+		// Oversized b64_json is rejected before saving.
+		storage := &fakeImageStorage{}
+		uploader := NewImageResultUploader(storage, "images/", 8, nil)
+		raw, err := json.Marshal(map[string]any{"data": []map[string]string{{"b64_json": base64.StdEncoding.EncodeToString(pngBytes)}}})
+		require.NoError(t, err)
+		_, err = uploader.Rewrite(context.Background(), "imgtask_b64_big", raw)
+		require.ErrorContains(t, err, "exceeds 8 bytes")
+		require.Empty(t, storage.saved)
+	})
+
+	t.Run("HTTP download rejects SVG, HTML, JSON even with spoofed image Content-Type", func(t *testing.T) {
+		cases := []struct {
+			name        string
+			contentType string
+			body        []byte
+		}{
+			{"svg header and body", "image/svg+xml", svgPayload},
+			{"svg with spoofed png header", "image/png", svgPayload},
+			{"html with spoofed png header", "image/png", htmlPayload},
+			{"json with text/plain header", "application/json", jsonPayload},
+			{"png magic polyglot", "image/png", polyglotPNG},
+			{"png header-only polyglot", "image/png", headerOnlyPNGPolyglot},
+			{"gif header-only polyglot", "image/gif", headerOnlyGIFPolyglot},
+			{"png decompression bomb", "image/png", bombPNG},
+		}
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+					w.Header().Set("Content-Type", tc.contentType)
+					_, _ = w.Write(tc.body)
+				}))
+				defer server.Close()
+
+				storage := &fakeImageStorage{}
+				uploader := NewImageResultUploader(storage, "images/", 0, server.Client())
+				raw, err := json.Marshal(map[string]any{"data": []map[string]string{{"url": server.URL + "/bad"}}})
+				require.NoError(t, err)
+				_, err = uploader.Rewrite(context.Background(), "imgtask_dl_bad", raw)
+				require.Error(t, err)
+				require.Empty(t, storage.saved)
+			})
+		}
+	})
+}
+
+func TestImageResultUploaderAcceptsValidBitmapFormats(t *testing.T) {
+	formats := []struct {
+		name     string
+		bytes    []byte
+		wantMIME string
+		wantExt  string
+	}{
+		{"png", pngBytes, "image/png", ".png"},
+		{"jpeg", jpegBytes, "image/jpeg", ".jpg"},
+		{"gif", gifBytes, "image/gif", ".gif"},
+		{"webp", webpBytes, "image/webp", ".webp"},
+	}
+
+	for _, tc := range formats {
+		t.Run("b64_json/"+tc.name, func(t *testing.T) {
+			storage := &fakeImageStorage{}
+			uploader := NewImageResultUploader(storage, "images/", 0, nil)
+			raw, err := json.Marshal(map[string]any{"data": []map[string]string{{"b64_json": base64.StdEncoding.EncodeToString(tc.bytes)}}})
+			require.NoError(t, err)
+			_, err = uploader.Rewrite(context.Background(), "imgtask_ok", raw)
+			require.NoError(t, err)
+			require.Len(t, storage.saved, 1)
+			require.Equal(t, tc.wantMIME, storage.saved[0].contentType)
+			require.Equal(t, "images/imgtask_ok-0"+tc.wantExt, storage.saved[0].key)
+		})
+
+		t.Run("download/"+tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				// Even when upstream sends generic octet-stream, valid bitmap bytes are accepted.
+				w.Header().Set("Content-Type", "application/octet-stream")
+				_, _ = w.Write(tc.bytes)
+			}))
+			defer server.Close()
+
+			storage := &fakeImageStorage{}
+			uploader := NewImageResultUploader(storage, "images/", 0, server.Client())
+			raw, err := json.Marshal(map[string]any{"data": []map[string]string{{"url": server.URL + "/img"}}})
+			require.NoError(t, err)
+			_, err = uploader.Rewrite(context.Background(), "imgtask_dl_ok", raw)
+			require.NoError(t, err)
+			require.Len(t, storage.saved, 1)
+			require.Equal(t, tc.wantMIME, storage.saved[0].contentType)
+			require.Equal(t, "images/imgtask_dl_ok-0"+tc.wantExt, storage.saved[0].key)
+		})
+	}
 }

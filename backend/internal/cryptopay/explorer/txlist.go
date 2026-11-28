@@ -12,16 +12,20 @@ package explorer
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"math/big"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/Wei-Shaw/sub2api/internal/util/urlvalidator"
 )
 
 // Tx is one ordinary transaction as the account API reports it. Value is the
@@ -79,23 +83,116 @@ func (e *APIError) Error() string {
 
 // Client is safe for concurrent use.
 type Client struct {
-	endpoints map[string]Endpoint
-	apiKey    string
-	http      *http.Client
-	retries   int
-	backoff   time.Duration
-	sleep     func(context.Context, time.Duration) error
+	endpoints    map[string]Endpoint
+	apiKey       string
+	http         *http.Client
+	customClient bool
+	retries      int
+	backoff      time.Duration
+	sleep        func(context.Context, time.Duration) error
+}
+
+func defaultExplorerHTTPClient() *http.Client {
+	transport := &http.Transport{
+		Proxy:                 nil,
+		DialContext:           urlvalidator.NewSafeDialContext(urlvalidator.OutboundPolicy{}),
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          16,
+		MaxIdleConnsPerHost:   4,
+		IdleConnTimeout:       60 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ResponseHeaderTimeout: 20 * time.Second,
+		TLSClientConfig:       &tls.Config{MinVersion: tls.VersionTLS12},
+	}
+	return &http.Client{
+		Timeout:   20 * time.Second,
+		Transport: transport,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			// Explorer requests carry the API key in the query string; never
+			// follow redirects that could leak it cross-host or hit internal IPs.
+			return http.ErrUseLastResponse
+		},
+	}
+}
+
+func containsControlOrBackslash(raw string) bool {
+	for i := 0; i < len(raw); i++ {
+		b := raw[i]
+		if b < 0x20 || b == 0x7f || b == '\\' {
+			return true
+		}
+	}
+	return false
+}
+
+func isNonCanonicalIPv4Host(host string) bool {
+	if host == "" {
+		return false
+	}
+	parts := strings.Split(host, ".")
+	if len(parts) < 1 || len(parts) > 4 {
+		return false
+	}
+	for _, part := range parts {
+		if part == "" {
+			return false
+		}
+		if _, err := strconv.ParseUint(part, 0, 64); err == nil {
+			continue
+		}
+		allDigits := true
+		for i := 0; i < len(part); i++ {
+			if part[i] < '0' || part[i] > '9' {
+				allDigits = false
+				break
+			}
+		}
+		if !allDigits {
+			return false
+		}
+	}
+	return true
+}
+
+func isPublicExplorerRoot(root string) bool {
+	if containsControlOrBackslash(root) {
+		return false
+	}
+	validated, err := urlvalidator.ValidateHTTPURL(root, true, urlvalidator.ValidationOptions{})
+	if err != nil {
+		return false
+	}
+	parsed, err := url.Parse(validated)
+	if err != nil || parsed.Hostname() == "" || parsed.User != nil || parsed.Fragment != "" || parsed.Opaque != "" {
+		return false
+	}
+	host := strings.TrimSuffix(strings.ToLower(strings.TrimSpace(parsed.Hostname())), ".")
+	if urlvalidator.IsBlockedHost(host) || host == "metadata.google.internal" || host == "metadata.goog" || host == "instance-data" {
+		return false
+	}
+	if ip, parseErr := netip.ParseAddr(host); parseErr == nil {
+		if !urlvalidator.IsPublicResolvedIP(ip) {
+			return false
+		}
+	} else if isNonCanonicalIPv4Host(host) {
+		return false
+	}
+	return true
 }
 
 // NewClient validates the configuration. An empty API key is allowed so the
 // caller can start the poller and report a clear, non-silent failure instead of
 // crashing at boot; TxList returns ErrNoAPIKey.
 func NewClient(cfg Config) (*Client, error) {
+	customClient := cfg.HTTPClient != nil
 	endpoints := make(map[string]Endpoint, len(cfg.Endpoints))
 	for chain, endpoint := range cfg.Endpoints {
-		root := strings.TrimSpace(endpoint.BaseURL)
+		root := strings.Trim(endpoint.BaseURL, " ")
 		if root == "" {
 			continue
+		}
+		if containsControlOrBackslash(root) {
+			return nil, fmt.Errorf("explorer: invalid endpoint for chain %q", chain)
 		}
 		parsed, err := url.Parse(root)
 		if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
@@ -103,6 +200,9 @@ func NewClient(cfg Config) (*Client, error) {
 		}
 		if parsed.RawQuery != "" {
 			return nil, fmt.Errorf("explorer: endpoint for chain %q must not carry a query string", chain)
+		}
+		if !customClient && !isPublicExplorerRoot(root) {
+			return nil, fmt.Errorf("explorer: endpoint for chain %q is not an allowed public URL", chain)
 		}
 		endpoints[chain] = Endpoint{BaseURL: strings.TrimSuffix(root, "/"), ChainID: endpoint.ChainID}
 	}
@@ -120,15 +220,16 @@ func NewClient(cfg Config) (*Client, error) {
 	}
 	client := cfg.HTTPClient
 	if client == nil {
-		client = &http.Client{Timeout: 20 * time.Second}
+		client = defaultExplorerHTTPClient()
 	}
 	return &Client{
-		endpoints: endpoints,
-		apiKey:    strings.TrimSpace(cfg.APIKey),
-		http:      client,
-		retries:   retries,
-		backoff:   backoff,
-		sleep:     sleep,
+		endpoints:    endpoints,
+		apiKey:       strings.TrimSpace(cfg.APIKey),
+		http:         client,
+		customClient: customClient,
+		retries:      retries,
+		backoff:      backoff,
+		sleep:        sleep,
 	}, nil
 }
 
@@ -206,16 +307,31 @@ func (c *Client) TxList(ctx context.Context, chain, address string, startBlock, 
 }
 
 func (c *Client) fetch(ctx context.Context, endpoint string) ([]Tx, error) {
+	if !c.customClient {
+		if _, err := urlvalidator.ValidateOutboundURL(ctx, endpoint, urlvalidator.OutboundPolicy{AllowInsecureHTTP: true}); err != nil {
+			return nil, &APIError{Message: "outbound", Detail: err.Error(), Retryable: false}
+		}
+	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
-		return nil, err
+		return nil, &APIError{Message: "request", Detail: "failed to build request", Retryable: false}
 	}
 	response, err := c.http.Do(request)
 	if err != nil {
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
-		return nil, &APIError{Message: "transport", Detail: err.Error(), Retryable: true}
+		// The URL carries the API key, so unwrap *url.Error and scrub the key
+		// before storing the transport detail.
+		detail := err.Error()
+		var urlErr *url.Error
+		if errors.As(err, &urlErr) && urlErr.Err != nil {
+			detail = urlErr.Err.Error()
+		}
+		if c.apiKey != "" {
+			detail = strings.ReplaceAll(detail, c.apiKey, "[REDACTED]")
+		}
+		return nil, &APIError{Message: "transport", Detail: detail, Retryable: true}
 	}
 	defer func() { _ = response.Body.Close() }()
 	// The URL carries the API key, so it must never appear in an error message.

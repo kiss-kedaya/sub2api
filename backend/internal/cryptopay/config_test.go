@@ -258,9 +258,70 @@ func TestNormalizeConfigNativePriceFeed(t *testing.T) {
 		t.Fatalf("a symbol template must normalize, got %q", cfg.NativePriceURL)
 	}
 
-	for _, bad := range []string{"not-a-url", "ftp://prices.example/ticker", "https:///ticker"} {
+	for _, bad := range []string{
+		"not-a-url",
+		"ftp://prices.example/ticker",
+		"https:///ticker",
+		"http://127.0.0.1:8080/ticker",
+		"http://localhost/ticker",
+		"http://169.254.169.254/latest/meta-data",
+		"http://100.100.100.200/{symbol}",
+		"https://10.0.0.5/ticker",
+		"http://[::1]:8080/{symbol}",
+		"http://metadata.google.internal/{symbol}",
+		"http://2130706433/ticker",
+		"http://127.1/ticker",
+		"http://0xa9fea9fe/latest/meta-data",
+		"http://0177.0.0.1/ticker",
+		"https://prices.example/ticker\r\n",
+	} {
 		if _, err := NormalizeConfig(CryptoConfig{NativePriceURL: bad}); err == nil {
 			t.Fatalf("unsafe native price url %q was accepted", bad)
+		}
+	}
+}
+
+func TestNormalizeConfigRejectsPrivateExplorerAndWebhookURLs(t *testing.T) {
+	for _, bad := range []string{
+		"http://127.0.0.1:8080/api",
+		"http://localhost/api",
+		"http://169.254.169.254/latest/meta-data",
+		"http://100.100.100.200/api",
+		"https://192.168.1.10/api",
+		"http://[::1]:8080/api",
+		"https://metadata.google.internal/api",
+		"https://api.bscscan.com/v2/api?apikey=oops",
+		"http://2130706433/api",
+		"http://127.1/api",
+		"http://0xa9fea9fe/api",
+		"http://0177.0.0.1/api",
+		"https://api.bscscan.com/v2/api\r\n",
+	} {
+		if _, err := NormalizeConfig(CryptoConfig{
+			ExplorerAPIURL: map[string]string{ChainBSC: bad},
+		}); err == nil {
+			t.Fatalf("unsafe explorer_api_url %q was accepted", bad)
+		}
+	}
+
+	for _, bad := range []string{
+		"http://127.0.0.1:8080/push",
+		"http://localhost/push",
+		"http://169.254.169.254/latest/meta-data",
+		"http://100.100.100.200/push",
+		"https://10.0.0.1/push",
+		"http://[::1]:8080/push",
+		"http://metadata.google.internal/push",
+		"http://2130706433/push",
+		"http://127.1/push",
+		"http://0xa9fea9fe/push",
+		"http://0177.0.0.1/push",
+		"https://hook.example.com/push\r\n",
+	} {
+		if _, err := NormalizeConfig(CryptoConfig{
+			Notify: &CryptoNotifyConfig{Enabled: true, WebhookURL: bad},
+		}); err == nil {
+			t.Fatalf("unsafe notify.webhook_url %q was accepted", bad)
 		}
 	}
 }

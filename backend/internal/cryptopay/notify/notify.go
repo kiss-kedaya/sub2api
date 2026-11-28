@@ -10,17 +10,22 @@ package notify
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/Wei-Shaw/sub2api/internal/util/urlvalidator"
 )
 
 // DefaultTimeout bounds one delivery attempt. It is deliberately short: the
@@ -214,24 +219,112 @@ func (d *Dispatcher) deliver(ev Event) {
 // carries the title/body fields Bark expects in addition to the structured
 // event fields.
 type WebhookSink struct {
-	client *http.Client
+	client       *http.Client
+	customClient bool
 }
 
-// NewWebhookSink returns a webhook sink with its own timeout-bounded client.
+// NewWebhookSink returns a webhook sink with its own timeout-bounded,
+// outbound-safe HTTP client (blocks private/loopback/metadata hosts and
+// disables 3xx redirects so bearer device URLs cannot leak or SSRF).
 func NewWebhookSink() *WebhookSink {
-	return &WebhookSink{client: &http.Client{Timeout: DefaultTimeout}}
+	return &WebhookSink{client: newSafeWebhookHTTPClient()}
+}
+
+// NewWebhookSinkWithClient returns a webhook sink using the supplied client
+// (intended for unit tests injecting an httptest.Server client). Passing nil
+// falls back to the default outbound-safe client.
+func NewWebhookSinkWithClient(client *http.Client) *WebhookSink {
+	if client == nil {
+		return NewWebhookSink()
+	}
+	return &WebhookSink{client: client, customClient: true}
+}
+
+func newSafeWebhookHTTPClient() *http.Client {
+	transport := &http.Transport{
+		Proxy:                 nil,
+		DialContext:           urlvalidator.NewSafeDialContext(urlvalidator.OutboundPolicy{}),
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          16,
+		MaxIdleConnsPerHost:   4,
+		IdleConnTimeout:       60 * time.Second,
+		TLSHandshakeTimeout:   5 * time.Second,
+		ResponseHeaderTimeout: DefaultTimeout,
+		TLSClientConfig:       &tls.Config{MinVersion: tls.VersionTLS12},
+	}
+	return &http.Client{
+		Timeout:   DefaultTimeout,
+		Transport: transport,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
 }
 
 func (s *WebhookSink) Name() string { return "webhook" }
 
+func containsControlOrBackslash(raw string) bool {
+	for i := 0; i < len(raw); i++ {
+		b := raw[i]
+		if b < 0x20 || b == 0x7f || b == '\\' {
+			return true
+		}
+	}
+	return false
+}
+
+func isNonCanonicalIPv4Host(host string) bool {
+	if host == "" {
+		return false
+	}
+	parts := strings.Split(host, ".")
+	if len(parts) < 1 || len(parts) > 4 {
+		return false
+	}
+	for _, part := range parts {
+		if part == "" {
+			return false
+		}
+		if _, err := strconv.ParseUint(part, 0, 64); err == nil {
+			continue
+		}
+		allDigits := true
+		for i := 0; i < len(part); i++ {
+			if part[i] < '0' || part[i] > '9' {
+				allDigits = false
+				break
+			}
+		}
+		if !allDigits {
+			return false
+		}
+	}
+	return true
+}
+
 func (s *WebhookSink) Send(ctx context.Context, cfg Config, ev Event) error {
-	endpoint := strings.TrimSpace(cfg.WebhookURL)
+	endpoint := strings.Trim(cfg.WebhookURL, " ")
 	if endpoint == "" {
 		return nil
 	}
-	parsed, err := url.Parse(endpoint)
-	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
-		return fmt.Errorf("webhook_url must be an absolute http(s) URL")
+	if containsControlOrBackslash(endpoint) {
+		return fmt.Errorf("webhook_url contains invalid characters")
+	}
+	if !s.customClient {
+		if parsed, err := url.Parse(endpoint); err == nil {
+			host := strings.TrimSuffix(strings.ToLower(strings.TrimSpace(parsed.Hostname())), ".")
+			if _, parseErr := netip.ParseAddr(host); parseErr != nil && isNonCanonicalIPv4Host(host) {
+				return fmt.Errorf("webhook_url rejected: %w", urlvalidator.ErrOutboundTargetNotAllowed)
+			}
+		}
+		if _, err := urlvalidator.ValidateOutboundURL(ctx, endpoint, urlvalidator.OutboundPolicy{AllowInsecureHTTP: true}); err != nil {
+			return fmt.Errorf("webhook_url rejected: %w", err)
+		}
+	} else {
+		parsed, err := url.Parse(endpoint)
+		if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
+			return fmt.Errorf("webhook_url must be an absolute http(s) URL")
+		}
 	}
 	payload, err := json.Marshal(webhookPayload(ev))
 	if err != nil {
@@ -244,6 +337,11 @@ func (s *WebhookSink) Send(ctx context.Context, cfg Config, ev Event) error {
 	request.Header.Set("Content-Type", "application/json")
 	response, err := s.client.Do(request)
 	if err != nil {
+		// Avoid echoing the webhook URL (which may carry a Bark device key).
+		var urlErr *url.Error
+		if errors.As(err, &urlErr) && urlErr.Err != nil {
+			return fmt.Errorf("post webhook: %w", urlErr.Err)
+		}
 		return fmt.Errorf("post webhook: %w", err)
 	}
 	defer func() { _ = response.Body.Close() }()

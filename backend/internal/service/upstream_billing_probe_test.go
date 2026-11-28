@@ -1360,3 +1360,76 @@ func TestUpstreamBillingProbeLeaderLockCoversStaggeredInstancesInCadenceWindow(t
 	require.NoError(t, staggered.RunDue(context.Background()))
 	require.Equal(t, int64(1), upstream.probes.Load(), "a staggered instance must not start a second batch inside the cadence window")
 }
+
+type contextCapturingBillingProbeUpstream struct {
+	mu       sync.Mutex
+	requests []*http.Request
+}
+
+func (u *contextCapturingBillingProbeUpstream) Do(req *http.Request, _ string, _ int64, _ int) (*http.Response, error) {
+	u.mu.Lock()
+	u.requests = append(u.requests, req)
+	u.mu.Unlock()
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body:       io.NopCloser(strings.NewReader(`{"isValid":true,"remaining":5,"unit":"USD"}`)),
+	}, nil
+}
+
+func (u *contextCapturingBillingProbeUpstream) DoWithTLS(req *http.Request, proxyURL string, accountID int64, accountConcurrency int, _ *tlsfingerprint.Profile) (*http.Response, error) {
+	return u.Do(req, proxyURL, accountID, accountConcurrency)
+}
+
+func TestUpstreamBillingProbeMarksRequestsPublicHostsOnlyAndNoRedirects(t *testing.T) {
+	repo := &upstreamBillingProbeAccountRepo{}
+	settingsRepo := &upstreamBillingProbeSettingRepo{}
+	upstream := &contextCapturingBillingProbeUpstream{}
+	svc := newUpstreamBillingProbeTestService(repo, upstream, settingsRepo)
+
+	account := &Account{
+		ID:          99,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Status:      StatusActive,
+		Concurrency: 1,
+	}
+	res := svc.fetchUpstreamProbeBody(
+		context.Background(),
+		account,
+		upstreamBillingProbeTarget{apiKey: "test-probe-token"},
+		"https://relay.example.com/v1/sub2api/billing",
+		4096,
+	)
+	require.Empty(t, res.failure)
+	require.Len(t, upstream.requests, 1)
+	reqCtx := upstream.requests[0].Context()
+	require.True(t, HTTPUpstreamPublicHostsOnly(reqCtx), "billing probe requests must enforce public-hosts-only dial/redirect checks")
+	require.True(t, HTTPUpstreamRedirectsDisabled(reqCtx), "billing probe requests must disable redirects")
+
+	// Redirect sanitizer must reject userinfo and control characters even on same-host targets.
+	for _, badLoc := range []string{
+		"https://attacker@relay.example.com/api/usage/token/",
+		"https://relay.example.com/api/usage/token/\r\nX-Inject: 1",
+		`https://relay.example.com\evil`,
+	} {
+		redirectUpstream := &contextCapturingBillingProbeUpstream{}
+		redirectSvc := newUpstreamBillingProbeTestService(repo, redirectUpstream, settingsRepo)
+		res := redirectSvc.fetchUpstreamProbeBodyFollowingRedirects(
+			context.Background(),
+			account,
+			upstreamBillingProbeTarget{apiKey: "test-probe-token"},
+			"https://relay.example.com/api/usage/token",
+			4096,
+		)
+		require.Empty(t, res.failure)
+		parsedCur, parseErr := http.NewRequest(http.MethodGet, "https://relay.example.com/api/usage/token", nil)
+		require.NoError(t, parseErr)
+		next, ok := upstreamProbeRedirectTarget(parsedCur.URL, upstreamBillingProbeHTTPResult{
+			statusCode: http.StatusFound,
+			header:     http.Header{"Location": []string{badLoc}},
+		})
+		require.False(t, ok, "redirect Location %q must be rejected", badLoc)
+		require.Nil(t, next)
+	}
+}

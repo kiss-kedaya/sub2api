@@ -1,13 +1,16 @@
 package nativeprice
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/util/urlvalidator"
 	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/require"
 )
@@ -144,4 +147,81 @@ func TestUnsupportedChainHasNoMarket(t *testing.T) {
 	_, err := p.Quote(t.Context(), "polygon")
 	require.ErrorIs(t, err, ErrUnavailable)
 	require.False(t, errors.Is(err, ErrStale))
+}
+
+func TestDefaultProviderBlocksSSRFRedirectsAndInvalidTemplateScheme(t *testing.T) {
+	server, hits := tickerServer(t, "2500", 0)
+
+	for name, target := range map[string]string{
+		"loopback httptest": server.URL + "/api/v3/ticker/price",
+		"aws metadata":      "http://169.254.169.254/latest/meta-data",
+		"cgnat metadata":    "http://100.100.100.200/ticker/{symbol}",
+		"rfc1918":           "https://10.0.0.1/ticker",
+		"ipv6 loopback":     "http://[::1]:8080/ticker",
+		"decimal ip":        "http://2130706433/ticker",
+		"short ip":          "http://127.1/ticker",
+		"hex metadata ip":   "http://0xa9fea9fe/ticker",
+		"octal ip":          "http://0177.0.0.1/ticker",
+		"trailing crlf":     "https://api.binance.com/api/v3/ticker/price\r\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			p := New(target, WithBackoff(time.Millisecond))
+			_, err := p.Quote(t.Context(), "ethereum")
+			require.ErrorIs(t, err, ErrUnavailable)
+		})
+	}
+	require.Zero(t, hits.Load(), "blocked SSRF target must never receive HTTP requests")
+
+	t.Run("dns resolving to private ip blocked", func(t *testing.T) {
+		ctx := urlvalidator.WithResolver(t.Context(), func(context.Context, string) ([]netip.Addr, error) {
+			return []netip.Addr{netip.MustParseAddr("10.20.30.40")}, nil
+		})
+		p := New("https://rebind.example.test/ticker/{symbol}", WithBackoff(time.Millisecond))
+		_, err := p.Quote(ctx, "ethereum")
+		require.ErrorIs(t, err, ErrUnavailable)
+	})
+
+	t.Run("template with non-http scheme rejected", func(t *testing.T) {
+		p := New("file:///etc/{symbol}", WithBackoff(time.Millisecond))
+		_, err := p.Quote(t.Context(), "ethereum")
+		require.ErrorIs(t, err, ErrUnavailable)
+	})
+
+	t.Run("default client does not follow redirects", func(t *testing.T) {
+		p := New("https://api.binance.com/api/v3/ticker/price")
+		require.NotNil(t, p.client.CheckRedirect)
+		err := p.client.CheckRedirect(httptest.NewRequest(http.MethodGet, "https://evil.example.test", nil), nil)
+		require.ErrorIs(t, err, http.ErrUseLastResponse)
+	})
+
+	t.Run("blocked 302 redirect fails immediately without retries or echoing html", func(t *testing.T) {
+		var redirectHits atomic.Int32
+		redirector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			redirectHits.Add(1)
+			w.Header().Set("Location", "http://169.254.169.254/latest/meta-data")
+			w.WriteHeader(http.StatusFound)
+			_, _ = w.Write([]byte("<html>secret-internal-redirect-body</html>"))
+		}))
+		defer redirector.Close()
+
+		c := redirector.Client()
+		c.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+		p := New(redirector.URL, WithHTTPClient(c), WithBackoff(time.Millisecond))
+		_, err := p.Quote(t.Context(), "ethereum")
+		require.ErrorIs(t, err, ErrUnavailable)
+		require.Equal(t, int32(1), redirectHits.Load(), "blocked redirect must not retry")
+		require.NotContains(t, err.Error(), "secret-internal-redirect-body")
+	})
+
+	t.Run("transport error does not leak mirror query token", func(t *testing.T) {
+		closed := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+		closedURL := closed.URL
+		closedClient := closed.Client()
+		closed.Close()
+
+		p := New(closedURL+"?api_key=test-mirror-secret-token", WithHTTPClient(closedClient), WithBackoff(time.Millisecond))
+		_, err := p.Quote(t.Context(), "ethereum")
+		require.ErrorIs(t, err, ErrUnavailable)
+		require.NotContains(t, err.Error(), "test-mirror-secret-token")
+	})
 }

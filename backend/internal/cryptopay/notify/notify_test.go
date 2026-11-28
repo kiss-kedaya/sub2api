@@ -6,11 +6,13 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/util/urlvalidator"
 	"github.com/stretchr/testify/require"
 )
 
@@ -28,7 +30,7 @@ func TestWebhookSinkPostsStructuredEventAndBarkFields(t *testing.T) {
 	defer server.Close()
 
 	at := time.Date(2026, 11, 22, 10, 30, 0, 0, time.UTC)
-	sink := NewWebhookSink()
+	sink := NewWebhookSinkWithClient(server.Client())
 	err := sink.Send(context.Background(), Config{
 		Enabled:    true,
 		WebhookURL: server.URL + "/push",
@@ -62,7 +64,7 @@ func TestWebhookSinkReportsNon2xxAndUnsupportedScheme(t *testing.T) {
 	}))
 	defer server.Close()
 
-	sink := NewWebhookSink()
+	sink := NewWebhookSinkWithClient(server.Client())
 	err := sink.Send(context.Background(), Config{Enabled: true, WebhookURL: server.URL}, Event{Event: "signer.setup"})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "HTTP 500")
@@ -127,7 +129,7 @@ func TestDisabledConfigSendsNothing(t *testing.T) {
 
 	dispatcher := NewDispatcher(func(context.Context) (Config, error) {
 		return Config{Enabled: false, WebhookURL: server.URL}, nil
-	}, WithSinks(NewWebhookSink()))
+	}, WithSinks(NewWebhookSinkWithClient(server.Client())))
 	defer dispatcher.Close()
 
 	dispatcher.Notify(context.Background(), Event{Event: "signer.setup"})
@@ -146,7 +148,7 @@ func TestDispatcherNeverBlocksCallerEvenWhenReceiverHangs(t *testing.T) {
 
 	dispatcher := NewDispatcher(func(context.Context) (Config, error) {
 		return Config{Enabled: true, WebhookURL: server.URL}, nil
-	}, WithSinks(NewWebhookSink()), WithTimeout(50*time.Millisecond))
+	}, WithSinks(NewWebhookSinkWithClient(server.Client())), WithTimeout(50*time.Millisecond))
 	defer dispatcher.Close()
 
 	// The caller passes an already-canceled context: delivery must still make
@@ -171,7 +173,7 @@ func TestDispatcherSurvivesProviderErrorAndServerFailure(t *testing.T) {
 
 	dispatcher := NewDispatcher(func(context.Context) (Config, error) {
 		return Config{Enabled: true, WebhookURL: server.URL}, nil
-	}, WithSinks(NewWebhookSink()), WithTimeout(2*time.Second))
+	}, WithSinks(NewWebhookSinkWithClient(server.Client())), WithTimeout(2*time.Second))
 	defer dispatcher.Close()
 
 	for range 5 {
@@ -208,4 +210,53 @@ func indexOf(haystack, needle string) int {
 		}
 	}
 	return -1
+}
+
+func TestWebhookSinkBlocksSSRFAndDisablesRedirects(t *testing.T) {
+	var hits atomic.Int32
+	loopback := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hits.Add(1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer loopback.Close()
+
+	sink := NewWebhookSink()
+	for name, target := range map[string]string{
+		"loopback httptest": loopback.URL + "/push",
+		"loopback literal":  "http://127.0.0.1:8080/push",
+		"aws metadata":      "http://169.254.169.254/latest/meta-data",
+		"cgnat metadata":    "http://100.100.100.200/latest/meta-data",
+		"rfc1918":           "https://10.0.0.5/push",
+		"ipv6 loopback":     "http://[::1]:8080/push",
+		"decimal ip":        "http://2130706433/push",
+		"short ip":          "http://127.1/push",
+		"hex metadata ip":   "http://0xa9fea9fe/push",
+		"octal ip":          "http://0177.0.0.1/push",
+	} {
+		t.Run(name, func(t *testing.T) {
+			err := sink.Send(context.Background(), Config{Enabled: true, WebhookURL: target}, Event{Event: "signer.setup"})
+			require.ErrorIs(t, err, urlvalidator.ErrOutboundTargetNotAllowed)
+		})
+	}
+	require.Zero(t, hits.Load())
+
+	t.Run("trailing control characters are rejected rather than trimmed", func(t *testing.T) {
+		err := sink.Send(context.Background(), Config{Enabled: true, WebhookURL: "https://hook.example.test/push\r\n"}, Event{Event: "signer.setup"})
+		require.ErrorContains(t, err, "invalid characters")
+	})
+
+	t.Run("dns resolving to private ip is blocked", func(t *testing.T) {
+		ctx := urlvalidator.WithResolver(context.Background(), func(context.Context, string) ([]netip.Addr, error) {
+			return []netip.Addr{netip.MustParseAddr("10.1.2.3")}, nil
+		})
+		err := sink.Send(ctx, Config{Enabled: true, WebhookURL: "https://rebind.example.test/bark-device-token"}, Event{Event: "signer.setup"})
+		require.ErrorIs(t, err, urlvalidator.ErrOutboundTargetNotAllowed)
+		require.NotContains(t, err.Error(), "bark-device-token")
+	})
+
+	t.Run("default client does not follow 3xx redirects", func(t *testing.T) {
+		require.NotNil(t, sink.client.CheckRedirect)
+		err := sink.client.CheckRedirect(httptest.NewRequest(http.MethodPost, "https://other.example.test", nil), nil)
+		require.ErrorIs(t, err, http.ErrUseLastResponse)
+	})
 }

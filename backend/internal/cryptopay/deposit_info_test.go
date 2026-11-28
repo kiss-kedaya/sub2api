@@ -147,7 +147,18 @@ func TestDepositInfoJSONHasNoRateForNativeCoin(t *testing.T) {
 	require.True(t, seenNative && seenStable)
 }
 
+func allowLocalNativePriceFeedForTest(t *testing.T) {
+	t.Helper()
+	prevCfg := allowPrivateNativePriceForTest.Swap(true)
+	restoreProvider := nativeprice.SetAllowPrivateForTest(true)
+	t.Cleanup(func() {
+		restoreProvider()
+		allowPrivateNativePriceForTest.Store(prevCfg)
+	})
+}
+
 func TestNativePriceReferenceUsesOneSnapshotDuringReload(t *testing.T) {
+	allowLocalNativePriceFeedForTest(t)
 	t.Setenv("CRYPTO_INSTANCE_ENABLED", "false")
 	t.Setenv("CRYPTO_ADMIN_TEST_MODE", "")
 	t.Setenv("SUB2API_DISABLE_BACKGROUND_JOBS", "true")
@@ -206,6 +217,7 @@ func TestNativePriceReferenceUsesOneSnapshotDuringReload(t *testing.T) {
 }
 
 func TestNativePriceReferenceConcurrentReload(t *testing.T) {
+	allowLocalNativePriceFeedForTest(t)
 	t.Setenv("CRYPTO_INSTANCE_ENABLED", "false")
 	t.Setenv("CRYPTO_ADMIN_TEST_MODE", "")
 	t.Setenv("SUB2API_DISABLE_BACKGROUND_JOBS", "true")
@@ -257,7 +269,7 @@ func TestAttachNativeReferencePricesAddsDisplayQuote(t *testing.T) {
 	}))
 	defer server.Close()
 
-	s := &Service{nativePrice: nativeprice.New(server.URL, nativeprice.WithBackoff(time.Millisecond))}
+	s := &Service{nativePrice: nativeprice.New(server.URL, nativeprice.WithHTTPClient(server.Client()), nativeprice.WithBackoff(time.Millisecond))}
 	info := buildDepositInfo(depositInfoConfig(), depositInfoAssigned())
 	s.attachNativeReferencePrices(t.Context(), info)
 
@@ -281,7 +293,7 @@ func TestAttachNativeReferencePricesIsSilentWhenFeedFails(t *testing.T) {
 	}))
 	defer server.Close()
 
-	s := &Service{nativePrice: nativeprice.New(server.URL, nativeprice.WithBackoff(time.Millisecond))}
+	s := &Service{nativePrice: nativeprice.New(server.URL, nativeprice.WithHTTPClient(server.Client()), nativeprice.WithBackoff(time.Millisecond))}
 	info := buildDepositInfo(depositInfoConfig(), depositInfoAssigned())
 	started := time.Now()
 	s.attachNativeReferencePrices(t.Context(), info)
@@ -307,7 +319,7 @@ func TestAttachNativeReferencePricesRespectsTheTimeBudget(t *testing.T) {
 	}))
 	defer server.Close()
 
-	s := &Service{nativePrice: nativeprice.New(server.URL, nativeprice.WithBackoff(time.Millisecond))}
+	s := &Service{nativePrice: nativeprice.New(server.URL, nativeprice.WithHTTPClient(server.Client()), nativeprice.WithBackoff(time.Millisecond))}
 	info := buildDepositInfo(depositInfoConfig(), depositInfoAssigned())
 	started := time.Now()
 	s.attachNativeReferencePrices(t.Context(), info)

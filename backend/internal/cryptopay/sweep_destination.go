@@ -140,13 +140,13 @@ func normalizeNotifyConfig(cfg *CryptoConfig) error {
 		return nil
 	}
 	notifyCfg := *cfg.Notify
-	notifyCfg.WebhookURL = strings.TrimSpace(notifyCfg.WebhookURL)
+	notifyCfg.WebhookURL = strings.Trim(notifyCfg.WebhookURL, " ")
 	notifyCfg.Email = strings.TrimSpace(notifyCfg.Email)
 	if len(notifyCfg.WebhookURL) > maxNotifyURLBytes {
 		return fmt.Errorf("crypto config: notify.webhook_url is too long")
 	}
-	if notifyCfg.WebhookURL != "" && !validRPCURL(notifyCfg.WebhookURL) {
-		return fmt.Errorf("crypto config: notify.webhook_url must be an absolute http(s) URL")
+	if notifyCfg.WebhookURL != "" && !validPublicOutboundURL(notifyCfg.WebhookURL, false) {
+		return fmt.Errorf("crypto config: notify.webhook_url must be a public absolute http(s) URL")
 	}
 	if notifyCfg.Email != "" && !validNotifyEmail(notifyCfg.Email) {
 		return fmt.Errorf("crypto config: notify.email is not a valid address")
