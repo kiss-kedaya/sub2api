@@ -1038,7 +1038,7 @@ func getOIDCOutboundTransport(policy urlvalidator.OutboundPolicy) http.RoundTrip
 	return oidcSafeTransport
 }
 
-func sameURLOrigin(a, b *url.URL) bool {
+func sameOIDCURLOrigin(a, b *url.URL) bool {
 	if a == nil || b == nil {
 		return false
 	}
@@ -1055,20 +1055,6 @@ func sameURLOrigin(a, b *url.URL) bool {
 	portA := effectiveURLPort(schemeA, a.Port())
 	portB := effectiveURLPort(schemeB, b.Port())
 	return portA == portB
-}
-
-func effectiveURLPort(scheme, port string) string {
-	if port != "" {
-		return port
-	}
-	switch scheme {
-	case "https":
-		return "443"
-	case "http":
-		return "80"
-	default:
-		return ""
-	}
 }
 
 // NewOIDCOutboundHTTPClient 构造带安全拨号（防 DNS rebinding）与重定向守卫的 OIDC 出站 HTTP 客户端
@@ -1120,7 +1106,7 @@ func NewOIDCSameOriginOutboundHTTPClient(timeout time.Duration) *http.Client {
 			if len(via) == 0 || len(via) >= oidcMaxRedirects || req == nil || req.URL == nil {
 				return urlvalidator.ErrOutboundTargetNotAllowed
 			}
-			if !sameURLOrigin(via[0].URL, req.URL) {
+			if !sameOIDCURLOrigin(via[0].URL, req.URL) {
 				return urlvalidator.ErrOutboundTargetNotAllowed
 			}
 			if policy.AllowPrivate {
