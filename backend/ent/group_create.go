@@ -232,6 +232,20 @@ func (_c *GroupCreate) SetNillableSubscriptionType(v *string) *GroupCreate {
 	return _c
 }
 
+// SetDailyResetMode sets the "daily_reset_mode" field.
+func (_c *GroupCreate) SetDailyResetMode(v string) *GroupCreate {
+	_c.mutation.SetDailyResetMode(v)
+	return _c
+}
+
+// SetNillableDailyResetMode sets the "daily_reset_mode" field if the given value is not nil.
+func (_c *GroupCreate) SetNillableDailyResetMode(v *string) *GroupCreate {
+	if v != nil {
+		_c.SetDailyResetMode(*v)
+	}
+	return _c
+}
+
 // SetDailyLimitUsd sets the "daily_limit_usd" field.
 func (_c *GroupCreate) SetDailyLimitUsd(v float64) *GroupCreate {
 	_c.mutation.SetDailyLimitUsd(v)
@@ -1251,6 +1265,10 @@ func (_c *GroupCreate) defaults() error {
 		v := group.DefaultSubscriptionType
 		_c.mutation.SetSubscriptionType(v)
 	}
+	if _, ok := _c.mutation.DailyResetMode(); !ok {
+		v := group.DefaultDailyResetMode
+		_c.mutation.SetDailyResetMode(v)
+	}
 	if _, ok := _c.mutation.DefaultValidityDays(); !ok {
 		v := group.DefaultDefaultValidityDays
 		_c.mutation.SetDefaultValidityDays(v)
@@ -1473,6 +1491,14 @@ func (_c *GroupCreate) check() error {
 	if v, ok := _c.mutation.SubscriptionType(); ok {
 		if err := group.SubscriptionTypeValidator(v); err != nil {
 			return &ValidationError{Name: "subscription_type", err: fmt.Errorf(`ent: validator failed for field "Group.subscription_type": %w`, err)}
+		}
+	}
+	if _, ok := _c.mutation.DailyResetMode(); !ok {
+		return &ValidationError{Name: "daily_reset_mode", err: errors.New(`ent: missing required field "Group.daily_reset_mode"`)}
+	}
+	if v, ok := _c.mutation.DailyResetMode(); ok {
+		if err := group.DailyResetModeValidator(v); err != nil {
+			return &ValidationError{Name: "daily_reset_mode", err: fmt.Errorf(`ent: validator failed for field "Group.daily_reset_mode": %w`, err)}
 		}
 	}
 	if _, ok := _c.mutation.DefaultValidityDays(); !ok {
@@ -1722,6 +1748,10 @@ func (_c *GroupCreate) createSpec() (*Group, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.SubscriptionType(); ok {
 		_spec.SetField(group.FieldSubscriptionType, field.TypeString, value)
 		_node.SubscriptionType = value
+	}
+	if value, ok := _c.mutation.DailyResetMode(); ok {
+		_spec.SetField(group.FieldDailyResetMode, field.TypeString, value)
+		_node.DailyResetMode = value
 	}
 	if value, ok := _c.mutation.DailyLimitUsd(); ok {
 		_spec.SetField(group.FieldDailyLimitUsd, field.TypeFloat64, value)
@@ -2308,6 +2338,18 @@ func (u *GroupUpsert) SetSubscriptionType(v string) *GroupUpsert {
 // UpdateSubscriptionType sets the "subscription_type" field to the value that was provided on create.
 func (u *GroupUpsert) UpdateSubscriptionType() *GroupUpsert {
 	u.SetExcluded(group.FieldSubscriptionType)
+	return u
+}
+
+// SetDailyResetMode sets the "daily_reset_mode" field.
+func (u *GroupUpsert) SetDailyResetMode(v string) *GroupUpsert {
+	u.Set(group.FieldDailyResetMode, v)
+	return u
+}
+
+// UpdateDailyResetMode sets the "daily_reset_mode" field to the value that was provided on create.
+func (u *GroupUpsert) UpdateDailyResetMode() *GroupUpsert {
+	u.SetExcluded(group.FieldDailyResetMode)
 	return u
 }
 
@@ -3664,6 +3706,20 @@ func (u *GroupUpsertOne) SetSubscriptionType(v string) *GroupUpsertOne {
 func (u *GroupUpsertOne) UpdateSubscriptionType() *GroupUpsertOne {
 	return u.Update(func(s *GroupUpsert) {
 		s.UpdateSubscriptionType()
+	})
+}
+
+// SetDailyResetMode sets the "daily_reset_mode" field.
+func (u *GroupUpsertOne) SetDailyResetMode(v string) *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetDailyResetMode(v)
+	})
+}
+
+// UpdateDailyResetMode sets the "daily_reset_mode" field to the value that was provided on create.
+func (u *GroupUpsertOne) UpdateDailyResetMode() *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateDailyResetMode()
 	})
 }
 
@@ -5369,6 +5425,20 @@ func (u *GroupUpsertBulk) SetSubscriptionType(v string) *GroupUpsertBulk {
 func (u *GroupUpsertBulk) UpdateSubscriptionType() *GroupUpsertBulk {
 	return u.Update(func(s *GroupUpsert) {
 		s.UpdateSubscriptionType()
+	})
+}
+
+// SetDailyResetMode sets the "daily_reset_mode" field.
+func (u *GroupUpsertBulk) SetDailyResetMode(v string) *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetDailyResetMode(v)
+	})
+}
+
+// UpdateDailyResetMode sets the "daily_reset_mode" field to the value that was provided on create.
+func (u *GroupUpsertBulk) UpdateDailyResetMode() *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateDailyResetMode()
 	})
 }
 

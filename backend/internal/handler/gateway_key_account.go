@@ -126,7 +126,7 @@ func (h *GatewayHandler) keyAccountSubscriptions(subs []service.UserSubscription
 		if sub.Group == nil || !sub.IsActive() {
 			continue
 		}
-		if reset := sub.DailyResetTime(); reset != nil && !now.Before(*reset) {
+		if sub.NeedsDailyResetAt(now) {
 			sub.DailyUsageUSD = 0
 		}
 		if reset := sub.WeeklyResetTime(); reset != nil && !now.Before(*reset) {

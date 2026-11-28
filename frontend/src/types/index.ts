@@ -601,6 +601,8 @@ export interface ReasoningEffortMapping {
   model?: string
 }
 
+export type DailyResetMode = 'calendar' | 'anchored_24h'
+
 export interface Group {
   id: number
   name: string
@@ -614,6 +616,7 @@ export interface Group {
   is_exclusive: boolean
   status: 'active' | 'inactive'
   subscription_type: SubscriptionType
+  daily_reset_mode?: DailyResetMode
   daily_limit_usd: number | null
   weekly_limit_usd: number | null
   monthly_limit_usd: number | null
@@ -1040,6 +1043,7 @@ export interface CreateGroupRequest {
   rate_multiplier?: number
   is_exclusive?: boolean
   subscription_type?: SubscriptionType
+  daily_reset_mode?: DailyResetMode
   daily_limit_usd?: number | null
   weekly_limit_usd?: number | null
   monthly_limit_usd?: number | null
@@ -1121,6 +1125,7 @@ export interface UpdateGroupRequest {
   is_exclusive?: boolean
   status?: 'active' | 'inactive'
   subscription_type?: SubscriptionType
+  daily_reset_mode?: DailyResetMode
   daily_limit_usd?: number | null
   weekly_limit_usd?: number | null
   monthly_limit_usd?: number | null
@@ -2431,6 +2436,7 @@ export interface UserSubscription {
   weekly_usage_usd: number
   monthly_usage_usd: number
   daily_window_start: string | null
+  next_daily_reset_at?: string | null
   weekly_window_start: string | null
   monthly_window_start: string | null
   created_at: string

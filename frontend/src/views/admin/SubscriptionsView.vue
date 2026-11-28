@@ -573,7 +573,7 @@ import TotpStepUpDialog from '@/components/auth/TotpStepUpDialog.vue'
 import {
   getRemainingDurationParts,
   getRemainingExpiryDuration,
-  isOneTimeDailyQuota,
+  resolveDailyQuotaWindowDisplay,
   type RemainingDurationParts
 } from '@/utils/subscriptionQuota'
 import { GROUP_PLATFORM_OPTIONS } from '@/constants/platforms'
@@ -1396,12 +1396,15 @@ const formatQuotaEndDuration = (parts: RemainingDurationParts): string => {
 }
 
 const formatDailyUsageWindow = (subscription: UserSubscription): string => {
-  if (isOneTimeDailyQuota(subscription) && subscription.expires_at) {
-    const parts = getRemainingDurationParts(subscription.expires_at)
-    return parts ? formatQuotaEndDuration(parts) : t('admin.subscriptions.windowNotActive')
-  }
+  const display = resolveDailyQuotaWindowDisplay(subscription)
+  if (!display) return t('admin.subscriptions.windowNotActive')
 
-  return formatResetTime(subscription.daily_window_start, 'daily')
+  const parts = getRemainingDurationParts(display.targetAt)
+  if (!parts) return t('admin.subscriptions.windowNotActive')
+
+  return display.kind === 'quotaEnds'
+    ? formatQuotaEndDuration(parts)
+    : formatResetDuration(parts)
 }
 
 // Format reset time based on window start and period type

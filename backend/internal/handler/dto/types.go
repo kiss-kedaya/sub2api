@@ -166,6 +166,7 @@ type Group struct {
 	Status         string  `json:"status"`
 
 	SubscriptionType          string   `json:"subscription_type"`
+	DailyResetMode            string   `json:"daily_reset_mode"`
 	DailyLimitUSD             *float64 `json:"daily_limit_usd"`
 	WeeklyLimitUSD            *float64 `json:"weekly_limit_usd"`
 	MonthlyLimitUSD           *float64 `json:"monthly_limit_usd"`
@@ -951,6 +952,7 @@ type UserSubscription struct {
 	Status    string    `json:"status"`
 
 	DailyWindowStart   *time.Time `json:"daily_window_start"`
+	NextDailyResetAt   *time.Time `json:"next_daily_reset_at,omitempty"`
 	WeeklyWindowStart  *time.Time `json:"weekly_window_start"`
 	MonthlyWindowStart *time.Time `json:"monthly_window_start"`
 

@@ -502,42 +502,55 @@
                 <Select
                   v-model="createForm.subscription_type"
                   :options="subscriptionTypeOptions"
+                  data-testid="create-subscription-type"
                 />
               </UFormField>
 
               <!-- Subscription limits (only show when subscription type is selected) -->
               <div
                 v-if="createForm.subscription_type === 'subscription'"
-                class="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-3"
+                class="mt-4 space-y-4"
               >
-                <UFormField :label="t('admin.groups.subscription.dailyLimit')">
-                  <UInput
-                    v-model.number="createForm.daily_limit_usd"
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    :placeholder="t('admin.groups.subscription.noLimit')"
-                    class="w-full"
-                  />
-                </UFormField>
-                <UFormField :label="t('admin.groups.subscription.weeklyLimit')">
-                  <UInput
-                    v-model.number="createForm.weekly_limit_usd"
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    :placeholder="t('admin.groups.subscription.noLimit')"
-                    class="w-full"
-                  />
-                </UFormField>
-                <UFormField :label="t('admin.groups.subscription.monthlyLimit')">
-                  <UInput
-                    v-model.number="createForm.monthly_limit_usd"
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    :placeholder="t('admin.groups.subscription.noLimit')"
-                    class="w-full"
+                <div class="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                  <UFormField :label="t('admin.groups.subscription.dailyLimit')">
+                    <UInput
+                      v-model.number="createForm.daily_limit_usd"
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      :placeholder="t('admin.groups.subscription.noLimit')"
+                      class="w-full"
+                    />
+                  </UFormField>
+                  <UFormField :label="t('admin.groups.subscription.weeklyLimit')">
+                    <UInput
+                      v-model.number="createForm.weekly_limit_usd"
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      :placeholder="t('admin.groups.subscription.noLimit')"
+                      class="w-full"
+                    />
+                  </UFormField>
+                  <UFormField :label="t('admin.groups.subscription.monthlyLimit')">
+                    <UInput
+                      v-model.number="createForm.monthly_limit_usd"
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      :placeholder="t('admin.groups.subscription.noLimit')"
+                      class="w-full"
+                    />
+                  </UFormField>
+                </div>
+                <UFormField
+                  :label="t('admin.groups.subscription.dailyResetMode')"
+                  :help="t('admin.groups.subscription.dailyResetModeHint')"
+                >
+                  <Select
+                    v-model="createForm.daily_reset_mode"
+                    :options="dailyResetModeOptions"
+                    data-testid="create-daily-reset-mode"
                   />
                 </UFormField>
               </div>
@@ -1969,36 +1982,48 @@
               <!-- Subscription limits (only show when subscription type is selected) -->
               <div
                 v-if="editForm.subscription_type === 'subscription'"
-                class="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-3"
+                class="mt-4 space-y-4"
               >
-                <UFormField :label="t('admin.groups.subscription.dailyLimit')">
-                  <UInput
-                    v-model.number="editForm.daily_limit_usd"
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    :placeholder="t('admin.groups.subscription.noLimit')"
-                    class="w-full"
-                  />
-                </UFormField>
-                <UFormField :label="t('admin.groups.subscription.weeklyLimit')">
-                  <UInput
-                    v-model.number="editForm.weekly_limit_usd"
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    :placeholder="t('admin.groups.subscription.noLimit')"
-                    class="w-full"
-                  />
-                </UFormField>
-                <UFormField :label="t('admin.groups.subscription.monthlyLimit')">
-                  <UInput
-                    v-model.number="editForm.monthly_limit_usd"
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    :placeholder="t('admin.groups.subscription.noLimit')"
-                    class="w-full"
+                <div class="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                  <UFormField :label="t('admin.groups.subscription.dailyLimit')">
+                    <UInput
+                      v-model.number="editForm.daily_limit_usd"
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      :placeholder="t('admin.groups.subscription.noLimit')"
+                      class="w-full"
+                    />
+                  </UFormField>
+                  <UFormField :label="t('admin.groups.subscription.weeklyLimit')">
+                    <UInput
+                      v-model.number="editForm.weekly_limit_usd"
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      :placeholder="t('admin.groups.subscription.noLimit')"
+                      class="w-full"
+                    />
+                  </UFormField>
+                  <UFormField :label="t('admin.groups.subscription.monthlyLimit')">
+                    <UInput
+                      v-model.number="editForm.monthly_limit_usd"
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      :placeholder="t('admin.groups.subscription.noLimit')"
+                      class="w-full"
+                    />
+                  </UFormField>
+                </div>
+                <UFormField
+                  :label="t('admin.groups.subscription.dailyResetMode')"
+                  :help="t('admin.groups.subscription.dailyResetModeHint')"
+                >
+                  <Select
+                    v-model="editForm.daily_reset_mode"
+                    :options="dailyResetModeOptions"
+                    data-testid="edit-daily-reset-mode"
                   />
                 </UFormField>
               </div>
@@ -3719,6 +3744,7 @@ import type {
   CompositeRouteDecision,
   CompositeRouteEndpoint,
   CompositeRouteMatchType,
+  DailyResetMode,
   GroupPlatform,
   SubscriptionType,
 } from "@/types";
@@ -4179,6 +4205,11 @@ const subscriptionTypeOptions = computed(() => [
   { value: "subscription", label: t("admin.groups.subscription.subscription") },
 ]);
 
+const dailyResetModeOptions = computed(() => [
+  { value: "calendar", label: t("admin.groups.subscription.dailyResetCalendar") },
+  { value: "anchored_24h", label: t("admin.groups.subscription.dailyResetAnchored24h") },
+]);
+
 // 降级分组选项（创建时）- 仅包含 anthropic 平台且未启用 claude_code_only 的分组
 const fallbackGroupOptions = computed(() => {
   const options: { value: number | null; label: string }[] = [
@@ -4472,6 +4503,7 @@ const createForm = reactive({
   rate_multiplier: 1.0,
   is_exclusive: false,
   subscription_type: "standard" as SubscriptionType,
+  daily_reset_mode: "calendar" as DailyResetMode,
   daily_limit_usd: null as number | null,
   weekly_limit_usd: null as number | null,
   monthly_limit_usd: null as number | null,
@@ -4983,6 +5015,7 @@ const editForm = reactive({
   is_exclusive: false,
   status: "active" as "active" | "inactive",
   subscription_type: "standard" as SubscriptionType,
+  daily_reset_mode: "calendar" as DailyResetMode,
   daily_limit_usd: null as number | null,
   weekly_limit_usd: null as number | null,
   monthly_limit_usd: null as number | null,
@@ -5527,6 +5560,7 @@ const closeCreateModal = () => {
   createForm.rate_multiplier = 1.0;
   createForm.is_exclusive = false;
   createForm.subscription_type = "standard";
+  createForm.daily_reset_mode = "calendar";
   createForm.daily_limit_usd = null;
   createForm.weekly_limit_usd = null;
   createForm.monthly_limit_usd = null;
@@ -5746,6 +5780,10 @@ const handleCreateGroup = async () => {
         createForm.model_pricing,
         createForm.platform,
       ),
+      daily_reset_mode:
+        createForm.subscription_type === "subscription"
+          ? createForm.daily_reset_mode
+          : "calendar",
       daily_limit_usd: normalizeOptionalLimit(
         createForm.daily_limit_usd as number | string | null,
       ),
@@ -5899,6 +5937,10 @@ const handleEdit = async (group: AdminGroup) => {
   editForm.is_exclusive = group.is_exclusive;
   editForm.status = group.status;
   editForm.subscription_type = group.subscription_type || "standard";
+  editForm.daily_reset_mode =
+    group.subscription_type === "subscription" && group.daily_reset_mode === "anchored_24h"
+      ? "anchored_24h"
+      : "calendar";
   editForm.daily_limit_usd = group.daily_limit_usd;
   editForm.weekly_limit_usd = group.weekly_limit_usd;
   editForm.monthly_limit_usd = group.monthly_limit_usd;
@@ -6060,6 +6102,7 @@ const closeEditModal = () => {
   editModelRoutingRules.value = [];
   editForm.copy_accounts_from_group_ids = [];
   editForm.peak_rate_enabled = false;
+  editForm.daily_reset_mode = "calendar";
   editForm.peak_start = "";
   editForm.peak_end = "";
   editForm.peak_rate_multiplier = 1.0;
@@ -6161,6 +6204,10 @@ const handleUpdateGroup = async () => {
         editForm.model_pricing,
         editForm.platform,
       ),
+      daily_reset_mode:
+        editForm.subscription_type === "subscription"
+          ? editForm.daily_reset_mode
+          : "calendar",
       daily_limit_usd: normalizeOptionalLimit(
         editForm.daily_limit_usd as number | string | null,
       ),
@@ -6707,6 +6754,7 @@ watch(
       createForm.is_exclusive = true;
       createForm.fallback_group_id_on_invalid_request = null;
     } else {
+      createForm.daily_reset_mode = "calendar";
       createForm.peak_rate_enabled = false;
       createForm.peak_start = "";
       createForm.peak_end = "";
@@ -6720,6 +6768,7 @@ watch(
   () => editForm.subscription_type,
   (newVal) => {
     if (newVal !== "subscription") {
+      editForm.daily_reset_mode = "calendar";
       editForm.peak_rate_enabled = false;
       editForm.peak_start = "";
       editForm.peak_end = "";

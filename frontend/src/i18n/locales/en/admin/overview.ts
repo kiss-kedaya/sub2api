@@ -1109,6 +1109,10 @@ export default {
         dailyLimit: 'Daily Limit (USD)',
         weeklyLimit: 'Weekly Limit (USD)',
         monthlyLimit: 'Monthly Limit (USD)',
+        dailyResetMode: 'Daily Quota Reset Mode',
+        dailyResetModeHint: 'Calendar day resets at 00:00 in the configured server timezone. Anchored 24h resets every 24 hours from subscription activation (starts_at), aligning each validity day to one daily quota window and expiring cleanly at expires_at.',
+        dailyResetCalendar: 'Calendar Day 00:00 (Default)',
+        dailyResetAnchored24h: 'Every 24h from Activation',
         defaultValidityDays: 'Default Validity (Days)',
         validityHint: 'Number of days the subscription is valid when assigned to a user',
         noLimit: 'No limit'

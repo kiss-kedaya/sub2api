@@ -56,6 +56,7 @@ export function createFixtures(now = new Date()) {
   ].map(([name, platform], i) => ({
     id: i + 1, name, platform: platform as Group['platform'], description: '本地生成的演示分组',
     rate_multiplier: 1, is_exclusive: false, status: 'active', subscription_type: i < 3 ? 'subscription' : 'standard',
+    daily_reset_mode: i === 1 ? 'anchored_24h' : 'calendar',
     daily_limit_usd: i < 3 ? 12 + i * 4 : null, weekly_limit_usd: i < 3 ? 60 + i * 20 : null,
     monthly_limit_usd: i < 3 ? 180 + i * 60 : null,
     long_context_pricing_enabled: false, allow_image_generation: false,

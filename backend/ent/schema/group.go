@@ -82,6 +82,10 @@ func (Group) Fields() []ent.Field {
 		field.String("subscription_type").
 			MaxLen(20).
 			Default(domain.SubscriptionTypeStandard),
+		field.String("daily_reset_mode").
+			MaxLen(20).
+			Default(domain.DailyResetModeCalendar).
+			Comment("订阅日额度重置模式：calendar（配置时区每日0点）或 anchored_24h（按订阅开通时刻每24小时刷新）"),
 		field.Float("daily_limit_usd").
 			Optional().
 			Nillable().
