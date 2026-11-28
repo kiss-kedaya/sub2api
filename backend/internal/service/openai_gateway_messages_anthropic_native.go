@@ -23,6 +23,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/apicompat"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/gin-gonic/gin"
 	"github.com/tidwall/gjson"
@@ -307,6 +308,7 @@ func (s *OpenAIGatewayService) handleNativeAnthropicBufferedResponse(
 	if observer == nil {
 		observer = beginUpstreamResponseModelObservation(c)
 	}
+	body = normalizeNativeAnthropicBufferedMessageID(body)
 	observer.ObserveAnthropic(body)
 
 	var raw json.RawMessage
@@ -599,6 +601,13 @@ func (s *OpenAIGatewayService) handleNativeAnthropicStreamingResponse(
 					}
 					return buildResult(), nil
 				}
+				if normalizedData, changed := normalizeNativeAnthropicMessageStartID(trimmed, root); changed {
+					prefix := line[:len(line)-len(data)]
+					data = normalizedData
+					trimmed = normalizedData
+					line = prefix + normalizedData
+					root = gjson.Parse(trimmed)
+				}
 				observer.ObserveAnthropic([]byte(trimmed))
 				if trimmed == "[DONE]" || root.Get("type").String() == "message_stop" {
 					sawTerminalEvent = true
@@ -820,4 +829,56 @@ func claudeUsageToOpenAIUsage(u *ClaudeUsage) OpenAIUsage {
 		CacheCreation1hTokens:    u.CacheCreation1hTokens,
 		CacheReadInputTokens:     u.CacheReadInputTokens,
 	}
+}
+
+func normalizeNativeAnthropicBufferedMessageID(body []byte) []byte {
+	if !gjson.ValidBytes(body) {
+		return body
+	}
+	if strings.EqualFold(strings.TrimSpace(gjson.GetBytes(body, "type").String()), "error") {
+		return body
+	}
+	idRes := gjson.GetBytes(body, "id")
+	if idRes.Type != gjson.String {
+		return body
+	}
+	rawID := strings.TrimSpace(idRes.String())
+	if rawID == "" {
+		return body
+	}
+	normalizedID := apicompat.NormalizeAnthropicMessageID(rawID)
+	if normalizedID == "" || normalizedID == idRes.String() {
+		return body
+	}
+	updated, err := sjson.SetBytes(body, "id", normalizedID)
+	if err != nil {
+		return body
+	}
+	return updated
+}
+
+func normalizeNativeAnthropicMessageStartID(trimmed string, root gjson.Result) (string, bool) {
+	if !gjson.Valid(trimmed) {
+		return "", false
+	}
+	if root.Get("type").String() != "message_start" {
+		return "", false
+	}
+	idRes := root.Get("message.id")
+	if idRes.Type != gjson.String {
+		return "", false
+	}
+	rawID := strings.TrimSpace(idRes.String())
+	if rawID == "" {
+		return "", false
+	}
+	normalizedID := apicompat.NormalizeAnthropicMessageID(rawID)
+	if normalizedID == "" || normalizedID == idRes.String() {
+		return "", false
+	}
+	updated, err := sjson.Set(trimmed, "message.id", normalizedID)
+	if err != nil {
+		return "", false
+	}
+	return updated, true
 }

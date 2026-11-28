@@ -1303,3 +1303,112 @@ func largeRawChatCompletionsBody() []byte {
 		strings.Repeat("x", openAISilentRefusalMinRequestBodyBytes) +
 		`"}],"stream":true}`)
 }
+
+func TestForwardAsRawChatCompletions_RepeatedToolCallIDAccountScoping(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	makeBody := func(model string) []byte {
+		return []byte(`{"model":"` + model + `","stream":false,"messages":[` +
+			`{"role":"user","content":"Run both tools and report the latest result."},` +
+			`{"role":"assistant","tool_calls":[{"id":"dup","type":"function","function":{"name":"legacy_lookup_with_a_much_longer_name","arguments":"{\"key\":\"old\"}"}}]},` +
+			`{"role":"tool","tool_call_id":"dup","content":"old_result"},` +
+			`{"role":"assistant","tool_calls":[{"id":"dup","type":"function","function":{"name":"f_new","arguments":"{\"key\":\"new\"}"}}]},` +
+			`{"role":"tool","tool_call_id":"dup","content":"new_result"},` +
+			`{"role":"user","content":"Which tool produced the latest result?"}]}`)
+	}
+
+	okJSON := `{"id":"chatcmpl-test","object":"chat.completion","model":"kimi-k3.1-pro","choices":[{"index":0,"message":{"role":"assistant","content":"f_new"},"finish_reason":"stop"}],"usage":{"prompt_tokens":350,"completion_tokens":5,"total_tokens":355}}`
+
+	cases := []struct {
+		name         string
+		model        string
+		account      *Account
+		wantMessages int
+		wantFNew     bool
+	}{
+		{
+			name:  "openai relay mapping neutral alias to kimi preserves both turns",
+			model: "custom-k3",
+			account: &Account{
+				ID:          201,
+				Name:        "openai-relay-kimi",
+				Platform:    PlatformOpenAI,
+				Type:        AccountTypeAPIKey,
+				Concurrency: 1,
+				Credentials: map[string]any{
+					"api_key":       "test-key-must-not-leak",
+					"base_url":      "http://platform.deepseek.example/v1",
+					"model_mapping": map[string]any{"custom-k3": "kimi-k3.1-pro"},
+				},
+			},
+			wantMessages: 6,
+			wantFNew:     true,
+		},
+		{
+			name:  "kimi platform account behind deepseek URL preserves both turns",
+			model: "kimi-k3.1-pro",
+			account: &Account{
+				ID:          202,
+				Name:        "kimi-direct",
+				Platform:    PlatformKimi,
+				Type:        AccountTypeAPIKey,
+				Concurrency: 1,
+				Credentials: map[string]any{
+					"api_key":  "test-key-must-not-leak",
+					"base_url": "http://platform.deepseek.example/v1",
+				},
+			},
+			wantMessages: 6,
+			wantFNew:     true,
+		},
+		{
+			name:  "openai relay mapping neutral alias to deepseek still dedupes",
+			model: "custom-ds",
+			account: &Account{
+				ID:          203,
+				Name:        "openai-relay-ds",
+				Platform:    PlatformOpenAI,
+				Type:        AccountTypeAPIKey,
+				Concurrency: 1,
+				Credentials: map[string]any{
+					"api_key":       "test-key-must-not-leak",
+					"base_url":      "http://relay.example/v1",
+					"model_mapping": map[string]any{"custom-ds": "deepseek-chat"},
+				},
+			},
+			wantMessages: 4,
+			wantFNew:     false,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			body := makeBody(tc.model)
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+			c.Request.Header.Set("Content-Type", "application/json")
+
+			upstream := &httpUpstreamRecorder{resp: &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+				Body:       io.NopCloser(strings.NewReader(okJSON)),
+			}}
+			svc := &OpenAIGatewayService{
+				cfg:          rawChatCompletionsTestConfig(),
+				httpUpstream: upstream,
+			}
+
+			result, err := svc.forwardAsRawChatCompletions(context.Background(), c, tc.account, body, "")
+			require.NoError(t, err)
+			require.NotNil(t, result)
+			require.Len(t, gjson.GetBytes(upstream.lastBody, "messages").Array(), tc.wantMessages)
+			if tc.wantFNew {
+				require.Contains(t, string(upstream.lastBody), "legacy_lookup_with_a_much_longer_name")
+				require.Contains(t, string(upstream.lastBody), "f_new")
+			} else {
+				require.NotContains(t, string(upstream.lastBody), "f_new")
+			}
+		})
+	}
+}

@@ -503,18 +503,7 @@ func normalizeDeepSeekResponsesRequestBody(account *Account, body []byte) []byte
 // that just arrived. Outbound normalize still does this again for the account
 // that is actually selected.
 func RewriteInboundDeepSeekCallIDs(groupPlatform, model string, body []byte) []byte {
-	if len(body) == 0 {
-		return body
-	}
-	// Native DeepSeek validates call ids itself. Keep both valid opaque ids
-	// and invalid duplicate calls intact; never drop/graft client history.
-	if deepSeekCallIDScope(groupPlatform, model) {
-		return body
-	}
-	// Scope by platform/model, but also clean any body that actually carries
-	// tool calls: routing can still land on a DeepSeek-backed upstream even when
-	// the group platform and the requested model alias say nothing about it.
-	if !deepSeekCallIDScope(groupPlatform, model) && !bodyHasToolCallIDs(body) {
+	if !shouldRewriteInboundDeepSeekCallIDs(groupPlatform, model, body) {
 		return body
 	}
 	// Tool-heavy bodies nearly always pass the check above, and almost none of
@@ -550,6 +539,31 @@ func RewriteInboundDeepSeekCallIDs(groupPlatform, model string, body []byte) []b
 	return rebuilt
 }
 
+func shouldRewriteInboundDeepSeekCallIDs(groupPlatform, model string, body []byte) bool {
+	if len(body) == 0 {
+		return false
+	}
+	trimmedModel := strings.TrimSpace(model)
+	bodyModel := strings.TrimSpace(gjson.Get(jsonView(body), "model").String())
+	// Native DeepSeek validates call ids itself. Keep both valid opaque ids
+	// and invalid duplicate calls intact; never drop/graft client history.
+	if deepSeekCallIDScope(groupPlatform, trimmedModel) || deepSeekCallIDScope("", bodyModel) {
+		return false
+	}
+	// Explicit non-DeepSeek platforms (kimi, zhipu, minimax, grok, anthropic,
+	// gemini, etc.) and explicit non-DeepSeek models (kimi-*, gpt-*, claude-*,
+	// etc.) must never run DeepSeek call-id deduplication, which deletes valid
+	// multi-turn tool history that reuses an id across turns.
+	if !isNeutralDeepSeekAliasPlatform(groupPlatform) ||
+		isExplicitNonDeepSeekModel(trimmedModel) ||
+		isExplicitNonDeepSeekModel(bodyModel) {
+		return false
+	}
+	// Neutral platform + neutral model alias can still route to a DeepSeek-backed
+	// relay; keep body-shape deduping scoped strictly to those neutral requests.
+	return bodyHasToolCallIDs(body)
+}
+
 func deepSeekCallIDScope(platform, model string) bool {
 	if strings.EqualFold(strings.TrimSpace(platform), PlatformDeepseek) {
 		return true
@@ -557,31 +571,162 @@ func deepSeekCallIDScope(platform, model string) bool {
 	return strings.Contains(strings.ToLower(strings.TrimSpace(model)), "deepseek")
 }
 
-// deepSeekDuplicateCallIDRewrite reports that this body is going to DeepSeek.
-// Platform, mapped model, or a deepseek base URL all count. A client alias that
-// does not start with "deepseek" still has to be cleaned before that upstream.
+// isNeutralDeepSeekAliasPlatform reports whether platform can host an opaque
+// alias that might route to a third-party DeepSeek relay (empty, openai, or
+// composite). Dedicated non-DeepSeek platforms (kimi, zhipu, minimax, grok,
+// anthropic, gemini, etc.) are excluded.
+func isNeutralDeepSeekAliasPlatform(platform string) bool {
+	switch strings.ToLower(strings.TrimSpace(platform)) {
+	case "", PlatformOpenAI, PlatformComposite:
+		return true
+	default:
+		return false
+	}
+}
+
+// isExplicitNonDeepSeekModel reports whether model clearly identifies a
+// non-DeepSeek model family (e.g. kimi-k3.1-pro, k2.5, gpt-5, claude-*, glm-*,
+// grok-*, gemini-*, minimax-*, qwen*). Opaque aliases like "some-alias" return false.
+func isExplicitNonDeepSeekModel(model string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(model))
+	if normalized == "" || strings.Contains(normalized, "deepseek") {
+		return false
+	}
+	if p, ok := DetectModelPlatform(normalized); ok {
+		return p != PlatformDeepseek
+	}
+	if slash := strings.LastIndexByte(normalized, '/'); slash >= 0 {
+		normalized = strings.TrimSpace(normalized[slash+1:])
+		if p, ok := DetectModelPlatform(normalized); ok {
+			return p != PlatformDeepseek
+		}
+	}
+	return normalized == "kimi" || strings.HasPrefix(normalized, "kimi_") ||
+		normalized == "k2" || strings.HasPrefix(normalized, "k2-") || strings.HasPrefix(normalized, "k2.") ||
+		strings.HasPrefix(normalized, "k2_") || strings.HasPrefix(normalized, "k2p") ||
+		strings.HasPrefix(normalized, "k3-") || strings.HasPrefix(normalized, "k3.") ||
+		strings.HasPrefix(normalized, "k3_") || strings.HasPrefix(normalized, "k3p") ||
+		strings.HasPrefix(normalized, "qwen")
+}
+
+// deepSeekDuplicateCallIDRewrite reports whether this outbound request targets
+// a non-native DeepSeek upstream that needs duplicate call_id cleanup and
+// reasoning.summary switch stripping.
+//
+// Explicit non-DeepSeek platforms (kimi, zhipu, minimax, grok, etc.) and
+// explicit non-DeepSeek models (kimi-*, gpt-*, claude-*, etc.) are excluded
+// even when served through a relay whose URL happens to contain "deepseek" or
+// when the body carries tool calls.
 func deepSeekDuplicateCallIDRewrite(account *Account, body []byte) bool {
+	model := strings.TrimSpace(gjson.Get(jsonView(body), "model").String())
+	return deepSeekDuplicateCallIDRewriteForModel(account, model)
+}
+
+func deepSeekDuplicateCallIDRewriteForResolvedModel(account *Account, resolvedModel string) bool {
+	resolvedModel = strings.TrimSpace(resolvedModel)
 	if account == nil {
-		model := gjson.Get(jsonView(body), "model").String()
+		return deepSeekCallIDScope("", resolvedModel)
+	}
+	if strings.EqualFold(strings.TrimSpace(account.Platform), PlatformDeepseek) {
+		return true
+	}
+	if deepSeekCallIDScope("", resolvedModel) {
+		return true
+	}
+	if !isNeutralDeepSeekAliasPlatform(account.Platform) {
+		return false
+	}
+	if isExplicitNonDeepSeekModel(resolvedModel) {
+		return false
+	}
+	base := strings.ToLower(account.GetOpenAIBaseURL() + " " + account.GetCNProtocolBaseURL(APIProtocolResponses) + " " + account.GetCNProtocolBaseURL(APIProtocolChatCompletions))
+	return strings.Contains(base, "deepseek")
+}
+
+func deepSeekDuplicateCallIDRewriteForModel(account *Account, model string) bool {
+	model = strings.TrimSpace(model)
+	if account == nil {
 		return deepSeekCallIDScope("", model)
 	}
 	if strings.EqualFold(strings.TrimSpace(account.Platform), PlatformDeepseek) {
 		return true
 	}
-	base := strings.ToLower(account.GetOpenAIBaseURL() + " " + account.GetCNProtocolBaseURL(APIProtocolResponses) + " " + account.GetCNProtocolBaseURL(APIProtocolChatCompletions))
-	if strings.Contains(base, "deepseek") {
-		return true
+	mappedModel := strings.TrimSpace(account.GetMappedModel(model))
+	if mappedModel != "" && !strings.EqualFold(mappedModel, model) {
+		// An explicit account model mapping is authoritative over the client alias.
+		return deepSeekDuplicateCallIDRewriteForResolvedModel(account, mappedModel)
 	}
-	// A CN/aggregator account can front DeepSeek behind a neutral base URL and a
-	// neutral model alias, in which case none of the checks above fire and the
-	// duplicate call_id reaches the upstream untouched. Whenever the body
-	// actually carries tool calls, deduping is the safe move: it is a no-op for
-	// bodies without duplicates and it never invents or reorders content.
-	if bodyHasToolCallIDs(body) {
-		return true
+	return deepSeekDuplicateCallIDRewriteForResolvedModel(account, model)
+}
+
+// RewriteDeepSeekCallIDsForAccount deduplicates repeated tool call IDs only
+// after the target account is selected, applying the account's model_mapping
+// once when evaluating an inbound client alias.
+func RewriteDeepSeekCallIDsForAccount(account *Account, body []byte, modelOverride ...string) []byte {
+	return rewriteDeepSeekCallIDsForAccount(account, body, false, modelOverride...)
+}
+
+// RewriteDeepSeekCallIDsForForwardedAccount deduplicates repeated tool call IDs
+// on an outbound body whose model has already been resolved/mapped for account,
+// avoiding a second account.GetMappedModel hop on chained model mappings.
+func RewriteDeepSeekCallIDsForForwardedAccount(account *Account, body []byte, forwardedModel ...string) []byte {
+	return rewriteDeepSeekCallIDsForAccount(account, body, true, forwardedModel...)
+}
+
+func rewriteDeepSeekCallIDsForAccount(account *Account, body []byte, alreadyMapped bool, modelOverride ...string) []byte {
+	if account == nil || len(body) == 0 {
+		return body
 	}
-	model := gjson.Get(jsonView(body), "model").String()
-	return deepSeekCallIDScope("", model) || deepSeekCallIDScope("", account.GetMappedModel(model))
+	// Native DeepSeek validates call ids itself; preserve client history intact.
+	if strings.EqualFold(strings.TrimSpace(account.Platform), PlatformDeepseek) {
+		return body
+	}
+	model := ""
+	if len(modelOverride) > 0 {
+		model = strings.TrimSpace(modelOverride[0])
+	}
+	if model == "" {
+		model = strings.TrimSpace(gjson.Get(jsonView(body), "model").String())
+	}
+	shouldRewrite := false
+	if alreadyMapped {
+		shouldRewrite = deepSeekDuplicateCallIDRewriteForResolvedModel(account, model)
+	} else {
+		shouldRewrite = deepSeekDuplicateCallIDRewriteForModel(account, model)
+	}
+	if !shouldRewrite {
+		return body
+	}
+	if !responsesBodyMayRewrite(body, responsesRewriteScope{dedupe: true}) {
+		return body
+	}
+	var requestBody map[string]any
+	if err := decodeOpenAIJSONUseNumber(body, &requestBody); err != nil {
+		return body
+	}
+	changed := false
+	if input, ok := requestBody["input"]; ok {
+		if next, did := apicompat.DedupeResponsesCallIDs(input); did {
+			if !responsesCallPairsIntact(input) || responsesCallPairsIntact(next) {
+				requestBody["input"] = next
+				changed = true
+			}
+		}
+	}
+	if messages, ok := requestBody["messages"]; ok {
+		if next, did := apicompat.DedupeChatToolCallIDs(messages); did {
+			requestBody["messages"] = next
+			changed = true
+		}
+	}
+	if !changed {
+		return body
+	}
+	rebuilt, err := marshalOpenAIUpstreamJSON(requestBody)
+	if err != nil {
+		return body
+	}
+	return rebuilt
 }
 
 // bodyHasToolCallIDs reports whether the body carries any responses-style

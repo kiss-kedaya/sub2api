@@ -683,6 +683,164 @@ func TestAPIKeyAuthMarksOnlyExpectedIngressRejections(t *testing.T) {
 	}
 }
 
+func TestAPIKeyAuthAnthropicMessagesRoutesReturnAnthropic401Format(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	disabledUser := &service.User{ID: 88, Role: service.RoleUser, Status: service.StatusDisabled}
+	activeUser := &service.User{ID: 89, Role: service.RoleUser, Status: service.StatusActive, Balance: 10}
+	disabledKey := &service.APIKey{ID: 501, UserID: activeUser.ID, Key: "disabled-key", Status: service.StatusDisabled, User: activeUser}
+	inactiveUserKey := &service.APIKey{ID: 502, UserID: disabledUser.ID, Key: "inactive-user-key", Status: service.StatusActive, User: disabledUser}
+
+	anthropicPaths := []string{
+		"/v1/messages",
+		"/v1/messages/count_tokens",
+		"/messages",
+		"/messages/count_tokens",
+		"/anthropic/v1/messages",
+		"/antigravity/v1/messages",
+		"/antigravity/v1/messages/count_tokens",
+	}
+
+	cases := []struct {
+		name        string
+		xAPIKey     string
+		authHeader  string
+		wantMessage string
+		wantReason  IngressRejectReason
+	}{
+		{
+			name:        "invalid key",
+			xAPIKey:     "bad-key",
+			wantMessage: "Invalid API key",
+			wantReason:  IngressRejectInvalidAPIKey,
+		},
+		{
+			name:        "missing key",
+			wantMessage: "API key is required in Authorization header (Bearer scheme), x-api-key header, or x-goog-api-key header",
+			wantReason:  IngressRejectAPIKeyRequired,
+		},
+		{
+			name:        "malformed authorization header",
+			authHeader:  "Basic not-bearer",
+			wantMessage: "API key is required in Authorization header (Bearer scheme), x-api-key header, or x-goog-api-key header",
+			wantReason:  IngressRejectInvalidAPIKey,
+		},
+		{
+			name:        "oversized x-api-key",
+			xAPIKey:     strings.Repeat("a", service.MaxAPIKeyCredentialBytes+1),
+			wantMessage: "Invalid API key",
+			wantReason:  IngressRejectInvalidAPIKey,
+		},
+		{
+			name:        "oversized authorization header",
+			authHeader:  "Bearer " + strings.Repeat("b", maxAPIKeyAuthorizationHeaderBytes+1),
+			wantMessage: "Invalid API key",
+			wantReason:  IngressRejectInvalidAPIKey,
+		},
+		{
+			name:        "disabled key",
+			xAPIKey:     disabledKey.Key,
+			wantMessage: "API key is disabled",
+			wantReason:  IngressRejectAPIKeyDisabled,
+		},
+		{
+			name:        "inactive user",
+			xAPIKey:     inactiveUserKey.Key,
+			wantMessage: "User account is not active",
+			wantReason:  IngressRejectUserInactive,
+		},
+	}
+
+	repo := &stubApiKeyRepo{getByKey: func(_ context.Context, key string) (*service.APIKey, error) {
+		switch key {
+		case disabledKey.Key:
+			clone := *disabledKey
+			return &clone, nil
+		case inactiveUserKey.Key:
+			clone := *inactiveUserKey
+			return &clone, nil
+		default:
+			return nil, service.ErrAPIKeyNotFound
+		}
+	}}
+	cfg := &config.Config{RunMode: config.RunModeSimple}
+	apiKeyService := service.NewAPIKeyService(repo, nil, nil, nil, nil, nil, cfg)
+
+	router := gin.New()
+	var gotReason IngressRejectReason
+	var gotRejected bool
+	router.Use(func(c *gin.Context) {
+		gotReason = ""
+		gotRejected = false
+		c.Next()
+		gotReason, gotRejected = GetIngressRejectReason(c)
+	})
+	router.Use(gin.HandlerFunc(NewAPIKeyAuthMiddleware(apiKeyService, nil, cfg)))
+	ok := func(c *gin.Context) { c.Status(http.StatusOK) }
+	for _, p := range anthropicPaths {
+		router.POST(p, ok)
+	}
+	router.POST("/v1/chat/completions", ok)
+	router.POST("/v1/responses", ok)
+	router.GET("/v1/models", ok)
+
+	for _, path := range anthropicPaths {
+		for _, tc := range cases {
+			t.Run(path+"/"+tc.name, func(t *testing.T) {
+				w := httptest.NewRecorder()
+				req := httptest.NewRequest(http.MethodPost, path, nil)
+				if tc.xAPIKey != "" {
+					req.Header.Set("x-api-key", tc.xAPIKey)
+				}
+				if tc.authHeader != "" {
+					req.Header.Set("Authorization", tc.authHeader)
+				}
+				router.ServeHTTP(w, req)
+
+				require.Equal(t, http.StatusUnauthorized, w.Code)
+				require.True(t, gotRejected)
+				require.Equal(t, tc.wantReason, gotReason)
+
+				var body struct {
+					Type  string `json:"type"`
+					Error struct {
+						Type    string `json:"type"`
+						Message string `json:"message"`
+					} `json:"error"`
+					Code string `json:"code"`
+				}
+				require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+				require.Equal(t, "error", body.Type)
+				require.Equal(t, "authentication_error", body.Error.Type)
+				require.Equal(t, tc.wantMessage, body.Error.Message)
+				require.Empty(t, body.Code)
+			})
+		}
+	}
+
+	// Non-Anthropic routes must keep their existing custom error shape unchanged.
+	for _, tc := range []struct {
+		method string
+		path   string
+	}{
+		{http.MethodPost, "/v1/chat/completions"},
+		{http.MethodPost, "/v1/responses"},
+		{http.MethodGet, "/v1/models"},
+	} {
+		t.Run("non-anthropic/"+tc.path, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			req := httptest.NewRequest(tc.method, tc.path, nil)
+			req.Header.Set("Authorization", "Bearer bad-key")
+			router.ServeHTTP(w, req)
+
+			require.Equal(t, http.StatusUnauthorized, w.Code)
+			require.True(t, gotRejected)
+			require.Equal(t, IngressRejectInvalidAPIKey, gotReason)
+			require.JSONEq(t, `{"code":"INVALID_API_KEY","message":"Invalid API key"}`, w.Body.String())
+		})
+	}
+}
+
 func TestAPIKeyAuthSetsOpsFallbackKeyOnEarlyAbort(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

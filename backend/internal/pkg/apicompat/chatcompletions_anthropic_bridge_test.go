@@ -335,7 +335,7 @@ func TestChatCompletionsResponseToAnthropic_TextOnly(t *testing.T) {
 	}
 
 	out := ChatCompletionsResponseToAnthropic(resp, "claude-sonnet-4-20250514")
-	require.Equal(t, "chatcmpl-1", out.ID)
+	require.Equal(t, "msg_1", out.ID)
 	require.Equal(t, "claude-sonnet-4-20250514", out.Model)
 	require.Len(t, out.Content, 1)
 	require.Equal(t, "text", out.Content[0].Type)
@@ -1113,4 +1113,90 @@ func TestChatCompletionsResponseToAnthropic_ContentFilterWithToolUse(t *testing.
 
 	out := ChatCompletionsResponseToAnthropic(resp, "claude-sonnet-4-20250514")
 	require.Equal(t, "tool_use", AnthropicStopReasonString(out.StopReason))
+}
+
+func TestNormalizeAnthropicMessageID(t *testing.T) {
+	tests := []struct {
+		in   string
+		want string
+	}{
+		{"", ""},
+		{"   ", ""},
+		{"msg_01abc", "msg_01abc"},
+		{"  msg_01abc  ", "msg_01abc"},
+		{"chatcmpl-01a220e7", "msg_01a220e7"},
+		{"chatcmpl_01a220e7", "msg_01a220e7"},
+		{"chatcmpl-msg_01a220e7", "msg_01a220e7"},
+		{"resp_msg_01a220e7", "msg_01a220e7"},
+		{"chatcmpl-", "msg_chatcmpl-"},
+		{"chatcmpl_", "msg_chatcmpl_"},
+		{"resp_01abc", "msg_01abc"},
+		{"resp-01abc", "msg_01abc"},
+		{"01a220e7", "msg_01a220e7"},
+	}
+	for _, tc := range tests {
+		require.Equal(t, tc.want, NormalizeAnthropicMessageID(tc.in), "input=%q", tc.in)
+	}
+}
+
+func TestChatCompletionsAnthropicBridgeNormalizesMessageIDs(t *testing.T) {
+	t.Run("non-streaming converts chatcmpl and opaque ids to msg_ prefix", func(t *testing.T) {
+		for _, tc := range []struct {
+			in   string
+			want string
+		}{
+			{"chatcmpl-01a220e7", "msg_01a220e7"},
+			{"chatcmpl_01a220e7", "msg_01a220e7"},
+			{"kimi-id-99", "msg_kimi-id-99"},
+			{"msg_keep_me", "msg_keep_me"},
+		} {
+			resp := &ChatCompletionsResponse{
+				ID:    tc.in,
+				Model: "kimi-k3.1-pro",
+				Choices: []ChatChoice{{
+					Message:      ChatMessage{Role: "assistant", Content: json.RawMessage(`"ok"`)},
+					FinishReason: "stop",
+				}},
+			}
+			out := ChatCompletionsResponseToAnthropic(resp, "kimi-k3.1-pro")
+			require.Equal(t, tc.want, out.ID, "input=%q", tc.in)
+		}
+
+		// Empty upstream ID generates a msg_-prefixed fallback ID.
+		gen := ChatCompletionsResponseToAnthropic(&ChatCompletionsResponse{Model: "kimi-k3.1-pro"}, "kimi-k3.1-pro")
+		require.True(t, strings.HasPrefix(gen.ID, "msg_"), "expected msg_ prefix, got %q", gen.ID)
+	})
+
+	t.Run("streaming message_start normalizes chunk IDs and generated fallback", func(t *testing.T) {
+		for _, tc := range []struct {
+			chunkID string
+			want    string
+		}{
+			{"chatcmpl-01a220e7", "msg_01a220e7"},
+			{"chatcmpl_01a220e7", "msg_01a220e7"},
+			{"opaque-id", "msg_opaque-id"},
+			{"msg_existing", "msg_existing"},
+		} {
+			state := NewChatCompletionsToAnthropicStreamState("kimi-k3.1-pro")
+			require.True(t, strings.HasPrefix(state.ResponseID, "msg_"))
+			content := "hi"
+			events := ChatCompletionsChunkToAnthropicEvents(&ChatCompletionsChunk{
+				ID:    tc.chunkID,
+				Model: "kimi-k3.1-pro",
+				Choices: []ChatChunkChoice{{
+					Delta: ChatDelta{Content: &content},
+				}},
+			}, state)
+			require.NotEmpty(t, events)
+			require.Equal(t, "message_start", events[0].Type)
+			require.NotNil(t, events[0].Message)
+			require.Equal(t, tc.want, events[0].Message.ID)
+		}
+
+		// Direct ensureCCAnthropicMessageStart on a raw state normalizes too.
+		rawState := &ChatCompletionsToAnthropicStreamState{ResponseID: "chatcmpl-direct", Model: "kimi-k3.1-pro"}
+		evts := ensureCCAnthropicMessageStart(rawState)
+		require.Len(t, evts, 1)
+		require.Equal(t, "msg_direct", evts[0].Message.ID)
+	})
 }

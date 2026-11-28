@@ -2485,3 +2485,95 @@ func TestOpsCaptureWriter_FoldedTypeKeyFallback(t *testing.T) {
 		require.Contains(t, state.buf.String(), "line folded")
 	})
 }
+
+func TestOpsErrorLoggerClassifiesAnthropicAuthErrors(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	cases := []struct {
+		name string
+		body string
+	}{
+		{
+			name: "invalid key",
+			body: `{"type":"error","error":{"type":"authentication_error","message":"Invalid API key"}}`,
+		},
+		{
+			name: "missing key",
+			body: `{"type":"error","error":{"type":"authentication_error","message":"API key is required in Authorization header (Bearer scheme), x-api-key header, or x-goog-api-key header"}}`,
+		},
+		{
+			name: "disabled key",
+			body: `{"type":"error","error":{"type":"authentication_error","message":"API key is disabled"}}`,
+		},
+		{
+			name: "inactive user",
+			body: `{"type":"error","error":{"type":"authentication_error","message":"User account is not active"}}`,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			parsed := parseOpsErrorResponse([]byte(tc.body))
+			require.Equal(t, "authentication_error", parsed.ErrorType)
+			require.NotEmpty(t, parsed.Message)
+
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+			phase, businessLimited, _, _ := classifyOpsErrorLog(c, parsed.ErrorType, parsed.Message, parsed.Code, http.StatusUnauthorized)
+			require.Equal(t, "auth", phase)
+			require.True(t, businessLimited)
+			require.Equal(t, "P3", classifyOpsSeverity(parsed.ErrorType, http.StatusUnauthorized))
+		})
+	}
+}
+
+func TestShouldSkipOpsErrorLog_DoesNotSwallowUpstreamInvalidAPIKey(t *testing.T) {
+	ops := service.NewOpsService(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	ctx := context.Background()
+
+	anthropicInvalidBody := `{"type":"error","error":{"type":"authentication_error","message":"Invalid API key"}}`
+	anthropicRequiredBody := `{"type":"error","error":{"type":"authentication_error","message":"API key is required in Authorization header (Bearer scheme), x-api-key header, or x-goog-api-key header"}}`
+
+	// Local client auth rejections are ignored when IgnoreInvalidApiKeyErrors is enabled.
+	require.True(t, shouldSkipOpsErrorLog(ctx, ops, "Invalid API key", anthropicInvalidBody, "/v1/messages", false))
+	require.True(t, shouldSkipOpsErrorLog(ctx, ops, "API key is required in Authorization header", anthropicRequiredBody, "/v1/messages", false))
+
+	// Upstream / account_auth failures with the same message MUST NOT be dropped.
+	require.False(t, shouldSkipOpsErrorLog(ctx, ops, "Invalid API key", anthropicInvalidBody, "/v1/messages", true))
+	require.False(t, shouldSkipOpsErrorLog(ctx, ops, "API key is required", anthropicRequiredBody, "/v1/messages", true))
+
+	// End-to-end middleware check: an upstream 401/502 error carrying "Invalid API key"
+	// must still enqueue an ops error log row.
+	setupOpsErrorLogTestQueue(t, 4)
+	gin.SetMode(gin.TestMode)
+
+	router := gin.New()
+	router.Use(OpsErrorLoggerMiddleware(ops))
+	router.POST("/v1/messages", func(c *gin.Context) {
+		c.Set(service.OpsUpstreamStatusCodeKey, http.StatusUnauthorized)
+		c.Data(http.StatusBadGateway, "application/json", []byte(anthropicInvalidBody))
+	})
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusBadGateway, w.Code)
+	require.Equal(t, int64(1), OpsErrorLogEnqueuedTotal(), "upstream invalid API key failure must still be recorded in ops_error_logs")
+
+	// Saved WebSocket turn error must use its own snapshot provenance even if a
+	// later turn cleared the gin.Context upstream state via BeginOpsStreamTurn.
+	wsCtx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	wsCtx.Request = httptest.NewRequest(http.MethodGet, "/v1/responses", nil)
+	service.BeginOpsStreamTurn(wsCtx, 2)
+	logOpsStreamErrorValue(wsCtx, ops, http.StatusOK, service.OpsStreamError{
+		ErrType:         "authentication_error",
+		Message:         "Invalid API key",
+		IntendedStatus:  http.StatusBadGateway,
+		CountTowardsSLA: true,
+		Turn:            1,
+		UpstreamStatus:  http.StatusUnauthorized,
+		UpstreamMessage: "Invalid API key",
+	})
+	require.Equal(t, int64(2), OpsErrorLogEnqueuedTotal(), "saved WS turn upstream invalid API key failure must still be recorded")
+}

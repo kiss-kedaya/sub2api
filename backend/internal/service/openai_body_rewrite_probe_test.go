@@ -22,13 +22,7 @@ import (
 // ---------------------------------------------------------------------------
 
 func legacyRewriteInboundDeepSeekCallIDs(groupPlatform, model string, body []byte) []byte {
-	if len(body) == 0 {
-		return body
-	}
-	if deepSeekCallIDScope(groupPlatform, model) {
-		return body
-	}
-	if !deepSeekCallIDScope(groupPlatform, model) && !bodyHasToolCallIDs(body) {
+	if !shouldRewriteInboundDeepSeekCallIDs(groupPlatform, model, body) {
 		return body
 	}
 	var requestBody map[string]any
@@ -979,7 +973,7 @@ func TestNormalizeDeepSeekResponsesRequestBodySkipsMissingReasoningSwitches(t *t
 		`{"summary":"auto","effort":"low"}`, `"high"`, `null`, `[]`, `{ }`, `{"summary":null}`,
 	} {
 		for _, extra := range []string{``, `,"reasoning":{"summary":"later"}`} {
-			doc := `{"model":"gpt-5","input":[{"type":"function_call","call_id":"call_1","name":"f","arguments":"{}"}],"reasoning":` + reasoning + extra + `}`
+			doc := `{"model":"deepseek-v4.1-flash","input":[{"type":"function_call","call_id":"call_1","name":"f","arguments":"{}"}],"reasoning":` + reasoning + extra + `}`
 			body := []byte(doc)
 			require.Equalf(t, string(legacyNormalizeDeepSeekResponsesRequestBody(account, body)), string(normalizeDeepSeekResponsesRequestBody(account, body)), doc)
 		}

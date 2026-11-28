@@ -902,14 +902,16 @@ func TestNormalizeDeepSeekResponsesRequestBodyKeepsOtherProviderCallIDDedupe(t *
 		Platform: PlatformKimi, Type: AccountTypeAPIKey,
 		Credentials: map[string]any{"api_protocol": APIProtocolResponses},
 	}
-	kimiBody := []byte(`{"model":"kimi-k2","store":true,"input":[{"type":"function_call","call_id":"call_a","name":"do"},{"type":"function_call","call_id":"call_a","name":"do"}]}`)
+	kimiBody := []byte(`{"model":"kimi-k2","store":true,"reasoning":{"effort":"medium","summary":"auto"},"input":[{"type":"function_call","call_id":"call_a","name":"do"},{"type":"function_call","call_id":"call_a","name":"do"}]}`)
 	kimiNormalized := normalizeDeepSeekResponsesRequestBody(kimi, kimiBody)
-	// The rewrite now scopes on the shape of the body, not only on platform and
-	// model alias: a neutral alias can still be routed to a DeepSeek-backed
-	// upstream, and duplicate call ids are rejected by any strict upstream.
-	// Kimi keeps its single call left untouched (no output to half-delete).
-	require.Equal(t, 1, len(gjson.GetBytes(kimiNormalized, "input").Array()))
+	// Kimi is an explicit non-DeepSeek platform and model: native Responses
+	// normalization still forces store=false, while DeepSeek call-id dedupe
+	// and reasoning.summary stripping must NOT touch Kimi's tool history.
+	require.False(t, gjson.GetBytes(kimiNormalized, "store").Bool())
+	require.Equal(t, "auto", gjson.GetBytes(kimiNormalized, "reasoning.summary").String())
+	require.Equal(t, 2, len(gjson.GetBytes(kimiNormalized, "input").Array()))
 	require.Equal(t, "call_a", gjson.GetBytes(kimiNormalized, "input.0.call_id").String())
+	require.Equal(t, "call_a", gjson.GetBytes(kimiNormalized, "input.1.call_id").String())
 }
 
 // Native DeepSeek preserves summary switches, including otherwise invalid

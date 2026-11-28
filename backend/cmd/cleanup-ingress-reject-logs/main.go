@@ -170,7 +170,7 @@ func historicalIngressRejectReason(item candidate) (string, bool) {
 
 	normalized := strings.TrimSpace(message)
 	switch {
-	case normalized == "API key is required":
+	case normalized == "API key is required" || strings.HasPrefix(normalized, "API key is required "):
 		return "missing_key", true
 	case normalized == "Invalid API key":
 		return "invalid_key", true
