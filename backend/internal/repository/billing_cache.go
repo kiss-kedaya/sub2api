@@ -74,6 +74,15 @@ const (
 )
 
 var (
+	setUserBalanceIfLowerScript = redis.NewScript(`
+		local current = redis.call('GET', KEYS[1])
+		if not current or tonumber(ARGV[1]) < tonumber(current) then
+			redis.call('SET', KEYS[1], ARGV[1], 'EX', ARGV[2])
+			return 1
+		end
+		return 0
+	`)
+
 	deductBalanceScript = redis.NewScript(`
 		local current = redis.call('GET', KEYS[1])
 		if current == false then
@@ -171,15 +180,7 @@ func (c *billingCache) SetUserBalanceIfAbsent(ctx context.Context, userID int64,
 // allowing an older, larger balance to overwrite a newer one.
 func (c *billingCache) SetUserBalanceIfLower(ctx context.Context, userID int64, balance float64) error {
 	key := billingBalanceKey(userID)
-	const script = `
-local current = redis.call('GET', KEYS[1])
-if not current or tonumber(ARGV[1]) < tonumber(current) then
-  redis.call('SET', KEYS[1], ARGV[1], 'EX', ARGV[2])
-  return 1
-end
-return 0
-`
-	_, err := redis.NewScript(script).Run(ctx, c.rdb, []string{key}, balance, int(jitteredTTL().Seconds())).Result()
+	_, err := setUserBalanceIfLowerScript.Run(ctx, c.rdb, []string{key}, balance, int(jitteredTTL().Seconds())).Result()
 	return err
 }
 
@@ -568,7 +569,7 @@ func (c *billingCache) DeleteUserPlatformQuotaCache(ctx context.Context, userID 
 // ARGV[3] = expected schema_version (Go 侧 UserPlatformQuotaCacheSchemaV1)
 // ARGV[4] = dirty set member（空串则不 SADD）
 // ARGV[5] = 脏集兜底 TTL 秒
-const updateUserPlatformQuotaUsageScript = `
+var updateUserPlatformQuotaUsageScript = redis.NewScript(`
 if redis.call("EXISTS", KEYS[1]) == 0 then
     return 0
 end
@@ -586,7 +587,7 @@ if ARGV[4] ~= "" then
     redis.call("EXPIRE", KEYS[2], ARGV[5])
 end
 return 1
-`
+`)
 
 // userPlatformQuotaDirtySetKey 返回脏集（dirty set）的 Redis key。
 // 使用与 userPlatformQuotaCacheKey 相同的前缀 "billing:"。
@@ -606,7 +607,7 @@ func (c *billingCache) IncrUserPlatformQuotaUsageCache(ctx context.Context, user
 	if markDirty {
 		member = userPlatformQuotaDirtyMember(userID, platform)
 	}
-	_, err := c.rdb.Eval(ctx, updateUserPlatformQuotaUsageScript,
+	_, err := updateUserPlatformQuotaUsageScript.Run(ctx, c.rdb,
 		[]string{userPlatformQuotaCacheKey(userID, platform), userPlatformQuotaDirtySetKey()},
 		strconv.FormatFloat(cost, 'f', -1, 64),
 		int(ttl.Seconds()),

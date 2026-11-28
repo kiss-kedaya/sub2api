@@ -110,46 +110,64 @@ func (r *usageBillingRepository) claimUsageBillingKey(ctx context.Context, tx *s
 }
 
 func (r *usageBillingRepository) claimUsageBillingRequest(ctx context.Context, tx *sql.Tx, requestID string, apiKeyID int64, requestFingerprint string) (bool, error) {
-	var id int64
+	// 单条 CTE 合并归档查重与热表认领：
+	// 1. 先查 usage_billing_dedup_archive（含 local: 请求，严禁跳过）；
+	// 2. 仅当归档未命中时才尝试 INSERT INTO usage_billing_dedup ... ON CONFLICT DO NOTHING，
+	//    避免归档重放白写 dead tuple，同时正常新请求从 2 次串行 SQL 降为 1 次。
+	var insertedID sql.NullInt64
+	var archivedFingerprint sql.NullString
 	err := tx.QueryRowContext(ctx, `
-		INSERT INTO usage_billing_dedup (request_id, api_key_id, request_fingerprint)
-		VALUES ($1, $2, $3)
-		ON CONFLICT (request_id, api_key_id) DO NOTHING
-		RETURNING id
-	`, requestID, apiKeyID, requestFingerprint).Scan(&id)
-	if errors.Is(err, sql.ErrNoRows) {
-		var existingFingerprint string
-		if err := tx.QueryRowContext(ctx, `
+		WITH archived AS (
 			SELECT request_fingerprint
-			FROM usage_billing_dedup
+			FROM usage_billing_dedup_archive
 			WHERE request_id = $1 AND api_key_id = $2
-		`, requestID, apiKeyID).Scan(&existingFingerprint); err != nil {
-			return false, err
-		}
-		if strings.TrimSpace(existingFingerprint) != strings.TrimSpace(requestFingerprint) {
+		),
+		inserted AS (
+			INSERT INTO usage_billing_dedup (request_id, api_key_id, request_fingerprint)
+			SELECT $1, $2, $3
+			WHERE NOT EXISTS (SELECT 1 FROM archived)
+			ON CONFLICT (request_id, api_key_id) DO NOTHING
+			RETURNING id
+		)
+		SELECT
+			(SELECT id FROM inserted) AS inserted_id,
+			(SELECT request_fingerprint FROM archived) AS archived_fingerprint
+	`, requestID, apiKeyID, requestFingerprint).Scan(&insertedID, &archivedFingerprint)
+	if err != nil {
+		return false, err
+	}
+	if insertedID.Valid {
+		return true, nil
+	}
+	if archivedFingerprint.Valid {
+		if strings.TrimSpace(archivedFingerprint.String) != strings.TrimSpace(requestFingerprint) {
 			return false, service.ErrUsageBillingRequestConflict
 		}
 		return false, nil
+	}
+
+	// 热表唯一冲突：另发一条 SELECT 在新 READ COMMITTED 快照下读取已提交指纹（避免与并发提交竞态）。
+	var existingFingerprint string
+	err = tx.QueryRowContext(ctx, `
+		SELECT request_fingerprint
+		FROM usage_billing_dedup
+		WHERE request_id = $1 AND api_key_id = $2
+	`, requestID, apiKeyID).Scan(&existingFingerprint)
+	if errors.Is(err, sql.ErrNoRows) {
+		// 极罕见竞态：在 CTE 冲突与此回查之间，该行刚好被归档清理任务移入归档表。
+		err = tx.QueryRowContext(ctx, `
+			SELECT request_fingerprint
+			FROM usage_billing_dedup_archive
+			WHERE request_id = $1 AND api_key_id = $2
+		`, requestID, apiKeyID).Scan(&existingFingerprint)
 	}
 	if err != nil {
 		return false, err
 	}
-	var archivedFingerprint string
-	err = tx.QueryRowContext(ctx, `
-		SELECT request_fingerprint
-		FROM usage_billing_dedup_archive
-		WHERE request_id = $1 AND api_key_id = $2
-	`, requestID, apiKeyID).Scan(&archivedFingerprint)
-	if err == nil {
-		if strings.TrimSpace(archivedFingerprint) != strings.TrimSpace(requestFingerprint) {
-			return false, service.ErrUsageBillingRequestConflict
-		}
-		return false, nil
+	if strings.TrimSpace(existingFingerprint) != strings.TrimSpace(requestFingerprint) {
+		return false, service.ErrUsageBillingRequestConflict
 	}
-	if !errors.Is(err, sql.ErrNoRows) {
-		return false, err
-	}
-	return true, nil
+	return false, nil
 }
 
 func (r *usageBillingRepository) ReserveBatchImageBalance(ctx context.Context, cmd *service.BatchImageBalanceHoldCommand) (*service.BatchImageBalanceHoldResult, error) {
@@ -248,15 +266,21 @@ func (r *usageBillingRepository) applyUsageBillingEffects(ctx context.Context, t
 
 	// API Key 在请求进行中被删除时，其自身的额度/限速计数已无意义，跳过即可；
 	// 但用户余额、订阅与账号额度必须照常结算，不能因此回滚整个计费事务。
-	if cmd.APIKeyQuotaCost > 0 {
+	// 同笔计费若同时更新额度与窗口限速，合并为单条 UPDATE api_keys，减半行锁与往返。
+	switch {
+	case cmd.APIKeyQuotaCost > 0 && cmd.APIKeyRateLimitCost > 0:
+		exhausted, err := incrementUsageBillingAPIKeyQuotaAndRateLimit(ctx, tx, cmd.APIKeyID, cmd.APIKeyQuotaCost, cmd.APIKeyRateLimitCost)
+		if err != nil && !errors.Is(err, service.ErrAPIKeyNotFound) {
+			return err
+		}
+		result.APIKeyQuotaExhausted = exhausted
+	case cmd.APIKeyQuotaCost > 0:
 		exhausted, err := incrementUsageBillingAPIKeyQuota(ctx, tx, cmd.APIKeyID, cmd.APIKeyQuotaCost)
 		if err != nil && !errors.Is(err, service.ErrAPIKeyNotFound) {
 			return err
 		}
 		result.APIKeyQuotaExhausted = exhausted
-	}
-
-	if cmd.APIKeyRateLimitCost > 0 {
+	case cmd.APIKeyRateLimitCost > 0:
 		if err := incrementUsageBillingAPIKeyRateLimit(ctx, tx, cmd.APIKeyID, cmd.APIKeyRateLimitCost); err != nil && !errors.Is(err, service.ErrAPIKeyNotFound) {
 			return err
 		}
@@ -605,6 +629,38 @@ func userExistsForBilling(ctx context.Context, tx *sql.Tx, userID int64) (bool, 
 		return false, err
 	}
 	return true, nil
+}
+
+func incrementUsageBillingAPIKeyQuotaAndRateLimit(ctx context.Context, tx *sql.Tx, apiKeyID int64, quotaAmount, rateLimitCost float64) (bool, error) {
+	var exhausted bool
+	err := tx.QueryRowContext(ctx, `
+		UPDATE api_keys
+		SET quota_used = quota_used + $1,
+			status = CASE
+				WHEN quota > 0
+					AND status = $4
+					AND quota_used < quota
+					AND quota_used + $1 >= quota
+				THEN $5
+				ELSE status
+			END,
+			usage_5h = CASE WHEN window_5h_start IS NOT NULL AND window_5h_start + INTERVAL '5 hours' <= NOW() THEN $2 ELSE usage_5h + $2 END,
+			usage_1d = CASE WHEN window_1d_start IS NOT NULL AND window_1d_start + INTERVAL '24 hours' <= NOW() THEN $2 ELSE usage_1d + $2 END,
+			usage_7d = CASE WHEN window_7d_start IS NOT NULL AND window_7d_start + INTERVAL '7 days' <= NOW() THEN $2 ELSE usage_7d + $2 END,
+			window_5h_start = CASE WHEN window_5h_start IS NULL OR window_5h_start + INTERVAL '5 hours' <= NOW() THEN NOW() ELSE window_5h_start END,
+			window_1d_start = CASE WHEN window_1d_start IS NULL OR window_1d_start + INTERVAL '24 hours' <= NOW() THEN date_trunc('day', NOW()) ELSE window_1d_start END,
+			window_7d_start = CASE WHEN window_7d_start IS NULL OR window_7d_start + INTERVAL '7 days' <= NOW() THEN date_trunc('day', NOW()) ELSE window_7d_start END,
+			updated_at = NOW()
+		WHERE id = $3 AND deleted_at IS NULL
+		RETURNING quota > 0 AND quota_used >= quota AND quota_used - $1 < quota
+	`, quotaAmount, rateLimitCost, apiKeyID, service.StatusAPIKeyActive, service.StatusAPIKeyQuotaExhausted).Scan(&exhausted)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, service.ErrAPIKeyNotFound
+	}
+	if err != nil {
+		return false, err
+	}
+	return exhausted, nil
 }
 
 func incrementUsageBillingAPIKeyQuota(ctx context.Context, tx *sql.Tx, apiKeyID int64, amount float64) (bool, error) {

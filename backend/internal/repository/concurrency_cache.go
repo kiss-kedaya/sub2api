@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"sync"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -54,6 +55,14 @@ const (
 	// 后台清理只按批处理索引候选，避免单次任务占用 Redis 太久。
 	activeIndexCleanupBatchSize  = 1000
 	activeIndexPipelineChunkSize = 500
+
+	// 活跃索引写入的进程内节流窗口上限（秒）：默认槽位 TTL 为 15 分钟，7 分钟内同一 (indexKey, id)
+	// 仅执行一次 ZADD 即可保证索引 score 始终远大于当前时间，砍掉高频热路径上 99.9% 的冗余 ZADD。
+	// 当自定义 TTL 更短时会自动收窄为 minTTL/2。
+	activeIndexTouchThrottleMaxSeconds = 7 * 60
+
+	// 批量并发/负载查询单次 Lua 脚本分块大小，避免单次 EVALSHA 携带过多 KEYS。
+	concurrencyBatchLuaChunkSize = 500
 
 	// 一次性迁移 marker：活跃索引机制上线前遗留的等待计数键无法被索引发现，
 	// 且有流量时 TTL 会被不断刷新，必须清扫一次。marker 存在即代表已完成。
@@ -354,12 +363,124 @@ var (
 		end
 		return {removed, remaining}
 	`)
+
+	// releaseSlotScript 单 RTT 释放槽位并原子维护活跃索引：
+	// ZREM + TIME + ZREMRANGEBYSCORE + ZCARD + GET waitKey；若剩余槽位和等待数均归零，
+	// 原子从活跃索引中 ZREM 移除 member（避免旧 4-RTT 路径中 ZCARD 与 ZREM 之间的竞态）；
+	// 否则返回 {activeTTL, now} 供 Go 侧按节流窗口决定是否刷新活跃索引。
+	// KEYS[1] = slotKey, KEYS[2] = waitKey, KEYS[3] = indexKey
+	// ARGV[1] = requestID, ARGV[2] = slotTTLSeconds, ARGV[3] = waitQueueTTLSeconds, ARGV[4] = indexMember (空串则不碰索引)
+	releaseSlotScript = redis.NewScript(`
+		redis.replicate_commands()
+		local slotKey = KEYS[1]
+		local waitKey = KEYS[2]
+		local indexKey = KEYS[3]
+		local requestID = ARGV[1]
+		local slotTTL = tonumber(ARGV[2])
+		local waitTTL = tonumber(ARGV[3])
+		local member = ARGV[4]
+
+		redis.call('ZREM', slotKey, requestID)
+		local now = tonumber(redis.call('TIME')[1])
+		local expireBefore = now - slotTTL
+		redis.call('ZREMRANGEBYSCORE', slotKey, '-inf', expireBefore)
+
+		local remaining = redis.call('ZCARD', slotKey)
+		local waitVal = redis.call('GET', waitKey)
+		local waitCount = 0
+		if waitVal ~= false then
+			local parsed = tonumber(waitVal)
+			if parsed ~= nil and parsed > 0 then
+				waitCount = parsed
+			end
+		end
+
+		if remaining == 0 and waitCount <= 0 then
+			if member ~= '' then
+				redis.call('ZREM', indexKey, member)
+			end
+			return {0, now}
+		end
+
+		local activeTTL = 0
+		if remaining > 0 then
+			activeTTL = slotTTL
+		end
+		if waitCount > 0 and waitTTL > activeTTL then
+			activeTTL = waitTTL
+		end
+		return {activeTTL, now}
+	`)
+
+	// getConcurrencyBatchScript 单 RTT 批量清理过期槽位并统计并发数（普通槽位 + Live 槽位）。
+	// KEYS = [slotKey_1, liveKey_1, slotKey_2, liveKey_2, ...]
+	// ARGV[1] = slotTTLSeconds, ARGV[2] = liveLeaseTTLSeconds
+	// 返回整数数组 [count_1, count_2, ...]
+	getConcurrencyBatchScript = redis.NewScript(`
+		redis.replicate_commands()
+		local slotTTL = tonumber(ARGV[1])
+		local liveTTL = tonumber(ARGV[2])
+		local now = tonumber(redis.call('TIME')[1])
+		local slotExpireBefore = now - slotTTL
+		local liveExpireBefore = now - liveTTL
+		local counts = {}
+		local idx = 1
+		for i = 1, #KEYS, 2 do
+			local slotKey = KEYS[i]
+			local liveKey = KEYS[i + 1]
+			redis.call('ZREMRANGEBYSCORE', slotKey, '-inf', slotExpireBefore)
+			redis.call('ZREMRANGEBYSCORE', liveKey, '-inf', liveExpireBefore)
+			counts[idx] = redis.call('ZCARD', slotKey) + redis.call('ZCARD', liveKey)
+			idx = idx + 1
+		end
+		return counts
+	`)
+
+	// getLoadBatchScript 单 RTT 批量清理过期槽位并读取并发数与等待数。
+	// KEYS = [slotKey_1, liveKey_1, waitKey_1, ...]
+	// ARGV[1] = slotTTLSeconds, ARGV[2] = liveLeaseTTLSeconds
+	// 返回扁平整数数组 [concurrency_1, wait_1, concurrency_2, wait_2, ...]
+	getLoadBatchScript = redis.NewScript(`
+		redis.replicate_commands()
+		local slotTTL = tonumber(ARGV[1])
+		local liveTTL = tonumber(ARGV[2])
+		local now = tonumber(redis.call('TIME')[1])
+		local slotExpireBefore = now - slotTTL
+		local liveExpireBefore = now - liveTTL
+		local res = {}
+		local idx = 1
+		for i = 1, #KEYS, 3 do
+			local slotKey = KEYS[i]
+			local liveKey = KEYS[i + 1]
+			local waitKey = KEYS[i + 2]
+			redis.call('ZREMRANGEBYSCORE', slotKey, '-inf', slotExpireBefore)
+			redis.call('ZREMRANGEBYSCORE', liveKey, '-inf', liveExpireBefore)
+			res[idx] = redis.call('ZCARD', slotKey) + redis.call('ZCARD', liveKey)
+			local waitVal = redis.call('GET', waitKey)
+			local waitCount = 0
+			if waitVal ~= false then
+				local parsed = tonumber(waitVal)
+				if parsed ~= nil and parsed == math.floor(parsed) then
+					waitCount = parsed
+				end
+			end
+			res[idx + 1] = waitCount
+			idx = idx + 2
+		end
+		return res
+	`)
 )
 
+type activeIndexTouchKey struct {
+	indexKey string
+	id       int64
+}
+
 type concurrencyCache struct {
-	rdb                 *redis.Client
-	slotTTLSeconds      int // 槽位过期时间（秒）
-	waitQueueTTLSeconds int // 等待队列过期时间（秒）
+	rdb                   *redis.Client
+	slotTTLSeconds        int      // 槽位过期时间（秒）
+	waitQueueTTLSeconds   int      // 等待队列过期时间（秒）
+	activeIndexTouchCache sync.Map // map[activeIndexTouchKey]int64（最近一次写入活跃索引的 Redis Unix expireAt 秒）
 }
 
 // NewConcurrencyCache 创建并发控制缓存
@@ -438,18 +559,75 @@ var (
 	userSlotIndex    = slotIndexSpec{indexKey: userActiveIndexKey, slotKey: userSlotKey, waitKey: waitQueueKey}
 )
 
+// activeIndexTouchThrottleSeconds 计算活跃索引写入节流窗口（秒）。
+// 默认 15 分钟 TTL 下取 7 分钟，确保索引 score 在持续流量下始终远晚于当前时间；
+// 若自定义 TTL 更短，自动收窄为 minTTL/2，避免索引在节流期间过期。
+func (c *concurrencyCache) activeIndexTouchThrottleSeconds() int64 {
+	minTTL := c.slotTTLSeconds
+	if c.waitQueueTTLSeconds > 0 && (minTTL <= 0 || c.waitQueueTTLSeconds < minTTL) {
+		minTTL = c.waitQueueTTLSeconds
+	}
+	if minTTL <= 1 {
+		return 0
+	}
+	half := int64(minTTL / 2)
+	if half > activeIndexTouchThrottleMaxSeconds {
+		return activeIndexTouchThrottleMaxSeconds
+	}
+	return half
+}
+
+// evictActiveIndexTouch 在 Redis 活跃索引移除成员后清除进程内节流记录，
+// 确保同一 ID 下次占槽时立刻重新 ZADD 写入索引，不会因节流跳过而漏登。
+func (c *concurrencyCache) evictActiveIndexTouch(indexKey string, id int64) {
+	if c == nil || id <= 0 {
+		return
+	}
+	c.activeIndexTouchCache.Delete(activeIndexTouchKey{indexKey: indexKey, id: id})
+}
+
 // touchActiveIndexAt 是写路径上的轻量标记：主操作已成功时，尽力把 ID 放入活跃索引，
-// score 为给定的绝对过期时间（Redis Unix 秒）。索引失败不影响并发槽位/等待队列本身，
+// score 为给定的绝对过期时间（Redis Unix 秒）。通过进程内 sync.Map 节流，
+// 同一 (indexKey, id) 在节流窗口内仅执行一次 ZADD；索引失败不影响并发槽位/等待队列本身，
 // 后续释放或清理会再次校正，因此只记日志不上抛。
 func (c *concurrencyCache) touchActiveIndexAt(ctx context.Context, indexKey string, id int64, expireAt int64) {
 	if c == nil || c.rdb == nil || id <= 0 || expireAt <= 0 {
 		return
+	}
+	touchKey := activeIndexTouchKey{indexKey: indexKey, id: id}
+	throttleSeconds := c.activeIndexTouchThrottleSeconds()
+	if throttleSeconds > 0 {
+		if prev, ok := c.activeIndexTouchCache.Load(touchKey); ok {
+			if lastExpireAt, ok := prev.(int64); ok && expireAt-lastExpireAt < throttleSeconds {
+				return
+			}
+		}
 	}
 	if err := c.rdb.ZAdd(ctx, indexKey, redis.Z{
 		Score:  float64(expireAt),
 		Member: strconv.FormatInt(id, 10),
 	}).Err(); err != nil {
 		logger.LegacyPrintf("repository.concurrency", "Warning: touch active index %s for %d failed: %v", indexKey, id, err)
+		return
+	}
+	if throttleSeconds <= 0 {
+		return
+	}
+	for {
+		prev, loaded := c.activeIndexTouchCache.Load(touchKey)
+		if !loaded {
+			if _, loaded := c.activeIndexTouchCache.LoadOrStore(touchKey, expireAt); !loaded {
+				break
+			}
+			continue
+		}
+		lastExpireAt, _ := prev.(int64)
+		if lastExpireAt >= expireAt {
+			break
+		}
+		if c.activeIndexTouchCache.CompareAndSwap(touchKey, prev, expireAt) {
+			break
+		}
 	}
 }
 
@@ -462,7 +640,7 @@ func (c *concurrencyCache) refreshUserActiveIndex(ctx context.Context, userID in
 }
 
 // refreshActiveIndex 以 Redis 中的真实槽位/等待数为准重建索引状态。
-// 释放槽位、等待计数减少、清理过期成员后都会调用它，防止索引残留。
+// 等待计数减少、清理过期成员后都会调用它，防止索引残留。
 // 索引维护是 best-effort：失败只记日志，不影响主流程。
 func (c *concurrencyCache) refreshActiveIndex(ctx context.Context, indexKey string, id int64, slotKey, waitKey string) {
 	if c == nil || c.rdb == nil || id <= 0 {
@@ -483,6 +661,8 @@ func (c *concurrencyCache) refreshActiveIndex(ctx context.Context, indexKey stri
 	if load.slotCount == 0 && load.waitCount <= 0 {
 		if err := c.rdb.ZRem(ctx, indexKey, member).Err(); err != nil {
 			logger.LegacyPrintf("repository.concurrency", "Warning: remove active index member %s from %s failed: %v", member, indexKey, err)
+		} else {
+			c.evictActiveIndexTouch(indexKey, id)
 		}
 		return
 	}
@@ -608,7 +788,76 @@ func (c *concurrencyCache) removeActiveIndexMembers(ctx context.Context, indexKe
 	}
 	if err := c.rdb.ZRem(ctx, indexKey, args...).Err(); err != nil {
 		logger.LegacyPrintf("repository.concurrency", "Warning: remove %d active index members from %s failed: %v", len(members), indexKey, err)
+		return
 	}
+	for _, member := range members {
+		if id, err := strconv.ParseInt(member, 10, 64); err == nil && id > 0 {
+			c.evictActiveIndexTouch(indexKey, id)
+		}
+	}
+}
+
+// releaseSlotWithActiveIndex 单 RTT Lua 释放槽位并原子维护活跃索引。
+// 若该 ID 剩余槽位与等待数均归零，Lua 已原子 ZREM 活跃索引，此处同步清除本地节流缓存；
+// 若仍有剩余负载，仅在本地节流窗口到期时再 ZADD 续期索引（99.9% 路径 0 额外 RTT）。
+func (c *concurrencyCache) releaseSlotWithActiveIndex(ctx context.Context, spec slotIndexSpec, id int64, requestID string) error {
+	member := ""
+	if id > 0 {
+		member = strconv.FormatInt(id, 10)
+	}
+	activeTTL, now, err := runScriptInt64Pair(
+		ctx,
+		c.rdb,
+		releaseSlotScript,
+		[]string{spec.slotKey(id), spec.waitKey(id), spec.indexKey},
+		requestID,
+		c.slotTTLSeconds,
+		c.waitQueueTTLSeconds,
+		member,
+	)
+	if err != nil {
+		return err
+	}
+	if id <= 0 {
+		return nil
+	}
+	if activeTTL <= 0 {
+		c.evictActiveIndexTouch(spec.indexKey, id)
+		return nil
+	}
+	c.touchActiveIndexAt(ctx, spec.indexKey, id, now+activeTTL)
+	return nil
+}
+
+// getConcurrencyBatch 单 RTT（分块）Lua 批量读取槽位 + Live 租约并发数，免去独立 rdb.Time() RTT。
+func (c *concurrencyCache) getConcurrencyBatch(ctx context.Context, ids []int64, slotPrefix, livePrefix string) (map[int64]int, error) {
+	if len(ids) == 0 {
+		return map[int64]int{}, nil
+	}
+	result := make(map[int64]int, len(ids))
+	for start := 0; start < len(ids); start += concurrencyBatchLuaChunkSize {
+		end := start + concurrencyBatchLuaChunkSize
+		if end > len(ids) {
+			end = len(ids)
+		}
+		chunk := ids[start:end]
+		keys := make([]string, 0, len(chunk)*2)
+		for _, id := range chunk {
+			idStr := strconv.FormatInt(id, 10)
+			keys = append(keys, slotPrefix+idStr, livePrefix+idStr)
+		}
+		counts, err := getConcurrencyBatchScript.Run(ctx, c.rdb, keys, c.slotTTLSeconds, liveLeaseTTLSeconds).Int64Slice()
+		if err != nil {
+			return nil, fmt.Errorf("concurrency batch script: %w", err)
+		}
+		if len(counts) != len(chunk) {
+			return nil, fmt.Errorf("concurrency batch script: expected %d counts, got %d", len(chunk), len(counts))
+		}
+		for i, id := range chunk {
+			result[id] = int(counts[i])
+		}
+	}
+	return result, nil
 }
 
 // runScriptInt64Pair 执行返回两元素整数数组的 Lua 脚本并解析（如 {result, now}、{removed, remaining}）。
@@ -645,13 +894,7 @@ func (c *concurrencyCache) AcquireAccountSlot(ctx context.Context, accountID int
 }
 
 func (c *concurrencyCache) ReleaseAccountSlot(ctx context.Context, accountID int64, requestID string) error {
-	key := accountSlotKey(accountID)
-	if err := c.rdb.ZRem(ctx, key, requestID).Err(); err != nil {
-		return err
-	}
-	// 释放后用真实负载刷新索引；若没有槽位和等待计数，会移除索引 member。
-	c.refreshAccountActiveIndex(ctx, accountID)
-	return nil
+	return c.releaseSlotWithActiveIndex(ctx, accountSlotIndex, accountID, requestID)
 }
 
 func (c *concurrencyCache) GetAccountConcurrency(ctx context.Context, accountID int64) (int, error) {
@@ -665,44 +908,7 @@ func (c *concurrencyCache) GetAccountConcurrency(ctx context.Context, accountID 
 }
 
 func (c *concurrencyCache) GetAccountConcurrencyBatch(ctx context.Context, accountIDs []int64) (map[int64]int, error) {
-	if len(accountIDs) == 0 {
-		return map[int64]int{}, nil
-	}
-
-	now, err := c.rdb.Time(ctx).Result()
-	if err != nil {
-		return nil, fmt.Errorf("redis TIME: %w", err)
-	}
-	cutoffTime := now.Unix() - int64(c.slotTTLSeconds)
-
-	pipe := c.rdb.Pipeline()
-	type accountCmd struct {
-		accountID int64
-		zcardCmd  *redis.IntCmd
-		liveCmd   *redis.IntCmd
-	}
-	cmds := make([]accountCmd, 0, len(accountIDs))
-	for _, accountID := range accountIDs {
-		slotKey := accountSlotKeyPrefix + strconv.FormatInt(accountID, 10)
-		liveKey := liveAccountSlotKeyPrefix + strconv.FormatInt(accountID, 10)
-		pipe.ZRemRangeByScore(ctx, slotKey, "-inf", strconv.FormatInt(cutoffTime, 10))
-		pipe.ZRemRangeByScore(ctx, liveKey, "-inf", strconv.FormatInt(now.Unix()-liveLeaseTTLSeconds, 10))
-		cmds = append(cmds, accountCmd{
-			accountID: accountID,
-			zcardCmd:  pipe.ZCard(ctx, slotKey),
-			liveCmd:   pipe.ZCard(ctx, liveKey),
-		})
-	}
-
-	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
-		return nil, fmt.Errorf("pipeline exec: %w", err)
-	}
-
-	result := make(map[int64]int, len(accountIDs))
-	for _, cmd := range cmds {
-		result[cmd.accountID] = int(cmd.zcardCmd.Val() + cmd.liveCmd.Val())
-	}
-	return result, nil
+	return c.getConcurrencyBatch(ctx, accountIDs, accountSlotKeyPrefix, liveAccountSlotKeyPrefix)
 }
 
 // User slot operations
@@ -722,13 +928,7 @@ func (c *concurrencyCache) AcquireUserSlot(ctx context.Context, userID int64, ma
 }
 
 func (c *concurrencyCache) ReleaseUserSlot(ctx context.Context, userID int64, requestID string) error {
-	key := userSlotKey(userID)
-	if err := c.rdb.ZRem(ctx, key, requestID).Err(); err != nil {
-		return err
-	}
-	// 释放后按 Redis 中剩余负载修正索引状态。
-	c.refreshUserActiveIndex(ctx, userID)
-	return nil
+	return c.releaseSlotWithActiveIndex(ctx, userSlotIndex, userID, requestID)
 }
 
 func (c *concurrencyCache) GetUserConcurrency(ctx context.Context, userID int64) (int, error) {
@@ -846,44 +1046,7 @@ func (c *concurrencyCache) ReleaseLiveLease(ctx context.Context, accountID, user
 }
 
 func (c *concurrencyCache) GetAPIKeyConcurrencyBatch(ctx context.Context, apiKeyIDs []int64) (map[int64]int, error) {
-	if len(apiKeyIDs) == 0 {
-		return map[int64]int{}, nil
-	}
-
-	now, err := c.rdb.Time(ctx).Result()
-	if err != nil {
-		return nil, fmt.Errorf("redis TIME: %w", err)
-	}
-	cutoffTime := now.Unix() - int64(c.slotTTLSeconds)
-
-	pipe := c.rdb.Pipeline()
-	type apiKeyCmd struct {
-		apiKeyID int64
-		zcardCmd *redis.IntCmd
-		liveCmd  *redis.IntCmd
-	}
-	cmds := make([]apiKeyCmd, 0, len(apiKeyIDs))
-	for _, apiKeyID := range apiKeyIDs {
-		slotKey := apiKeySlotKeyPrefix + strconv.FormatInt(apiKeyID, 10)
-		liveKey := liveAPIKeySlotKeyPrefix + strconv.FormatInt(apiKeyID, 10)
-		pipe.ZRemRangeByScore(ctx, slotKey, "-inf", strconv.FormatInt(cutoffTime, 10))
-		pipe.ZRemRangeByScore(ctx, liveKey, "-inf", strconv.FormatInt(now.Unix()-liveLeaseTTLSeconds, 10))
-		cmds = append(cmds, apiKeyCmd{
-			apiKeyID: apiKeyID,
-			zcardCmd: pipe.ZCard(ctx, slotKey),
-			liveCmd:  pipe.ZCard(ctx, liveKey),
-		})
-	}
-
-	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
-		return nil, fmt.Errorf("pipeline exec: %w", err)
-	}
-
-	result := make(map[int64]int, len(apiKeyIDs))
-	for _, cmd := range cmds {
-		result[cmd.apiKeyID] = int(cmd.zcardCmd.Val() + cmd.liveCmd.Val())
-	}
-	return result, nil
+	return c.getConcurrencyBatch(ctx, apiKeyIDs, apiKeySlotKeyPrefix, liveAPIKeySlotKeyPrefix)
 }
 
 // Wait queue operations
@@ -953,60 +1116,38 @@ func (c *concurrencyCache) GetAccountsLoadBatch(ctx context.Context, accounts []
 		return map[int64]*service.AccountLoadInfo{}, nil
 	}
 
-	// 使用 Pipeline 替代 Lua 脚本，兼容 Redis Cluster（Lua 内动态拼 key 会 CROSSSLOT）。
-	// 每个账号执行 3 个命令：ZREMRANGEBYSCORE（清理过期）、ZCARD（并发数）、GET（等待数）。
-	now, err := c.rdb.Time(ctx).Result()
-	if err != nil {
-		return nil, fmt.Errorf("redis TIME: %w", err)
-	}
-	cutoffTime := now.Unix() - int64(c.slotTTLSeconds)
-
-	pipe := c.rdb.Pipeline()
-
-	type accountCmds struct {
-		id             int64
-		maxConcurrency int
-		zcardCmd       *redis.IntCmd
-		liveCmd        *redis.IntCmd
-		getCmd         *redis.StringCmd
-	}
-	cmds := make([]accountCmds, 0, len(accounts))
-	for _, acc := range accounts {
-		slotKey := accountSlotKeyPrefix + strconv.FormatInt(acc.ID, 10)
-		liveKey := liveAccountSlotKeyPrefix + strconv.FormatInt(acc.ID, 10)
-		waitKey := accountWaitKeyPrefix + strconv.FormatInt(acc.ID, 10)
-		pipe.ZRemRangeByScore(ctx, slotKey, "-inf", strconv.FormatInt(cutoffTime, 10))
-		pipe.ZRemRangeByScore(ctx, liveKey, "-inf", strconv.FormatInt(now.Unix()-liveLeaseTTLSeconds, 10))
-		ac := accountCmds{
-			id:             acc.ID,
-			maxConcurrency: acc.MaxConcurrency,
-			zcardCmd:       pipe.ZCard(ctx, slotKey),
-			liveCmd:        pipe.ZCard(ctx, liveKey),
-			getCmd:         pipe.Get(ctx, waitKey),
-		}
-		cmds = append(cmds, ac)
-	}
-
-	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
-		return nil, fmt.Errorf("pipeline exec: %w", err)
-	}
-
 	loadMap := make(map[int64]*service.AccountLoadInfo, len(accounts))
-	for _, ac := range cmds {
-		currentConcurrency := int(ac.zcardCmd.Val() + ac.liveCmd.Val())
-		waitingCount := 0
-		if v, err := ac.getCmd.Int(); err == nil {
-			waitingCount = v
+	for start := 0; start < len(accounts); start += concurrencyBatchLuaChunkSize {
+		end := start + concurrencyBatchLuaChunkSize
+		if end > len(accounts) {
+			end = len(accounts)
 		}
-		loadRate := 0
-		if ac.maxConcurrency > 0 {
-			loadRate = (currentConcurrency + waitingCount) * 100 / ac.maxConcurrency
+		chunk := accounts[start:end]
+		keys := make([]string, 0, len(chunk)*3)
+		for _, acc := range chunk {
+			idStr := strconv.FormatInt(acc.ID, 10)
+			keys = append(keys, accountSlotKeyPrefix+idStr, liveAccountSlotKeyPrefix+idStr, accountWaitKeyPrefix+idStr)
 		}
-		loadMap[ac.id] = &service.AccountLoadInfo{
-			AccountID:          ac.id,
-			CurrentConcurrency: currentConcurrency,
-			WaitingCount:       waitingCount,
-			LoadRate:           loadRate,
+		vals, err := getLoadBatchScript.Run(ctx, c.rdb, keys, c.slotTTLSeconds, liveLeaseTTLSeconds).Int64Slice()
+		if err != nil {
+			return nil, fmt.Errorf("accounts load batch script: %w", err)
+		}
+		if len(vals) != len(chunk)*2 {
+			return nil, fmt.Errorf("accounts load batch script: expected %d values, got %d", len(chunk)*2, len(vals))
+		}
+		for i, acc := range chunk {
+			currentConcurrency := int(vals[i*2])
+			waitingCount := int(vals[i*2+1])
+			loadRate := 0
+			if acc.MaxConcurrency > 0 {
+				loadRate = (currentConcurrency + waitingCount) * 100 / acc.MaxConcurrency
+			}
+			loadMap[acc.ID] = &service.AccountLoadInfo{
+				AccountID:          acc.ID,
+				CurrentConcurrency: currentConcurrency,
+				WaitingCount:       waitingCount,
+				LoadRate:           loadRate,
+			}
 		}
 	}
 
@@ -1018,59 +1159,38 @@ func (c *concurrencyCache) GetUsersLoadBatch(ctx context.Context, users []servic
 		return map[int64]*service.UserLoadInfo{}, nil
 	}
 
-	// 使用 Pipeline 替代 Lua 脚本，兼容 Redis Cluster。
-	now, err := c.rdb.Time(ctx).Result()
-	if err != nil {
-		return nil, fmt.Errorf("redis TIME: %w", err)
-	}
-	cutoffTime := now.Unix() - int64(c.slotTTLSeconds)
-
-	pipe := c.rdb.Pipeline()
-
-	type userCmds struct {
-		id             int64
-		maxConcurrency int
-		zcardCmd       *redis.IntCmd
-		liveCmd        *redis.IntCmd
-		getCmd         *redis.StringCmd
-	}
-	cmds := make([]userCmds, 0, len(users))
-	for _, u := range users {
-		slotKey := userSlotKeyPrefix + strconv.FormatInt(u.ID, 10)
-		liveKey := liveUserSlotKeyPrefix + strconv.FormatInt(u.ID, 10)
-		waitKey := waitQueueKeyPrefix + strconv.FormatInt(u.ID, 10)
-		pipe.ZRemRangeByScore(ctx, slotKey, "-inf", strconv.FormatInt(cutoffTime, 10))
-		pipe.ZRemRangeByScore(ctx, liveKey, "-inf", strconv.FormatInt(now.Unix()-liveLeaseTTLSeconds, 10))
-		uc := userCmds{
-			id:             u.ID,
-			maxConcurrency: u.MaxConcurrency,
-			zcardCmd:       pipe.ZCard(ctx, slotKey),
-			liveCmd:        pipe.ZCard(ctx, liveKey),
-			getCmd:         pipe.Get(ctx, waitKey),
-		}
-		cmds = append(cmds, uc)
-	}
-
-	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
-		return nil, fmt.Errorf("pipeline exec: %w", err)
-	}
-
 	loadMap := make(map[int64]*service.UserLoadInfo, len(users))
-	for _, uc := range cmds {
-		currentConcurrency := int(uc.zcardCmd.Val() + uc.liveCmd.Val())
-		waitingCount := 0
-		if v, err := uc.getCmd.Int(); err == nil {
-			waitingCount = v
+	for start := 0; start < len(users); start += concurrencyBatchLuaChunkSize {
+		end := start + concurrencyBatchLuaChunkSize
+		if end > len(users) {
+			end = len(users)
 		}
-		loadRate := 0
-		if uc.maxConcurrency > 0 {
-			loadRate = (currentConcurrency + waitingCount) * 100 / uc.maxConcurrency
+		chunk := users[start:end]
+		keys := make([]string, 0, len(chunk)*3)
+		for _, u := range chunk {
+			idStr := strconv.FormatInt(u.ID, 10)
+			keys = append(keys, userSlotKeyPrefix+idStr, liveUserSlotKeyPrefix+idStr, waitQueueKeyPrefix+idStr)
 		}
-		loadMap[uc.id] = &service.UserLoadInfo{
-			UserID:             uc.id,
-			CurrentConcurrency: currentConcurrency,
-			WaitingCount:       waitingCount,
-			LoadRate:           loadRate,
+		vals, err := getLoadBatchScript.Run(ctx, c.rdb, keys, c.slotTTLSeconds, liveLeaseTTLSeconds).Int64Slice()
+		if err != nil {
+			return nil, fmt.Errorf("users load batch script: %w", err)
+		}
+		if len(vals) != len(chunk)*2 {
+			return nil, fmt.Errorf("users load batch script: expected %d values, got %d", len(chunk)*2, len(vals))
+		}
+		for i, u := range chunk {
+			currentConcurrency := int(vals[i*2])
+			waitingCount := int(vals[i*2+1])
+			loadRate := 0
+			if u.MaxConcurrency > 0 {
+				loadRate = (currentConcurrency + waitingCount) * 100 / u.MaxConcurrency
+			}
+			loadMap[u.ID] = &service.UserLoadInfo{
+				UserID:             u.ID,
+				CurrentConcurrency: currentConcurrency,
+				WaitingCount:       waitingCount,
+				LoadRate:           loadRate,
+			}
 		}
 	}
 

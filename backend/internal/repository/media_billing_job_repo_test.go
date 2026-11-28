@@ -306,8 +306,9 @@ func TestApplyMediaBillingJob_ExistingClaimReleasesJobHoldWithoutCharging(t *tes
 	mock.ExpectQuery(`(?s)SELECT.*FROM media_billing_jobs WHERE id = \$1 FOR UPDATE`).
 		WithArgs(job.ID).
 		WillReturnRows(mediaBillingTestRow(job))
-	mock.ExpectQuery(`(?s)INSERT INTO usage_billing_dedup.*ON CONFLICT.*RETURNING id`).
-		WillReturnError(sql.ErrNoRows)
+	mock.ExpectQuery(dedupClaimCTESQL).
+		WithArgs(intent.Command.RequestID, intent.Command.APIKeyID, intent.Command.RequestFingerprint).
+		WillReturnRows(dedupClaimConflictRows())
 	mock.ExpectQuery(`(?s)SELECT request_fingerprint.*FROM usage_billing_dedup.*WHERE request_id`).
 		WithArgs(intent.Command.RequestID, intent.Command.APIKeyID).
 		WillReturnRows(sqlmock.NewRows([]string{"request_fingerprint"}).AddRow(intent.Command.RequestFingerprint))
@@ -341,10 +342,9 @@ func TestApplyMediaBillingJob_CaptureFailureRollsBackBeforeBilled(t *testing.T) 
 	mock.ExpectQuery(`(?s)SELECT.*FROM media_billing_jobs WHERE id = \$1 FOR UPDATE`).
 		WithArgs(job.ID).
 		WillReturnRows(mediaBillingTestRow(job))
-	mock.ExpectQuery(`(?s)INSERT INTO usage_billing_dedup.*RETURNING id`).
-		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(101))
-	mock.ExpectQuery(`(?s)SELECT request_fingerprint.*FROM usage_billing_dedup_archive`).
-		WillReturnError(sql.ErrNoRows)
+	mock.ExpectQuery(dedupClaimCTESQL).
+		WithArgs(intent.Command.RequestID, intent.Command.APIKeyID, intent.Command.RequestFingerprint).
+		WillReturnRows(dedupClaimClaimedRows(101))
 	mock.ExpectQuery(captureBatchImageHoldSQL).
 		WithArgs(1.0, 0.5, int64(42)).
 		WillReturnError(sql.ErrNoRows)
@@ -374,10 +374,9 @@ func TestApplyMediaBillingJob_TopUpFailureRollsBackClaimAndKeepsHold(t *testing.
 	mock.ExpectQuery(`(?s)SELECT.*FROM media_billing_jobs WHERE id = \$1 FOR UPDATE`).
 		WithArgs(job.ID).
 		WillReturnRows(mediaBillingTestRow(job))
-	mock.ExpectQuery(`(?s)INSERT INTO usage_billing_dedup.*RETURNING id`).
-		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(102))
-	mock.ExpectQuery(`(?s)SELECT request_fingerprint.*FROM usage_billing_dedup_archive`).
-		WillReturnError(sql.ErrNoRows)
+	mock.ExpectQuery(dedupClaimCTESQL).
+		WithArgs(intent.Command.RequestID, intent.Command.APIKeyID, intent.Command.RequestFingerprint).
+		WillReturnRows(dedupClaimClaimedRows(102))
 	mock.ExpectQuery(reserveBatchImageHoldSQL).
 		WithArgs(0.5, int64(42)).
 		WillReturnError(sql.ErrNoRows)
@@ -552,10 +551,9 @@ func TestApplyMediaBillingJob_SettlesQuarantinedReadyJobAfterTopUp(t *testing.T)
 	mock.ExpectBegin()
 	mock.ExpectQuery(`(?s)SELECT.*FROM media_billing_jobs WHERE id = \$1 FOR UPDATE`).
 		WithArgs(job.ID).WillReturnRows(mediaBillingTestRow(job))
-	mock.ExpectQuery(`(?s)INSERT INTO usage_billing_dedup.*RETURNING id`).
-		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(201))
-	mock.ExpectQuery(`(?s)SELECT request_fingerprint.*FROM usage_billing_dedup_archive`).
-		WillReturnError(sql.ErrNoRows)
+	mock.ExpectQuery(dedupClaimCTESQL).
+		WithArgs(intent.Command.RequestID, intent.Command.APIKeyID, intent.Command.RequestFingerprint).
+		WillReturnRows(dedupClaimClaimedRows(201))
 	mock.ExpectQuery(reserveBatchImageHoldSQL).
 		WithArgs(0.5, int64(42)).
 		WillReturnRows(sqlmock.NewRows([]string{"balance", "frozen_balance"}).AddRow(8.5, 1.5))
@@ -674,9 +672,9 @@ func TestApplyMediaBillingJob_PreauthorizedRetryChecksFinalizationPendingStatus(
 			mock.ExpectQuery(`(?s)SELECT.*FROM media_billing_jobs WHERE id = \$1 FOR UPDATE`).
 				WithArgs(job.ID).WillReturnRows(mediaBillingTestRow(job))
 			if tc.jobStatus == service.MediaBillingReady {
-				mock.ExpectQuery(`(?s)INSERT INTO usage_billing_dedup.*RETURNING id`).
+				mock.ExpectQuery(dedupClaimCTESQL).
 					WithArgs(intent.Command.RequestID, intent.Command.APIKeyID, intent.Command.RequestFingerprint).
-					WillReturnError(sql.ErrNoRows)
+					WillReturnRows(dedupClaimConflictRows())
 				mock.ExpectQuery(`(?s)SELECT request_fingerprint\s+FROM usage_billing_dedup\s+WHERE request_id = \$1 AND api_key_id = \$2`).
 					WithArgs(intent.Command.RequestID, intent.Command.APIKeyID).
 					WillReturnRows(sqlmock.NewRows([]string{"request_fingerprint"}).AddRow(intent.Command.RequestFingerprint))

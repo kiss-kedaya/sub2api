@@ -4,7 +4,6 @@ package repository
 
 import (
 	"context"
-	"database/sql"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -60,12 +59,9 @@ func startGuardWorkerForTest(t *testing.T, repo *guardBacklogRepo, maxBacklog in
 
 func expectDedupClaim(mock sqlmock.Sqlmock, requestID string) {
 	mock.ExpectBegin()
-	mock.ExpectQuery(dedupClaimInsertSQL).
+	mock.ExpectQuery(dedupClaimCTESQL).
 		WithArgs(requestID, int64(7), sqlmock.AnyArg()).
-		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(int64(1)))
-	mock.ExpectQuery(dedupArchiveSelectSQL).
-		WithArgs(requestID, int64(7)).
-		WillReturnError(sql.ErrNoRows)
+		WillReturnRows(dedupClaimClaimedRows(1))
 }
 
 func guardTestCommand(requestID string, cost float64) *service.UsageBillingCommand {

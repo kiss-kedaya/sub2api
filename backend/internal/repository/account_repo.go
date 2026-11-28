@@ -1919,27 +1919,29 @@ func (r *accountRepository) BatchUpdateLastUsed(ctx context.Context, updates map
 	}
 
 	ids := make([]int64, 0, len(updates))
-	args := make([]any, 0, len(updates)*2+1)
-	caseSQL := "UPDATE accounts SET last_used_at = CASE id"
-
-	idx := 1
-	for id, ts := range updates {
-		caseSQL += " WHEN $" + itoa(idx) + " THEN $" + itoa(idx+1) + "::timestamptz"
-		args = append(args, id, ts)
+	for id := range updates {
 		ids = append(ids, id)
-		idx += 2
+	}
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+
+	times := make([]time.Time, len(ids))
+	for i, id := range ids {
+		times[i] = updates[id]
 	}
 
-	caseSQL += " END, updated_at = NOW() WHERE id = ANY($" + itoa(idx) + ") AND deleted_at IS NULL"
-	args = append(args, pq.Array(ids))
-
-	_, err := r.sql.ExecContext(ctx, caseSQL, args...)
+	_, err := r.sql.ExecContext(ctx, `
+		UPDATE accounts AS a
+		SET last_used_at = v.last_used_at,
+		    updated_at = NOW()
+		FROM unnest($1::bigint[], $2::timestamptz[]) AS v(id, last_used_at)
+		WHERE a.id = v.id AND a.deleted_at IS NULL
+	`, pq.Array(ids), pq.Array(times))
 	if err != nil {
 		return err
 	}
-	lastUsedPayload := make(map[string]int64, len(updates))
-	for id, ts := range updates {
-		lastUsedPayload[strconv.FormatInt(id, 10)] = ts.Unix()
+	lastUsedPayload := make(map[string]int64, len(ids))
+	for _, id := range ids {
+		lastUsedPayload[strconv.FormatInt(id, 10)] = updates[id].Unix()
 	}
 	payload := map[string]any{"last_used": lastUsedPayload}
 	if err := enqueueSchedulerOutbox(ctx, r.sql, service.SchedulerOutboxEventAccountLastUsed, nil, nil, payload); err != nil {

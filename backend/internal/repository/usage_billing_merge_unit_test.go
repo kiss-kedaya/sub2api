@@ -4,7 +4,6 @@ package repository
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"testing"
 	"time"
@@ -17,10 +16,21 @@ import (
 )
 
 const (
-	dedupClaimInsertSQL   = `(?s)INSERT INTO usage_billing_dedup \(request_id, api_key_id, request_fingerprint\)\s+VALUES \(\$1, \$2, \$3\)\s+ON CONFLICT \(request_id, api_key_id\) DO NOTHING\s+RETURNING id`
-	dedupArchiveSelectSQL = `(?s)SELECT request_fingerprint\s+FROM usage_billing_dedup_archive\s+WHERE request_id = \$1 AND api_key_id = \$2`
+	dedupClaimCTESQL      = `(?s)WITH archived AS \(\s*SELECT request_fingerprint\s+FROM usage_billing_dedup_archive\s+WHERE request_id = \$1 AND api_key_id = \$2\s*\),\s*inserted AS \(\s*INSERT INTO usage_billing_dedup \(request_id, api_key_id, request_fingerprint\)\s+SELECT \$1, \$2, \$3\s+WHERE NOT EXISTS \(SELECT 1 FROM archived\)\s+ON CONFLICT \(request_id, api_key_id\) DO NOTHING\s+RETURNING id\s*\)\s*SELECT\s+\(SELECT id FROM inserted\) AS inserted_id,\s+\(SELECT request_fingerprint FROM archived\) AS archived_fingerprint`
 	balanceQueueInsertSQL = `(?s)INSERT INTO billing_balance_settlements \(\s*request_id,\s*api_key_id,\s*request_fingerprint,\s*user_id,\s*amount_usd,\s*status\s*\)\s+VALUES \(\$1, \$2, \$3, \$4, \$5, \$6\)\s+ON CONFLICT \(request_id, api_key_id\) DO NOTHING\s+RETURNING status`
 )
+
+func dedupClaimClaimedRows(id int64) *sqlmock.Rows {
+	return sqlmock.NewRows([]string{"inserted_id", "archived_fingerprint"}).AddRow(id, nil)
+}
+
+func dedupClaimConflictRows() *sqlmock.Rows {
+	return sqlmock.NewRows([]string{"inserted_id", "archived_fingerprint"}).AddRow(nil, nil)
+}
+
+func dedupClaimArchivedRows(fp string) *sqlmock.Rows {
+	return sqlmock.NewRows([]string{"inserted_id", "archived_fingerprint"}).AddRow(nil, fp)
+}
 
 type noopSettlementRepo struct{}
 
@@ -59,12 +69,9 @@ func TestUsageBillingApply_MergeEnabledQueuesBalanceInsteadOfUpdatingIt(t *testi
 	}
 
 	mock.ExpectBegin()
-	mock.ExpectQuery(dedupClaimInsertSQL).
+	mock.ExpectQuery(dedupClaimCTESQL).
 		WithArgs("req-merge-1", int64(7), sqlmock.AnyArg()).
-		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(int64(1)))
-	mock.ExpectQuery(dedupArchiveSelectSQL).
-		WithArgs("req-merge-1", int64(7)).
-		WillReturnError(sql.ErrNoRows)
+		WillReturnRows(dedupClaimClaimedRows(1))
 	mock.ExpectQuery(balanceQueueInsertSQL).
 		WithArgs("req-merge-1", int64(7), sqlmock.AnyArg(), int64(42), 2.5, service.BalanceSettlementPending).
 		WillReturnRows(sqlmock.NewRows([]string{"status"}).AddRow(service.BalanceSettlementPending))
@@ -97,12 +104,9 @@ func TestUsageBillingApply_MergeDisabledKeepsSynchronousDeduction(t *testing.T) 
 	}
 
 	mock.ExpectBegin()
-	mock.ExpectQuery(dedupClaimInsertSQL).
+	mock.ExpectQuery(dedupClaimCTESQL).
 		WithArgs("req-legacy-1", int64(7), sqlmock.AnyArg()).
-		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(int64(1)))
-	mock.ExpectQuery(dedupArchiveSelectSQL).
-		WithArgs("req-legacy-1", int64(7)).
-		WillReturnError(sql.ErrNoRows)
+		WillReturnRows(dedupClaimClaimedRows(1))
 	mock.ExpectQuery(conditionalBalanceDeductSQL).
 		WithArgs(2.5, int64(42)).
 		WillReturnRows(sqlmock.NewRows([]string{"balance"}).AddRow(97.5))
@@ -141,12 +145,9 @@ func TestUsageBillingApply_MergeEnabledButNoConsumerFallsBackToSynchronousDeduct
 	}
 
 	mock.ExpectBegin()
-	mock.ExpectQuery(dedupClaimInsertSQL).
+	mock.ExpectQuery(dedupClaimCTESQL).
 		WithArgs("req-fallback-1", int64(7), sqlmock.AnyArg()).
-		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(int64(1)))
-	mock.ExpectQuery(dedupArchiveSelectSQL).
-		WithArgs("req-fallback-1", int64(7)).
-		WillReturnError(sql.ErrNoRows)
+		WillReturnRows(dedupClaimClaimedRows(1))
 	mock.ExpectQuery(conditionalBalanceDeductSQL).
 		WithArgs(1.5, int64(42)).
 		WillReturnRows(sqlmock.NewRows([]string{"balance"}).AddRow(8.5))
@@ -179,12 +180,9 @@ func TestUsageBillingApply_MergeQueueInsertMapsMissingUserToErrUserNotFound(t *t
 	}
 
 	mock.ExpectBegin()
-	mock.ExpectQuery(dedupClaimInsertSQL).
+	mock.ExpectQuery(dedupClaimCTESQL).
 		WithArgs("req-missing-user", int64(7), sqlmock.AnyArg()).
-		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(int64(1)))
-	mock.ExpectQuery(dedupArchiveSelectSQL).
-		WithArgs("req-missing-user", int64(7)).
-		WillReturnError(sql.ErrNoRows)
+		WillReturnRows(dedupClaimClaimedRows(1))
 	mock.ExpectQuery(balanceQueueInsertSQL).
 		WithArgs("req-missing-user", int64(7), sqlmock.AnyArg(), int64(4242), 1.0, service.BalanceSettlementPending).
 		WillReturnError(&pq.Error{Code: "23503", Message: "insert or update on table \"billing_balance_settlements\" violates foreign key constraint"})
