@@ -675,6 +675,7 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 	// What the upstream produced for this turn, kept in case the client leaves before
 	// the terminal event and the turn has to be billed from an estimate.
 	turnOutput := apicompat.NewBufferedResponseAccumulator()
+	guardCtx, streamBalanceGuard := balancePreauthorizationGuardForRequest(ctx, c)
 	firstEventType := ""
 	lastEventType := ""
 	upstreamTerminalEvent := ""
@@ -997,6 +998,19 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 		}
 		if !clientDisconnected && !suppressClientMessage {
 			markOpenAIWSClientVisibleFailure(c, eventType, upstreamMessage)
+		}
+		if n := responsesSSEDataOutputBytes(eventType, upstreamMessage); n > 0 {
+			if topUpErr := streamBalanceGuard.ObserveStreamingOutput(guardCtx, n); topUpErr != nil {
+				s.reportOpenAIStreamOutputHoldTopUpFailure(c, account, "OpenAI WS HTTP bridge", topUpErr)
+				_ = resp.Body.Close()
+				result := resultWithUsage()
+				applyIncompleteOpenAIWSTurnUsage(account, &result.Usage, turnOutput, body, incompleteOpenAIWSTurn{
+					mode:       "http_bridge",
+					model:      mappedModel,
+					responseID: responseID,
+				})
+				return result, wrapStreamOutputHoldTopUpFailure(topUpErr)
+			}
 		}
 
 		if upstreamEventErr != nil {

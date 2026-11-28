@@ -132,15 +132,17 @@ type antigravityCompatScanEvent struct {
 }
 
 type antigravityCompatStreamSession struct {
-	processor      *antigravity.StreamingProcessor
-	adapter        antigravityCompatStreamAdapter
-	writer         *antigravityClientWriter
-	usage          *ClaudeUsage
-	meter          geminiOutputMeter
-	pendingEvents  []apicompat.AnthropicStreamEvent
-	firstTokenMs   *int
-	startTime      time.Time
-	meaningfulData bool
+	processor       *antigravity.StreamingProcessor
+	adapter         antigravityCompatStreamAdapter
+	writer          *antigravityClientWriter
+	usage           *ClaudeUsage
+	meter           geminiOutputMeter
+	pendingEvents   []apicompat.AnthropicStreamEvent
+	firstTokenMs    *int
+	startTime       time.Time
+	meaningfulData  bool
+	sawFinishReason bool
+	hasFinalOutput  bool
 }
 
 func newAntigravityCompatStreamSession(
@@ -158,13 +160,17 @@ func newAntigravityCompatStreamSession(
 	}
 }
 
-func (s *antigravityCompatStreamSession) consume(line string) {
-	s.meter.observeSSELine(line)
+func (s *antigravityCompatStreamSession) consume(line string) int {
+	if geminiSSELineHasFinishReason(line) {
+		s.sawFinishReason = true
+	}
+	observedBytes := s.meter.observeSSELine(line)
 	claudeEvents := s.processor.ProcessLine(strings.TrimRight(line, "\r\n"))
 	if len(claudeEvents) == 0 {
-		return
+		return observedBytes
 	}
 	s.consumeClaudeEvents(claudeEvents)
+	return observedBytes
 }
 
 func (s *antigravityCompatStreamSession) hasMeaningfulData() bool {
@@ -191,6 +197,7 @@ func (s *antigravityCompatStreamSession) result(clientDisconnect bool) *antigrav
 		firstTokenMs:     s.firstTokenMs,
 		clientDisconnect: clientDisconnect,
 		outputTokens:     s.meter.tokens(),
+		hasFinalOutput:   s.hasFinalOutput || (s.sawFinishReason && s.usage.OutputTokens > 0),
 	}
 }
 
@@ -217,6 +224,9 @@ func (s *antigravityCompatStreamSession) consumeClaudeData(eventType, payload st
 	}
 	if event.Usage != nil {
 		mergeAnthropicUsage(s.usage, *event.Usage)
+		if event.Type == "message_delta" && event.Usage.OutputTokens > 0 {
+			s.hasFinalOutput = true
+		}
 	}
 	if event.Message != nil {
 		mergeAnthropicUsage(s.usage, event.Message.Usage)
@@ -302,6 +312,7 @@ func (s *AntigravityGatewayService) handleAntigravityCompatStream(
 		c.Status(http.StatusOK)
 	}
 	session := newAntigravityCompatStreamSession(originalModel, startTime, adapter, writer)
+	guardCtx, streamBalanceGuard := balancePreauthorizationGuardForRequest(context.Background(), c)
 	defer func() { _ = resp.Body.Close() }()
 	var clientDoneCh <-chan struct{}
 	if c != nil && c.Request != nil && c.Request.Context().Done() != nil {
@@ -346,7 +357,16 @@ func (s *AntigravityGatewayService) handleAntigravityCompatStream(
 			}
 			resetAntigravityCompatTimer(timeoutTimer, timeout)
 			s.observeAntigravityGeminiSSELine(c, event.line)
-			session.consume(event.line)
+			observedBytes := session.consume(event.line)
+			if observedBytes > 0 {
+				if topUpErr := streamBalanceGuard.ObserveStreamingOutput(guardCtx, observedBytes); topUpErr != nil {
+					_ = resp.Body.Close()
+					logger.LegacyPrintf("service.antigravity_gateway", "Stream output hold top-up failed, aborting upstream (%s): error=%v", prefix, topUpErr)
+					res := session.collectResult(writer.Disconnected())
+					res.balanceAborted = true
+					return res, wrapStreamOutputHoldTopUpFailure(topUpErr)
+				}
+			}
 			if writer.Disconnected() {
 				_ = resp.Body.Close()
 				return session.collectResult(true), nil

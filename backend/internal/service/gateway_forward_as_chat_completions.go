@@ -276,6 +276,7 @@ func (s *GatewayService) handleCCBufferedFromAnthropic(
 	var usage ClaudeUsage
 	progress := &anthropicStreamProgress{}
 	sawStop, sawError := false, false
+	guardCtx, streamBalanceGuard := balancePreauthorizationGuardForRequest(context.Background(), c)
 	// 客户端一走就关上游，不再读完整个应答。
 	clientWatch := newAnthropicClientWatch(context.Background(), c, resp.Body)
 	defer clientWatch.stop()
@@ -351,6 +352,32 @@ func (s *GatewayService) handleCCBufferedFromAnthropic(
 				case "input_json_delta":
 					finalResp.Content[idx].Input = appendRawJSON(finalResp.Content[idx].Input, event.Delta.PartialJSON)
 				}
+			}
+		}
+		if observedBytes := anthropicEventOutputBytes(&event); observedBytes > 0 {
+			if topUpErr := streamBalanceGuard.ObserveStreamingOutput(guardCtx, observedBytes); topUpErr != nil {
+				_ = resp.Body.Close()
+				if !sawStop {
+					estimate.fill(&usage, progress, requestID, false, topUpErr)
+				}
+				status, errType, msg := balanceHoldAbortClientError(topUpErr)
+				writeGatewayCCError(c, status, errType, msg)
+				responseMsgID := ""
+				if finalResp != nil {
+					responseMsgID = normalizeUsageTraceID(finalResp.ID)
+				}
+				return &ForwardResult{
+					RequestID:       requestID,
+					ResponseMsgID:   responseMsgID,
+					UpstreamHeaders: resp.Header,
+					Usage:           usage,
+					Model:           originalModel,
+					UpstreamModel:   mappedModel,
+					ReasoningEffort: reasoningEffort,
+					Stream:          false,
+					Duration:        time.Since(startTime),
+					SearchCount:     usage.WebSearchRequests,
+				}, wrapStreamOutputHoldTopUpFailure(topUpErr)
 			}
 		}
 	}
@@ -488,6 +515,8 @@ func (s *GatewayService) handleCCStreamingFromAnthropic(
 	clientDisconnected := false
 	sawStop, sawError := false, false
 	progress := &anthropicStreamProgress{}
+	guardCtx, streamBalanceGuard := balancePreauthorizationGuardForRequest(context.Background(), c)
+	var balanceAbortErr error
 
 	scanner := bufio.NewScanner(newUpstreamErrorFrameReader(resp.Body, resolveUpstreamResponseReadLimit(s.cfg)))
 	maxLineSize := defaultMaxLineSize
@@ -610,6 +639,13 @@ func (s *GatewayService) handleCCStreamingFromAnthropic(
 		if !clientDisconnected {
 			c.Writer.Flush()
 		}
+		if observedBytes := anthropicEventOutputBytes(event); observedBytes > 0 {
+			if topUpErr := streamBalanceGuard.ObserveStreamingOutput(guardCtx, observedBytes); topUpErr != nil {
+				_ = resp.Body.Close()
+				balanceAbortErr = wrapStreamOutputHoldTopUpFailure(topUpErr)
+				return true
+			}
+		}
 		return false
 	}
 
@@ -653,6 +689,12 @@ func (s *GatewayService) handleCCStreamingFromAnthropic(
 		}
 
 		if processAnthropicEvent(&event) {
+			if balanceAbortErr != nil {
+				if !sawStop {
+					estimate.fill(&usage, progress, requestID, clientDisconnected, balanceAbortErr)
+				}
+				return resultWithUsage(), balanceAbortErr
+			}
 			return resultWithUsage(), nil
 		}
 		if event.Type == "message_stop" {

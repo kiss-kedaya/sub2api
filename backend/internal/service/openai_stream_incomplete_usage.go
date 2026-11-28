@@ -43,16 +43,26 @@ func estimateIncompleteStreamOutputTokens(acc *apicompat.BufferedResponseAccumul
 	return total
 }
 
-// fillIncompleteStreamUsage applies the estimates field by field and returns what
-// it filled in (0 when untouched). Output is filled only when the upstream reported
-// no output tokens at all. Input is filled from the request only when the upstream
+// fillIncompleteStreamUsage applies the estimates field by field for a stream that
+// ended without authoritative final usage and returns what it filled in (0 when
+// untouched). Output is raised to the observed estimate when the incomplete stream
+// delivered more output than any provisional count reported so far (larger reported
+// counts are preserved). Input is filled from the request only when the upstream
 // reported no input side at all; InputTokens stays the total (as OpenAI reports it)
 // and CacheReadInputTokens carries the cache-priced share of it.
 func fillIncompleteStreamUsage(usage *OpenAIUsage, outputEstimate int, requestBody []byte) (filledOutput, filledInput int) {
+	return fillIncompleteStreamUsageWithFinal(usage, outputEstimate, requestBody, false)
+}
+
+// fillIncompleteStreamUsageWithFinal behaves like fillIncompleteStreamUsage except
+// that when hasFinalOutput is true, a positive reported OutputTokens figure is
+// treated as authoritative final usage and preserved verbatim.
+func fillIncompleteStreamUsageWithFinal(usage *OpenAIUsage, outputEstimate int, requestBody []byte, hasFinalOutput bool) (filledOutput, filledInput int) {
 	if usage == nil {
 		return 0, 0
 	}
-	if outputEstimate > 0 && usage.OutputTokens == 0 && usage.ImageOutputTokens == 0 {
+	if outputEstimate > 0 && usage.ImageOutputTokens == 0 &&
+		(usage.OutputTokens == 0 || (!hasFinalOutput && outputEstimate > usage.OutputTokens)) {
 		usage.OutputTokens = outputEstimate
 		filledOutput = outputEstimate
 	}
@@ -96,7 +106,7 @@ func applyIncompleteOpenAIStreamUsage(account *Account, result *openaiStreamingR
 	// (new-api bills the merged prompt at the plain input price), so treating it as
 	// free would leave the operator absorbing the cost (issue #456). Output is billed
 	// only for what was really produced.
-	outputTokens, inputTokens := fillIncompleteStreamUsage(result.usage, result.incompleteOutputTokens, requestBody)
+	outputTokens, inputTokens := fillIncompleteStreamUsageWithFinal(result.usage, result.incompleteOutputTokens, requestBody, result.hasFinalOutput)
 	if outputTokens == 0 && inputTokens == 0 {
 		return
 	}

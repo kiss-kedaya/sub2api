@@ -132,3 +132,10 @@ func openAIWSPreauthorizationCloseStatusAndReason(err error) (coderws.StatusCode
 	}
 	return coderws.StatusInternalError, "billing check failed"
 }
+
+func openAIWSBalanceAbortCloseStatusAndReason(err error) (coderws.StatusCode, string) {
+	if errors.Is(err, service.ErrBalanceWithholdingFailed) {
+		return coderws.StatusPolicyViolation, "insufficient balance"
+	}
+	return coderws.StatusTryAgainLater, "billing service temporarily unavailable"
+}

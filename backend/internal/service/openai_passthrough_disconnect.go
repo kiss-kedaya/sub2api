@@ -100,5 +100,6 @@ func applyIncompletePassthroughStreamUsage(account *Account, result *openaiStrea
 		clientDisconnect:         result.clientDisconnect,
 		incompleteStream:         result.incompleteStream,
 		incompleteOutputTokens:   result.incompleteOutputTokens,
+		hasFinalOutput:           result.hasFinalOutput,
 	}, requestBody, model, streamErr)
 }

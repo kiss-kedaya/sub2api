@@ -554,7 +554,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 		if reqStream {
 			result, handleErr := s.handleStreamingResponsePassthrough(ctx, resp, c, account, startTime, reqModel, upstreamPassthroughModel)
 			if handleErr != nil {
-				if account.IsCopilotSDKEnabled() {
+				if account.IsCopilotSDKEnabled() && !isBalanceHoldTopUpError(handleErr) {
 					handleErr = fmt.Errorf("copilot turn failed: %v", handleErr)
 				}
 				if retryBody, fallbackModel, retry := s.applyOpenAIPassthroughCompactFallbackFromSignal(
@@ -600,6 +600,15 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 		} else {
 			result, handleErr := s.handleNonStreamingResponsePassthrough(ctx, resp, c, account, reqModel, upstreamPassthroughModel)
 			if handleErr != nil {
+				if result != nil && (result.balanceAborted || isBalanceHoldTopUpError(handleErr)) {
+					usage = result.usage
+					if usage == nil {
+						usage = &OpenAIUsage{}
+					}
+					fillIncompleteStreamUsage(usage, result.incompleteOutputTokens, body)
+					_ = resp.Body.Close()
+					return buildForwardResult(), handleErr
+				}
 				if result != nil && errors.Is(handleErr, errOpenAIUpstreamWaitLimit) {
 					usage, nonBillableUpstreamError = result.usage, true
 					return buildForwardResult(), handleErr
@@ -613,7 +622,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 						c, account, body, reqModel, imageBillingModel, upstreamPassthroughModel, reasoningEffort, reqStream, startTime,
 					), clientErr
 				}
-				if account.IsCopilotSDKEnabled() {
+				if account.IsCopilotSDKEnabled() && !isBalanceHoldTopUpError(handleErr) {
 					handleErr = fmt.Errorf("copilot turn failed: %v", handleErr)
 				}
 				if retryBody, fallbackModel, retry := s.applyOpenAIPassthroughCompactFallbackFromSignal(
@@ -1253,6 +1262,9 @@ type openaiStreamingResultPassthrough struct {
 	// incompleteOutputTokens is a lower-bound estimate of the output the upstream
 	// produced in that case; 0 when a terminal frame arrived or nothing was produced.
 	incompleteOutputTokens int
+	// hasFinalOutput is true once a terminal frame reported an authoritative
+	// OutputTokens figure; incomplete-stream estimation preserves it verbatim.
+	hasFinalOutput bool
 }
 
 type openaiNonStreamingResultPassthrough struct {
@@ -1263,6 +1275,8 @@ type openaiNonStreamingResultPassthrough struct {
 	imageOutputSizes         []string
 	searchCount              int
 	nonBillableUpstreamError bool
+	incompleteOutputTokens   int
+	balanceAborted           bool
 }
 
 const openAIStreamKeepaliveBytesKey = "openai_stream_keepalive_bytes"
@@ -2297,7 +2311,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 	upstreamRequestID := strings.TrimSpace(resp.Header.Get("x-request-id"))
 	// 流式预扣补扣：仅当请求持有活动的预扣 guard 且带输出补扣 tracker 时非空。
 	// 逐帧仅做整数累加，跨输出窗口时才原子补扣一次，补扣失败中止上游流。
-	streamBalanceGuard, _ := BalancePreauthorizationGuardFromContext(ctx)
+	streamBalanceGuardCtx, streamBalanceGuard := balancePreauthorizationGuardForRequest(ctx, c)
 	// pendingLines 在首个可见输出前保留前导事件，确保无输出失败仍可安全 failover。
 	pendingLines := make([]string, 0, 8)
 
@@ -2457,6 +2471,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 			clientDisconnect:         clientDisconnected,
 			incompleteStream:         incompleteStream,
 			incompleteOutputTokens:   incompleteOutputTokens,
+			hasFinalOutput:           (sawTerminalEvent && !sawFailedEvent || sawDone) && usage.OutputTokens > 0,
 		}
 	}
 
@@ -2473,6 +2488,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 			suppressCurrentEvent = codexFailureTerminal && (eventType == "error" || (sawBareError && !sawResponseFailed && eventType != "response.failed" && eventType != "response.completed" && eventType != "response.done"))
 		}
 		lineStartsClientOutput := false
+		lineObservedOutputBytes := 0
 		forceFlushFailedEvent := false
 		if data, ok := extractOpenAISSEDataLine(line); ok {
 			dataBytes := []byte(data)
@@ -2732,6 +2748,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 			}
 			s.parseSSEUsageBytesWithType(dataBytes, eventType, usage)
 			observePassthroughStreamOutput(streamOutputAccumulator, eventType, dataBytes)
+			lineObservedOutputBytes = responsesSSEDataOutputBytes(eventType, dataBytes)
 		}
 		if line == "" {
 			pendingSSEEventType = ""
@@ -2797,13 +2814,17 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 				if len(deepSeekAfter) > 0 && !writeDeepSeekLines(deepSeekAfter) {
 					continue
 				}
-				// 语义输出帧计量：累加已发字节作 token 上界，跨预扣窗口时补扣。
-				// 补扣失败（钱包不足或不可用）主动中止上游流，避免继续产生无法
-				// 结算的输出成本。非语义控制帧与 [DONE] 不计量，tracker 为 nil 时
-				// 整体是零开销的空操作。
-				if lineStartsClientOutput {
-					if topUpErr := streamBalanceGuard.ObserveStreamingOutput(ctx, len(line)); topUpErr != nil {
+				// 语义输出增量计量：仅提取真实输出 delta 字节（不计 JSON 信封、.done、
+				// output_item.done、response.completed 或 [DONE]），跨预扣窗口时补扣。
+				// 补扣失败（钱包不足或不可用）主动中止上游流，避免继续产生无法结算的
+				// 输出成本；tracker 为 nil 时整体零开销。
+				if lineObservedOutputBytes > 0 {
+					if topUpErr := streamBalanceGuard.ObserveStreamingOutput(streamBalanceGuardCtx, lineObservedOutputBytes); topUpErr != nil {
+						terminateOpenEvent()
 						flushPendingOutput()
+						nonBillableUpstreamError = false
+						sawFailedEvent = false
+						sawTerminalEvent = false
 						s.reportOpenAIStreamOutputHoldTopUpFailure(c, account, "OpenAI passthrough", topUpErr)
 						return resultWithUsage(), wrapStreamOutputHoldTopUpFailure(topUpErr)
 					}
@@ -2918,11 +2939,28 @@ func (s *OpenAIGatewayService) handleNonStreamingResponsePassthrough(
 	originalModel string,
 	mappedModel string,
 ) (*openaiNonStreamingResultPassthrough, error) {
-	body, err := ReadUpstreamResponseBody(resp.Body, s.cfg, c, openAITooLargeError)
+	inspectSSE := isEventStreamResponse(resp.Header) || (account != nil && account.Type == AccountTypeOAuth)
+	body, partialUsage, incompleteOutputTokens, err := readUpstreamResponseBodyWithBalanceGuard(ctx, resp, s.cfg, c, openAITooLargeError, inspectSSE)
 	if errors.Is(err, errOpenAIUpstreamWaitLimit) && openAIStreamSilenceHasCompletedJSON(body) {
 		err = nil
 	}
 	if err != nil {
+		if isBalanceHoldTopUpError(err) {
+			s.reportOpenAIStreamOutputHoldTopUpFailure(c, account, "OpenAI passthrough buffered", err)
+			if c != nil && c.Writer != nil && !c.Writer.Written() {
+				status, errType, message := balanceHoldAbortClientError(err)
+				writeResponsesError(c, status, errType, message)
+			}
+			if partialUsage == nil {
+				partialUsage = &OpenAIUsage{}
+			}
+			return &openaiNonStreamingResultPassthrough{
+				OpenAIUsage:            partialUsage,
+				usage:                  partialUsage,
+				incompleteOutputTokens: incompleteOutputTokens,
+				balanceAborted:         true,
+			}, err
+		}
 		if errors.Is(err, errOpenAIUpstreamWaitLimit) {
 			if openAIStreamSilenceHasSuccessfulTerminal(body) {
 				return s.handlePassthroughSSEToJSON(resp, c, account, body, originalModel, mappedModel)

@@ -1032,6 +1032,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 		// What the upstream produced for this turn, kept in case the client leaves before
 		// the terminal event and the turn has to be billed from an estimate.
 		turnOutput := apicompat.NewBufferedResponseAccumulator()
+		guardCtx, streamBalanceGuard := balancePreauthorizationGuardForRequest(ctx, c)
 		firstEventType := ""
 		lastEventType := ""
 		needModelReplace := false
@@ -1317,6 +1318,19 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 				} else {
 					wroteDownstream = true
 					markOpenAIWSClientVisibleFailure(c, eventType, upstreamMessage)
+				}
+			}
+			if n := responsesSSEDataOutputBytes(eventType, upstreamMessage); n > 0 {
+				if topUpErr := streamBalanceGuard.ObserveStreamingOutput(guardCtx, n); topUpErr != nil {
+					lease.MarkBroken()
+					s.reportOpenAIStreamOutputHoldTopUpFailure(c, account, "OpenAI WS ingress", topUpErr)
+					result := buildTurnResult("")
+					applyIncompleteOpenAIWSTurnUsage(account, &result.Usage, turnOutput, payload, incompleteOpenAIWSTurn{
+						mode:       "ctx_pool",
+						model:      mappedModel,
+						responseID: responseID,
+					})
+					return result, wrapStreamOutputHoldTopUpFailure(topUpErr)
 				}
 			}
 			if isTerminalEvent {
@@ -1900,6 +1914,13 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 		result, relayErr := sendAndRelay(turn, sessionLease, currentPayload, currentPayloadBytes, currentOriginalModel, currentImageBillingModel, currentImageSizeTier, currentImageInputSize)
 		if relayErr != nil {
 			lastTurnClean = false
+			if isBalanceHoldTopUpError(relayErr) {
+				if hooks != nil && hooks.AfterTurn != nil {
+					hooks.AfterTurn(turn, result, relayErr)
+				}
+				sessionLease.MarkBroken()
+				return relayErr
+			}
 			if hooks != nil && hooks.BeforeUpstreamFailure != nil {
 				failurePayload := []byte(relayErr.Error())
 				var failoverErr *UpstreamFailoverError

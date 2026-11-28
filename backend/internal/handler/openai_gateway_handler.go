@@ -77,7 +77,12 @@ func newOpenAIWSUnsupportedModelSwitchError(model string) error {
 }
 
 func shouldReportOpenAIWSProxyAccountFailure(err error) bool {
-	return err != nil && !errors.Is(err, errOpenAIWSUnsupportedModelSwitch) && !service.IsOpenAIWSSessionPreemptedError(err)
+	return err != nil &&
+		!errors.Is(err, errOpenAIWSUnsupportedModelSwitch) &&
+		!service.IsOpenAIWSSessionPreemptedError(err) &&
+		!service.IsBalanceHoldTopUpError(err) &&
+		!errors.Is(err, service.ErrBalanceWithholdingFailed) &&
+		!errors.Is(err, service.ErrInsufficientBalance)
 }
 
 // openAIWSIngressEndedByClient reports whether a finished ingress WebSocket turn
@@ -1086,6 +1091,21 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 			})
 		}
 		if err != nil {
+			if service.IsBalanceHoldTopUpError(err) {
+				if !service.IsResponseCommitted(c) && !openAIForwardErrorAlreadyCommunicated(c, writerSizeBeforeForward, err) && !failoverClientGone(c) {
+					status, code, message, retryAfter := billingErrorDetails(err)
+					if retryAfter > 0 {
+						c.Header("Retry-After", strconv.Itoa(retryAfter))
+					}
+					h.handleStreamingAwareError(c, status, code, message, streamStarted || c.Writer.Written())
+				}
+				reqLog.Warn("openai.balance_hold_topup_aborted",
+					zap.Int64("account_id", account.ID),
+					zap.Error(err),
+				)
+				retainedUsage.settle(openAISettleUsage(result, submitResponsesUsage))
+				return
+			}
 			if h.handleGrokModerationRefusal(c, apiKey, account, sessionHashBody, reqModel, reqStream, result, err, submitResponsesUsage) {
 				retainedUsage.discard()
 				return
@@ -1817,6 +1837,21 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 			})
 		}
 		if err != nil {
+			if service.IsBalanceHoldTopUpError(err) {
+				if !service.IsResponseCommitted(c) && !openAIForwardErrorAlreadyCommunicated(c, writerSizeBeforeForward, err) && !failoverClientGone(c) {
+					status, code, message, retryAfter := billingErrorDetails(err)
+					if retryAfter > 0 {
+						c.Header("Retry-After", strconv.Itoa(retryAfter))
+					}
+					h.anthropicStreamingAwareError(c, status, code, message, streamStarted || c.Writer.Written())
+				}
+				reqLog.Warn("openai_messages.balance_hold_topup_aborted",
+					zap.Int64("account_id", account.ID),
+					zap.Error(err),
+				)
+				retainedUsage.settle(openAISettleUsage(result, submitMessagesUsage))
+				return
+			}
 			if h.handleGrokModerationRefusal(c, apiKey, account, body, reqModel, reqStream, result, err, submitMessagesUsage) {
 				retainedUsage.discard()
 				return
@@ -3874,17 +3909,28 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 					turnErr,
 				)
 				if turnErr != nil {
-					h.gatewayService.InvalidateUpstreamAffinity(ctx, apiKey.GroupID, sessionHash, account, turnErr)
+					balanceHoldAborted := service.IsBalanceHoldTopUpError(turnErr)
+					if !balanceHoldAborted {
+						h.gatewayService.InvalidateUpstreamAffinity(ctx, apiKey.GroupID, sessionHash, account, turnErr)
+					}
 					clientDisconnectedWithResult := result != nil && result.ClientDisconnect
-					if !clientDisconnectedWithResult && (result == nil || result.ImageCount <= 0 && !openAIWSTurnSilenceFailure(result, turnErr)) {
+					balanceAbortedWithResult := result != nil && balanceHoldAborted
+					if !clientDisconnectedWithResult && !balanceAbortedWithResult && (result == nil || result.ImageCount <= 0 && !openAIWSTurnSilenceFailure(result, turnErr)) {
 						return
 					}
-					if clientDisconnectedWithResult {
+					switch {
+					case balanceAbortedWithResult:
+						reqLog.Warn("openai.websocket_balance_hold_topup_aborted",
+							zap.Int64("account_id", account.ID),
+							zap.Int("turn", turn),
+							zap.Error(turnErr),
+						)
+					case clientDisconnectedWithResult:
 						reqLog.Info("openai.websocket_client_disconnected",
 							zap.Int64("account_id", account.ID),
 							zap.Error(turnErr),
 						)
-					} else {
+					default:
 						reqLog.Warn("openai.websocket_partial_error_with_image_result",
 							zap.Int64("account_id", account.ID),
 							zap.Int("image_count", result.ImageCount),
@@ -3919,7 +3965,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				if scheduleModel == "" {
 					scheduleModel = turnRequestedModel
 				}
-				if !openAIWSTurnSilenceFailure(result, turnErr) && (turnErr == nil || !result.ClientDisconnect) {
+				if !openAIWSTurnSilenceFailure(result, turnErr) && !service.IsBalanceHoldTopUpError(turnErr) && (turnErr == nil || !result.ClientDisconnect) {
 					h.gatewayService.ReportOpenAIAccountScheduleResult(account, scheduleModel, openAIForwardSucceededForScheduling(result), result.FirstTokenMs)
 				}
 				inboundEndpoint := GetInboundEndpoint(c)
@@ -4158,6 +4204,11 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 			reqLog.Warn("openai.websocket_proxy_failed", proxyFailedFields...)
 			if hasClientCloseErr {
 				closeOpenAIClientWS(wsConn, closeErr.StatusCode(), closeErr.Reason())
+				return
+			}
+			if service.IsBalanceHoldTopUpError(err) {
+				statusCode, reason := openAIWSBalanceAbortCloseStatusAndReason(err)
+				closeOpenAIClientWS(wsConn, statusCode, reason)
 				return
 			}
 			closeOpenAIClientWS(wsConn, coderws.StatusInternalError, "upstream websocket proxy failed")

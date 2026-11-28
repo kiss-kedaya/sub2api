@@ -56,7 +56,7 @@ func preserveOpenAIStreamingResultOnError(result *OpenAIForwardResult, err error
 		}
 		return nil, err
 	}
-	if result != nil && errors.Is(err, ErrBalanceWithholdingFailed) {
+	if result != nil && isBalanceHoldTopUpError(err) {
 		return result, err
 	}
 	if !openAIForwardResultHasObservedBillingUnits(result) {
