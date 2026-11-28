@@ -185,7 +185,7 @@ func TestBalanceSettlementBacklogQueryNeverScansTheWholeTable(t *testing.T) {
 		INSERT INTO billing_balance_settlements
 			(request_id, api_key_id, request_fingerprint, user_id, amount_usd, status, available_at, applied_at)
 		SELECT 'explain-applied-' || g, $1, 'fp',
-			CASE WHEN g % 2 = 0 THEN $2 ELSE $3 END,
+			CASE WHEN g % 2 = 0 THEN $2::bigint ELSE $3::bigint END,
 			0.01, 4, NOW() + (g * INTERVAL '1 millisecond'), NOW()
 		FROM generate_series(1, 200000) AS g`, keyID, userID, userID2)
 	require.NoError(t, err)
@@ -193,7 +193,7 @@ func TestBalanceSettlementBacklogQueryNeverScansTheWholeTable(t *testing.T) {
 		INSERT INTO billing_balance_settlements
 			(request_id, api_key_id, request_fingerprint, user_id, amount_usd, status, available_at)
 		SELECT 'explain-pending-' || g, $1, 'fp',
-			CASE WHEN g % 2 = 0 THEN $2 ELSE $3 END,
+			CASE WHEN g % 2 = 0 THEN $2::bigint ELSE $3::bigint END,
 			0.01, 3, NOW() + ((200000 + g) * INTERVAL '1 millisecond')
 		FROM generate_series(1, 300) AS g`, keyID, userID, userID2)
 	require.NoError(t, err)
