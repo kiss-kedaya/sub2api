@@ -10,11 +10,16 @@ import (
 
 const (
 	opsCleanupDefaultSchedule  = "0 2 * * *"
-	opsCleanupBatchSize        = 5000
+	opsCleanupBatchSize        = 1000
 	opsCleanupCronStopTimeout  = 3 * time.Second
 	opsCleanupRunTimeout       = 30 * time.Minute
 	opsCleanupHeartbeatTimeout = 2 * time.Second
 )
+
+// opsCleanupBatchTimeout bounds each individual DELETE batch so a single
+// heavy table (e.g. ops_error_logs with ~20 indexes) cancels cleanly below
+// the cluster's 30s statement_timeout instead of hanging the whole run.
+var opsCleanupBatchTimeout = 20 * time.Second
 
 type opsCleanupTarget struct {
 	retentionDays int
@@ -75,10 +80,28 @@ func opsCleanupRunOne(
 	if truncate {
 		return truncateOpsTable(ctx, db, table)
 	}
-	return deleteOldRowsByID(ctx, db, table, timeCol, cutoff, batchSize, castDate)
+	return deleteOldRowsByCTID(ctx, db, table, timeCol, cutoff, batchSize, castDate)
 }
 
-func deleteOldRowsByID(
+// opsCleanupDeleteBatchSQL builds a ctid + ARRAY(subquery) batch DELETE so
+// Postgres uses a Tid Scan on the outer DELETE and avoids ORDER BY id sorts or
+// PK probes when pruning heavily indexed tables such as ops_error_logs.
+func opsCleanupDeleteBatchSQL(table, timeColumn string, castCutoffToDate bool) string {
+	where := fmt.Sprintf("%s < $1", timeColumn)
+	if castCutoffToDate {
+		where = fmt.Sprintf("%s < $1::date", timeColumn)
+	}
+	return fmt.Sprintf(`
+DELETE FROM %[1]s
+WHERE ctid = ANY(ARRAY(
+  SELECT ctid FROM %[1]s
+  WHERE %[2]s
+  LIMIT $2
+))
+`, table, where)
+}
+
+func deleteOldRowsByCTID(
 	ctx context.Context,
 	db *sql.DB,
 	table string,
@@ -90,29 +113,29 @@ func deleteOldRowsByID(
 	if db == nil {
 		return 0, nil
 	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if batchSize <= 0 {
 		batchSize = opsCleanupBatchSize
 	}
 
-	where := fmt.Sprintf("%s < $1", timeColumn)
-	if castCutoffToDate {
-		where = fmt.Sprintf("%s < $1::date", timeColumn)
-	}
-
-	q := fmt.Sprintf(`
-WITH batch AS (
-  SELECT id FROM %s
-  WHERE %s
-  ORDER BY id
-  LIMIT $2
-)
-DELETE FROM %s
-WHERE id IN (SELECT id FROM batch)
-`, table, where, table)
+	q := opsCleanupDeleteBatchSQL(table, timeColumn, castCutoffToDate)
 
 	var total int64
 	for {
-		res, err := db.ExecContext(ctx, q, cutoff, batchSize)
+		if err := ctx.Err(); err != nil {
+			return total, err
+		}
+		batchCtx := ctx
+		var cancel context.CancelFunc
+		if opsCleanupBatchTimeout > 0 {
+			batchCtx, cancel = context.WithTimeout(ctx, opsCleanupBatchTimeout)
+		}
+		res, err := db.ExecContext(batchCtx, q, cutoff, batchSize)
+		if cancel != nil {
+			cancel()
+		}
 		if err != nil {
 			if isMissingRelationError(err) {
 				return total, nil

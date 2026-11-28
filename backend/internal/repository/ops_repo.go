@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/lib/pq"
@@ -125,6 +126,13 @@ func (r *opsRepository) BatchInsertErrorLogs(ctx context.Context, inputs []*serv
 		}
 	}()
 
+	// Error logs are diagnostic; disable synchronous_commit for this transaction
+	// only (matching execAsyncCommit) so bursty error writes do not stall primary
+	// WAL fsyncs. SET LOCAL resets automatically when the transaction ends.
+	if _, err = tx.ExecContext(ctx, "SET LOCAL synchronous_commit = off"); err != nil {
+		return 0, err
+	}
+
 	for start := 0; start < len(valid); start += opsErrorLogInsertChunkSize {
 		end := start + opsErrorLogInsertChunkSize
 		if end > len(valid) {
@@ -147,46 +155,59 @@ func (r *opsRepository) BatchInsertErrorLogs(ctx context.Context, inputs []*serv
 	return int64(len(valid)), nil
 }
 
+const (
+	opsErrorLogMaxRequestIDLen    = 64
+	opsErrorLogMaxPlatformLen     = 32
+	opsErrorLogMaxModelLen        = 100
+	opsErrorLogMaxPathLen         = 256
+	opsErrorLogMaxErrorPhaseLen   = 32
+	opsErrorLogMaxErrorTypeLen    = 64
+	opsErrorLogMaxSeverityLen     = 8
+	opsErrorLogMaxErrorSourceLen  = 64
+	opsErrorLogMaxErrorOwnerLen   = 32
+	opsErrorLogMaxAPIKeyPrefixLen = 32
+)
+
 func opsInsertErrorLogArgs(input *service.OpsInsertErrorLogInput) []any {
 	return []any{
-		opsNullString(input.RequestID),
-		opsNullString(input.ClientRequestID),
+		opsNullStringMax(input.RequestID, opsErrorLogMaxRequestIDLen),
+		opsNullStringMax(input.ClientRequestID, opsErrorLogMaxRequestIDLen),
 		opsNullInt64(input.UserID),
 		opsNullInt64(input.APIKeyID),
 		opsNullInt64(input.AccountID),
 		opsNullInt64(input.GroupID),
 		opsNullString(input.ClientIP),
-		opsNullString(input.Platform),
-		opsNullString(input.Model),
-		opsNullString(input.RequestPath),
+		opsNullStringMax(input.Platform, opsErrorLogMaxPlatformLen),
+		opsNullStringMax(input.Model, opsErrorLogMaxModelLen),
+		opsNullStringMax(input.RequestPath, opsErrorLogMaxPathLen),
 		input.Stream,
-		opsNullString(input.InboundEndpoint),
-		opsNullString(input.UpstreamEndpoint),
-		opsNullString(input.RequestedModel),
-		opsNullString(input.UpstreamModel),
+		opsNullStringMax(input.InboundEndpoint, opsErrorLogMaxPathLen),
+		opsNullStringMax(input.UpstreamEndpoint, opsErrorLogMaxPathLen),
+		opsNullStringMax(input.RequestedModel, opsErrorLogMaxModelLen),
+		opsNullStringMax(input.UpstreamModel, opsErrorLogMaxModelLen),
 		opsNullInt16(input.RequestType),
 		opsNullString(input.UserAgent),
-		input.ErrorPhase,
-		input.ErrorType,
-		opsNullString(input.Severity),
+		opsRequiredStringMax(input.ErrorPhase, opsErrorLogMaxErrorPhaseLen),
+		opsRequiredStringMax(input.ErrorType, opsErrorLogMaxErrorTypeLen),
+		opsNullStringMax(input.Severity, opsErrorLogMaxSeverityLen),
 		opsNullInt(input.StatusCode),
 		input.IsBusinessLimited,
 		input.IsCountTokens,
 		opsNullString(input.ErrorMessage),
 		opsNullString(input.ErrorBody),
-		opsNullString(input.ErrorSource),
-		opsNullString(input.ErrorOwner),
+		opsNullStringMax(input.ErrorSource, opsErrorLogMaxErrorSourceLen),
+		opsNullStringMax(input.ErrorOwner, opsErrorLogMaxErrorOwnerLen),
 		opsNullableIntPointer(input.UpstreamStatusCode),
 		opsNullString(input.UpstreamErrorMessage),
 		opsNullString(input.UpstreamErrorDetail),
-		opsNullString(input.UpstreamErrorsJSON),
+		opsNullJSONBString(input.UpstreamErrorsJSON),
 		opsNullInt64(input.AuthLatencyMs),
 		opsNullInt64(input.RoutingLatencyMs),
 		opsNullInt64(input.UpstreamLatencyMs),
 		opsNullInt64(input.ResponseLatencyMs),
 		opsNullInt64(input.TimeToFirstTokenMs),
 		input.CreatedAt,
-		opsNullString(input.APIKeyPrefix),
+		opsNullStringMax(input.APIKeyPrefix, opsErrorLogMaxAPIKeyPrefixLen),
 		opsNullJSONBHeaderSnapshot(input.RequestHeaders),
 		opsNullJSONBHeaderSnapshot(input.UpstreamRequestHeaders),
 		opsNullJSONBHeaderSnapshot(input.UpstreamResponseHeaders),
@@ -212,11 +233,33 @@ func decodeOpsHeaderSnapshot(raw string) service.OpsHeaderSnapshot {
 
 // opsNullJSONBHeaderSnapshot 把脱敏后的头快照序列化成 JSONB 参数。
 // 空快照写 NULL，避免为「没有头可记」的请求产生无意义的空对象。
+// 写入前清洗 NUL 字节和非法 UTF-8，避免 Postgres JSONB 报 0x00 / \u0000 错误。
 func opsNullJSONBHeaderSnapshot(snapshot service.OpsHeaderSnapshot) any {
 	if len(snapshot) == 0 {
 		return nil
 	}
-	encoded, err := json.Marshal(snapshot)
+	clean := snapshot
+	needsClean := false
+	for k, v := range snapshot {
+		if strings.IndexByte(k, 0) >= 0 || strings.IndexByte(v, 0) >= 0 || !utf8.ValidString(k) || !utf8.ValidString(v) {
+			needsClean = true
+			break
+		}
+	}
+	if needsClean {
+		clean = make(service.OpsHeaderSnapshot, len(snapshot))
+		for k, v := range snapshot {
+			ck := opsSanitizeText(k)
+			if ck == "" {
+				continue
+			}
+			clean[ck] = opsSanitizeText(v)
+		}
+		if len(clean) == 0 {
+			return nil
+		}
+	}
+	encoded, err := json.Marshal(clean)
 	if err != nil {
 		// 序列化失败不能影响错误记录本身；丢弃这一份快照。
 		return nil
@@ -767,16 +810,16 @@ func (r *opsRepository) BatchInsertSystemLogs(ctx context.Context, inputs []*ser
 		if createdAt.IsZero() {
 			createdAt = time.Now().UTC()
 		}
-		component := strings.TrimSpace(input.Component)
-		level := strings.ToLower(strings.TrimSpace(input.Level))
-		message := strings.TrimSpace(input.Message)
+		component := opsTruncateRunes(strings.TrimSpace(opsSanitizeText(input.Component)), 128)
+		level := opsTruncateRunes(strings.ToLower(strings.TrimSpace(opsSanitizeText(input.Level))), 16)
+		message := strings.TrimSpace(opsSanitizeText(input.Message))
 		if level == "" || message == "" {
 			continue
 		}
 		if component == "" {
 			component = "app"
 		}
-		extra := strings.TrimSpace(input.ExtraJSON)
+		extra := strings.TrimSpace(opsSanitizeJSONB(input.ExtraJSON))
 		if extra == "" {
 			extra = "{}"
 		}
@@ -1078,18 +1121,36 @@ func buildOpsErrorLogsWhere(filter *service.OpsErrorLogFilter) (string, []any) {
 		clauses = append(clauses, "NOT (COALESCE(e.upstream_status_code, e.status_code, 0) = ANY($"+itoa(len(args))+"))")
 	}
 	// 使用记录搜索框只传 request_id。库里可能是 client: 前缀，错误表拆成 request_id / client_request_id。
+	// 默认与 "=id" 走精确匹配（=），命中 btree 索引；"^id" 走区分大小写前缀 LIKE '...%'，
+	// "*id" 显式回退包含匹配 ILIKE '%...%'，避免后续删除 pg_trgm 索引后默认查询触发全表扫描。
 	if rid := strings.TrimSpace(filter.RequestID); rid != "" {
-		operator := "ILIKE"
-		pattern := "%" + escapeLikePattern(rid) + "%"
-		if strings.HasPrefix(rid, "=") {
-			operator = "="
-			pattern = service.NormalizeUsageRequestIDKey(strings.TrimSpace(rid[1:]))
-		} else if strings.HasPrefix(rid, "^") {
-			pattern = escapeLikePattern(service.NormalizeUsageRequestIDKey(strings.TrimSpace(rid[1:]))) + "%"
+		var operator, pattern string
+		switch {
+		case strings.HasPrefix(rid, "*"):
+			if raw := strings.TrimSpace(rid[1:]); raw != "" {
+				operator = "ILIKE"
+				pattern = "%" + escapeLikePattern(raw) + "%"
+			}
+		case strings.HasPrefix(rid, "^"):
+			if normalized := service.NormalizeUsageRequestIDKey(strings.TrimSpace(rid[1:])); normalized != "" {
+				operator = "LIKE"
+				pattern = escapeLikePattern(normalized) + "%"
+			}
+		default:
+			raw := rid
+			if strings.HasPrefix(rid, "=") {
+				raw = strings.TrimSpace(rid[1:])
+			}
+			if normalized := service.NormalizeUsageRequestIDKey(raw); normalized != "" {
+				operator = "="
+				pattern = normalized
+			}
 		}
-		args = append(args, pattern)
-		n := itoa(len(args))
-		clauses = append(clauses, "(e.request_id "+operator+" $"+n+" OR e.client_request_id "+operator+" $"+n+")")
+		if operator != "" {
+			args = append(args, pattern)
+			n := itoa(len(args))
+			clauses = append(clauses, "(e.request_id "+operator+" $"+n+" OR e.client_request_id "+operator+" $"+n+")")
+		}
 	}
 	if crid := strings.TrimSpace(filter.ClientRequestID); crid != "" {
 		args = append(args, crid)
@@ -1266,24 +1327,111 @@ func buildOpsSystemLogsCleanupWhere(filter *service.OpsSystemLogCleanupFilter) (
 	return buildOpsSystemLogsWhere(listFilter)
 }
 
+// opsSanitizeText strips NUL bytes and invalid UTF-8 sequences so PostgreSQL
+// TEXT/VARCHAR inserts never fail with "invalid byte sequence for encoding UTF8: 0x00".
+func opsSanitizeText(s string) string {
+	if strings.IndexByte(s, 0) >= 0 {
+		s = strings.ReplaceAll(s, "\x00", "")
+	}
+	if !utf8.ValidString(s) {
+		s = strings.ToValidUTF8(s, "")
+	}
+	return s
+}
+
+// opsSanitizeJSONB cleans raw NUL bytes, invalid UTF-8, and unescaped JSON \u0000
+// sequences (which PostgreSQL JSONB rejects with SQLSTATE 22P05) while preserving
+// escaped literal sequences such as \\u0000.
+func opsSanitizeJSONB(s string) string {
+	s = opsSanitizeText(s)
+	if !strings.Contains(s, `\u0000`) {
+		return s
+	}
+	var b strings.Builder
+	b.Grow(len(s))
+	for i := 0; i < len(s); {
+		if i+6 <= len(s) && s[i:i+6] == `\u0000` {
+			bs := 0
+			for j := i - 1; j >= 0 && s[j] == '\\'; j-- {
+				bs++
+			}
+			if bs%2 == 0 {
+				i += 6
+				continue
+			}
+		}
+		_ = b.WriteByte(s[i])
+		i++
+	}
+	return b.String()
+}
+
+// opsTruncateRunes truncates s to at most maxRunes Unicode code points (matching
+// PostgreSQL VARCHAR(N) character-count semantics) without splitting UTF-8 sequences.
+func opsTruncateRunes(s string, maxRunes int) string {
+	if maxRunes <= 0 || len(s) <= maxRunes {
+		return s
+	}
+	count := 0
+	for i := range s {
+		if count == maxRunes {
+			return s[:i]
+		}
+		count++
+	}
+	return s
+}
+
 // Helpers for nullable args
 func opsNullString(v any) any {
+	return opsNullStringMax(v, 0)
+}
+
+func opsNullStringMax(v any, maxRunes int) any {
+	var raw string
 	switch s := v.(type) {
 	case nil:
 		return sql.NullString{}
 	case *string:
-		if s == nil || strings.TrimSpace(*s) == "" {
+		if s == nil {
 			return sql.NullString{}
 		}
-		return sql.NullString{String: strings.TrimSpace(*s), Valid: true}
+		raw = *s
 	case string:
-		if strings.TrimSpace(s) == "" {
-			return sql.NullString{}
-		}
-		return sql.NullString{String: strings.TrimSpace(s), Valid: true}
+		raw = s
 	default:
 		return sql.NullString{}
 	}
+	cleaned := strings.TrimSpace(opsSanitizeText(raw))
+	if cleaned == "" {
+		return sql.NullString{}
+	}
+	if maxRunes > 0 {
+		cleaned = strings.TrimSpace(opsTruncateRunes(cleaned, maxRunes))
+		if cleaned == "" {
+			return sql.NullString{}
+		}
+	}
+	return sql.NullString{String: cleaned, Valid: true}
+}
+
+func opsRequiredStringMax(s string, maxRunes int) string {
+	cleaned := strings.TrimSpace(opsSanitizeText(s))
+	if maxRunes > 0 {
+		cleaned = strings.TrimSpace(opsTruncateRunes(cleaned, maxRunes))
+	}
+	return cleaned
+}
+
+func opsNullJSONBString(v *string) any {
+	if v == nil {
+		return sql.NullString{}
+	}
+	cleaned := strings.TrimSpace(opsSanitizeJSONB(*v))
+	if cleaned == "" {
+		return sql.NullString{}
+	}
+	return sql.NullString{String: cleaned, Valid: true}
 }
 
 func opsNullInt64(v *int64) any {
