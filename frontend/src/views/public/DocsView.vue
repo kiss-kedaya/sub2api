@@ -61,7 +61,28 @@
     <aside id="docs-sidebar" class="docs-sidebar fixed bottom-0 left-0 top-[105px] z-50 flex w-[272px] flex-col border-r border-slate-200 bg-white px-4 py-6 transition-transform dark:border-dark-700 dark:bg-dark-950 lg:z-30 lg:translate-x-0" :class="mobileOpen ? 'translate-x-0' : '-translate-x-full'" :inert="!mobileOpen && !wideLayout" :aria-label="t('docs.navigation')">
       <label class="relative block">
         <Icon name="search" size="sm" class="pointer-events-none absolute left-3.5 top-3 text-slate-400" />
-        <input v-model="search" data-testid="docs-search" type="search" class="w-full rounded-xl border border-slate-200 bg-slate-50/70 py-2.5 pl-10 pr-4 text-[13.5px] outline-hidden transition focus:border-blue-500 focus:bg-white focus:ring-2 focus:ring-blue-100 dark:border-dark-700 dark:bg-dark-900 dark:focus:bg-dark-950 dark:focus:ring-blue-900/30" :placeholder="t('docs.search')" :aria-label="t('docs.search')" />
+        <input
+          v-model="search"
+          data-testid="docs-search"
+          type="search"
+          name="docs-sidebar-filter"
+          autocomplete="off"
+          autocorrect="off"
+          autocapitalize="off"
+          spellcheck="false"
+          data-lpignore="true"
+          data-1p-ignore="true"
+          data-bwignore="true"
+          data-form-type="other"
+          :readonly="!sidebarSearchUnlocked"
+          class="w-full rounded-xl border border-slate-200 bg-slate-50/70 py-2.5 pl-10 pr-4 text-[13.5px] outline-hidden transition focus:border-blue-500 focus:bg-white focus:ring-2 focus:ring-blue-100 dark:border-dark-700 dark:bg-dark-900 dark:focus:bg-dark-950 dark:focus:ring-blue-900/30"
+          :placeholder="t('docs.search')"
+          :aria-label="t('docs.search')"
+          @pointerdown="unlockSidebarSearch"
+          @focus="unlockSidebarSearch"
+          @keydown="unlockSidebarSearch"
+          @blur="lockSidebarSearchIfEmpty"
+        />
       </label>
       <div class="docs-nav-wrap relative mt-5 min-h-0 flex-1" :class="{ 'docs-nav-more': navHasMore }">
       <nav ref="navRef" class="h-full space-y-1.5 overflow-y-auto pr-1" @scroll.passive="updateNavCue">
@@ -453,6 +474,25 @@ const modelsPath = computed(() => (authStore.isAuthenticated ? { path: '/model-p
 const consolePath = computed(() => !authStore.isAuthenticated ? '/login' : authStore.isAdminObserver ? '/admin/usage' : authStore.isAdmin ? '/admin/dashboard' : '/dashboard')
 const categories: DocsCategory[] = ['start', 'guides', 'media', 'integrations', 'account', 'reference']
 const search = ref('')
+// Keep the sidebar filter readonly on load (and when blurred empty) so browser
+// password managers cannot autofill saved login emails into it, then unlock
+// synchronously on the first user interaction.
+const sidebarSearchUnlocked = ref(false)
+function unlockSidebarSearch(event?: Event) {
+  if (!sidebarSearchUnlocked.value) {
+    sidebarSearchUnlocked.value = true
+  }
+  const target = event?.currentTarget
+  if (target instanceof HTMLInputElement && target.readOnly) {
+    target.readOnly = false
+    target.removeAttribute('readonly')
+  }
+}
+function lockSidebarSearchIfEmpty() {
+  if (!search.value) {
+    sidebarSearchUnlocked.value = false
+  }
+}
 const searchModalOpen = ref(false)
 const activeSection = ref('')
 const showBackToTop = ref(false)

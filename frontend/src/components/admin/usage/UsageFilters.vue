@@ -105,6 +105,15 @@
           >
             <UInput
               v-model="userKeyword"
+              type="search"
+              name="usage-filter-user"
+              autocomplete="off"
+              autocorrect="off"
+              autocapitalize="off"
+              spellcheck="false"
+              data-lpignore="true"
+              data-1p-ignore="true"
+              data-form-type="other"
               icon="i-lucide-user"
               :loading="userSearching"
               :placeholder="t('admin.usage.searchUserPlaceholder')"
@@ -164,6 +173,15 @@
           >
             <UInput
               v-model="apiKeyKeyword"
+              type="search"
+              name="usage-filter-apikey"
+              autocomplete="off"
+              autocorrect="off"
+              autocapitalize="off"
+              spellcheck="false"
+              data-lpignore="true"
+              data-1p-ignore="true"
+              data-form-type="other"
               icon="i-lucide-key-round"
               :loading="apiKeySearching"
               :placeholder="t('admin.usage.searchApiKeyPlaceholder')"
@@ -238,6 +256,14 @@
             >
               <UInput
                 v-model="filters.request_id"
+                name="usage-filter-request-id"
+                autocomplete="off"
+                autocorrect="off"
+                autocapitalize="off"
+                spellcheck="false"
+                data-lpignore="true"
+                data-1p-ignore="true"
+                data-form-type="other"
                 icon="i-lucide-hash"
                 class="w-full"
                 :placeholder="t('admin.usage.filters.requestIdPlaceholder')"
@@ -327,6 +353,15 @@
             >
               <UInput
                 v-model="accountKeyword"
+                type="search"
+                name="usage-filter-account"
+                autocomplete="off"
+                autocorrect="off"
+                autocapitalize="off"
+                spellcheck="false"
+                data-lpignore="true"
+                data-1p-ignore="true"
+                data-form-type="other"
                 icon="i-lucide-server"
                 :loading="accountSearching"
                 :placeholder="t('admin.usage.searchAccountPlaceholder')"

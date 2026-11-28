@@ -566,4 +566,21 @@ describe('DataTable', () => {
     // force a layout measurement on every one of them (the old onUpdated hook did).
     expect(measureSpy).not.toHaveBeenCalled()
   })
+
+  it('contains only horizontal overscroll so vertical mouse wheel chains to page scroll containers', async () => {
+    const wrapper = mount(DataTable, {
+      props: {
+        columns: [{ key: 'name', label: 'Name' }],
+        data: [{ id: 1, name: 'Row 1' }],
+        rowKey: 'id'
+      }
+    })
+    await wrapper.vm.$nextTick()
+
+    const root = wrapper.get('[data-data-table]')
+    expect(root.classes()).toContain('overscroll-x-contain')
+    expect(root.classes()).not.toContain('overscroll-contain')
+    expect(root.classes()).not.toContain('overscroll-y-contain')
+    wrapper.unmount()
+  })
 })

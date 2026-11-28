@@ -17,10 +17,17 @@
             <p class="text-xs text-warning">{{ t('batchImage.keyPanel.hint') }}</p>
             <input
               v-model="manualApiKey"
-              type="password"
+              type="text"
+              name="batch-image-api-key"
               autocomplete="off"
+              autocorrect="off"
+              autocapitalize="off"
               spellcheck="false"
-              class="input h-10 rounded-xl sm:ml-auto sm:w-96"
+              data-lpignore="true"
+              data-1p-ignore="true"
+              data-bwignore="true"
+              data-form-type="other"
+              class="secret-mask-input input h-10 rounded-xl sm:ml-auto sm:w-96"
               :placeholder="t('batchImage.keyPanel.placeholder')"
               :aria-label="t('batchImage.keyPanel.placeholder')"
             />
@@ -580,10 +587,17 @@
             <label class="input-label mt-3">{{ t('batchImage.create.pasteKeyLabel') }}</label>
             <input
               v-model="manualApiKey"
-              type="password"
+              type="text"
+              name="batch-image-modal-api-key"
               autocomplete="off"
+              autocorrect="off"
+              autocapitalize="off"
               spellcheck="false"
-              class="input"
+              data-lpignore="true"
+              data-1p-ignore="true"
+              data-bwignore="true"
+              data-form-type="other"
+              class="secret-mask-input input"
               :placeholder="t('batchImage.create.pasteKeyPlaceholder')"
             />
             <p class="input-hint text-warning">{{ t('batchImage.create.pasteKeyHint') }}</p>

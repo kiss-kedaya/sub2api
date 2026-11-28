@@ -558,7 +558,7 @@ onMounted(async () => {
           </div>
         </div>
       </div>
-      <div v-else class="overflow-auto overscroll-contain">
+      <div v-else class="overflow-x-auto overscroll-x-contain">
         <table class="min-w-full table-fixed divide-y divide-default">
           <thead class="bg-muted">
             <tr>

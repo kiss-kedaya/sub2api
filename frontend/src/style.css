@@ -84,6 +84,13 @@ html {
   -webkit-touch-callout: none;
 }
 
+/* Visually mask non-login secret inputs (such as API key paste fields) without
+   using type="password", which causes browser password managers to treat the
+   nearest preceding text/search input on the page as a login username/email. */
+.secret-mask-input {
+  -webkit-text-security: disc;
+}
+
 /* The console is an app shell: no pull-to-refresh hijacking its scroll, and a scroll area that
    ends keeps the bounce inside itself instead of dragging the page behind it. */
 .console-signal,

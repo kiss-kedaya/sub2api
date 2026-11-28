@@ -16,6 +16,15 @@
           <template #left>
             <UInput
               v-model="searchQuery"
+              type="search"
+              name="admin-users-search"
+              autocomplete="off"
+              autocorrect="off"
+              autocapitalize="off"
+              spellcheck="false"
+              data-lpignore="true"
+              data-1p-ignore="true"
+              data-form-type="other"
               icon="i-lucide-search"
               :placeholder="t('admin.users.searchUsers')"
               class="w-full sm:w-80"

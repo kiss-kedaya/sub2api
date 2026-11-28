@@ -617,4 +617,57 @@ describe('public API documentation page', () => {
     expect(mobileTocBtn.attributes('aria-expanded')).toBe('false')
     wrapper.unmount()
   })
+
+  it('prevents password-manager autofill on /docs?page=agent-setup by avoiding password inputs and guarding sidebar search', async () => {
+    const { wrapper } = await openDocs('agent-setup', { attachTo: true })
+
+    // No type="password" input may be mounted on /docs?page=agent-setup, otherwise Chromium
+    // classifies the preceding sidebar search input as a login username/email field.
+    expect(wrapper.findAll('input[type="password"]')).toHaveLength(0)
+
+    const pasteInput = wrapper.get('[data-testid="docs-apikey-paste-input"]')
+    expect(pasteInput.attributes('type')).toBe('text')
+    expect(pasteInput.classes()).toContain('secret-mask-input')
+    expect(pasteInput.attributes('autocomplete')).toBe('off')
+    expect(pasteInput.attributes('data-lpignore')).toBe('true')
+    expect(pasteInput.attributes('data-1p-ignore')).toBe('true')
+    expect(pasteInput.attributes('data-form-type')).toBe('other')
+
+    const sidebarSearch = wrapper.get('[data-testid="docs-search"]')
+    expect(sidebarSearch.attributes('type')).toBe('search')
+    expect(sidebarSearch.attributes('name')).toBe('docs-sidebar-filter')
+    expect(sidebarSearch.attributes('autocomplete')).toBe('off')
+    expect(sidebarSearch.attributes('autocorrect')).toBe('off')
+    expect(sidebarSearch.attributes('autocapitalize')).toBe('off')
+    expect(sidebarSearch.attributes('spellcheck')).toBe('false')
+    expect(sidebarSearch.attributes('data-lpignore')).toBe('true')
+    expect(sidebarSearch.attributes('data-1p-ignore')).toBe('true')
+    expect(sidebarSearch.attributes('data-form-type')).toBe('other')
+    // Starts readonly until the visitor interacts, then unlocks synchronously and re-arms on empty blur.
+    expect(sidebarSearch.attributes('readonly')).toBeDefined()
+
+    await sidebarSearch.trigger('focus')
+    expect(sidebarSearch.attributes('readonly')).toBeUndefined()
+    await sidebarSearch.setValue('Web fetch')
+    expect(wrapper.get('#docs-sidebar').text()).toContain('Web fetch')
+    await sidebarSearch.trigger('blur')
+    expect(sidebarSearch.attributes('readonly')).toBeUndefined()
+
+    await sidebarSearch.setValue('')
+    await sidebarSearch.trigger('blur')
+    expect(sidebarSearch.attributes('readonly')).toBeDefined()
+
+    // Command search modal input must also advertise anti-autofill semantics.
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', ctrlKey: true, bubbles: true }))
+    await flushPromises()
+    const modalInput = document.body.querySelector('[data-testid="docs-search-modal-input"]') as HTMLInputElement
+    expect(modalInput.getAttribute('type')).toBe('search')
+    expect(modalInput.getAttribute('name')).toBe('docs-modal-search')
+    expect(modalInput.getAttribute('autocomplete')).toBe('off')
+    expect(modalInput.getAttribute('data-lpignore')).toBe('true')
+    expect(modalInput.getAttribute('data-1p-ignore')).toBe('true')
+    expect(modalInput.getAttribute('data-form-type')).toBe('other')
+
+    wrapper.unmount()
+  })
 })
