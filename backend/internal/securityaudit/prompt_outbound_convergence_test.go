@@ -105,24 +105,31 @@ func TestPromptProbeBlocksRedirectToPrivateAndHTTPSDowngrade(t *testing.T) {
 		require.False(t, res.Retryable)
 	})
 
-	t.Run("HTTPS to HTTP redirect downgrade is rejected as endpoint_unsafe", func(t *testing.T) {
-		client, err := NewSecureHTTPClient(ActiveEndpoint{
+	t.Run("HTTPS to HTTP redirect downgrade is rejected by NewSecureHTTPClient and Scanner client", func(t *testing.T) {
+		ep := ActiveEndpoint{
+			ID:                    "ep-downgrade",
 			BaseURL:               "https://guard.example.com",
 			AllowPrivateEndpoints: true,
 			TimeoutMS:             2000,
-		})
-		require.NoError(t, err)
-		guard := promptProbeRedirectGuard(client.CheckRedirect)
-
-		originReq, err := http.NewRequest(http.MethodGet, "https://guard.example.com/v1/models", nil)
-		require.NoError(t, err)
-		downgradeReq, err := http.NewRequest(http.MethodGet, "http://guard.example.com/v1/models", nil)
-		require.NoError(t, err)
-		sameHTTPSReq, err := http.NewRequest(http.MethodGet, "https://guard.example.com/v2/models", nil)
+		}
+		client, err := NewSecureHTTPClient(ep)
 		require.NoError(t, err)
 
-		require.ErrorIs(t, guard(downgradeReq, []*http.Request{originReq}), urlvalidator.ErrOutboundTargetNotAllowed)
-		require.NoError(t, guard(sameHTTPSReq, []*http.Request{originReq}))
+		scanner := NewOpenAICompatibleScanner()
+		scannerClient, err := scanner.clientFor(ep)
+		require.NoError(t, err)
+
+		originReq, err := http.NewRequest(http.MethodPost, "https://guard.example.com/v1/chat/completions", nil)
+		require.NoError(t, err)
+		downgradeReq, err := http.NewRequest(http.MethodPost, "http://guard.example.com/v1/chat/completions", nil)
+		require.NoError(t, err)
+		sameHTTPSReq, err := http.NewRequest(http.MethodPost, "https://guard.example.com/v2/chat/completions", nil)
+		require.NoError(t, err)
+
+		require.ErrorIs(t, client.CheckRedirect(downgradeReq, []*http.Request{originReq}), urlvalidator.ErrOutboundTargetNotAllowed)
+		require.NoError(t, client.CheckRedirect(sameHTTPSReq, []*http.Request{originReq}))
+		require.ErrorIs(t, scannerClient.CheckRedirect(downgradeReq, []*http.Request{originReq}), urlvalidator.ErrOutboundTargetNotAllowed)
+		require.NoError(t, scannerClient.CheckRedirect(sameHTTPSReq, []*http.Request{originReq}))
 	})
 }
 

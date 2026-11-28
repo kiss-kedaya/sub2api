@@ -246,7 +246,6 @@ func (s *PromptService) Probe(ctx context.Context, request ProbeRequest) ProbeRe
 	if err != nil {
 		return s.finishProbe(endpoint.ID, started, ProbeResult{Status: "failed", ErrorCode: "endpoint_unsafe", Message: "审计节点地址不在允许范围", TokenApplied: tokenApplied})
 	}
-	client.CheckRedirect = promptProbeRedirectGuard(client.CheckRedirect)
 	modelsURL, _ := ModelsURL(endpoint.BaseURL)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, modelsURL, nil)
 	if err != nil {
@@ -319,30 +318,6 @@ func modelsResponseReady(body []byte, model string) bool {
 		}
 	}
 	return false
-}
-
-// promptProbeRedirectGuard wraps the base SSRF redirect guard to also forbid
-// HTTPS->HTTP scheme downgrades and non-HTTP(S) schemes on probe redirects.
-func promptProbeRedirectGuard(base func(req *http.Request, via []*http.Request) error) func(req *http.Request, via []*http.Request) error {
-	return func(req *http.Request, via []*http.Request) error {
-		if base != nil {
-			if err := base(req, via); err != nil {
-				return err
-			}
-		}
-		if req == nil || req.URL == nil {
-			return urlvalidator.ErrOutboundTargetNotAllowed
-		}
-		scheme := strings.ToLower(strings.TrimSpace(req.URL.Scheme))
-		if scheme != "http" && scheme != "https" {
-			return urlvalidator.ErrOutboundTargetNotAllowed
-		}
-		if len(via) > 0 && via[0] != nil && via[0].URL != nil &&
-			strings.EqualFold(via[0].URL.Scheme, "https") && scheme != "https" {
-			return urlvalidator.ErrOutboundTargetNotAllowed
-		}
-		return nil
-	}
 }
 
 // probeAllowPrivateEndpoints 解析探测请求的私网放行开关：
