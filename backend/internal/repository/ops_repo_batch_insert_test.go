@@ -158,3 +158,92 @@ func TestOpsRepositoryBatchInsertErrorLogsSanitizesAndTruncatesArgs(t *testing.T
 	require.EqualValues(t, 1, inserted)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
+
+func TestOpsRepositoryBatchInsertErrorLogsMultiChunkCommitsPerChunk(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+
+	repo := &opsRepository{db: db}
+	now := time.Now().UTC()
+	inputs := make([]*service.OpsInsertErrorLogInput, opsErrorLogInsertChunkSize+2)
+	for i := range inputs {
+		inputs[i] = &service.OpsInsertErrorLogInput{
+			ErrorPhase:   "upstream",
+			ErrorType:    "upstream_error",
+			ErrorMessage: "msg",
+			CreatedAt:    now,
+		}
+	}
+
+	// Chunk 1 commits cleanly via execAsyncCommit.
+	mock.ExpectBegin()
+	mock.ExpectExec(regexp.QuoteMeta("SET LOCAL synchronous_commit = off")).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO ops_error_logs")).
+		WillReturnResult(sqlmock.NewResult(0, opsErrorLogInsertChunkSize))
+	mock.ExpectCommit()
+
+	// Chunk 2 fails and rolls back only chunk 2; returned count matches committed chunk 1.
+	chunk2Err := errors.New("chunk 2 failed")
+	mock.ExpectBegin()
+	mock.ExpectExec(regexp.QuoteMeta("SET LOCAL synchronous_commit = off")).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO ops_error_logs")).
+		WillReturnError(chunk2Err)
+	mock.ExpectRollback()
+
+	inserted, err := repo.BatchInsertErrorLogs(context.Background(), inputs)
+	require.ErrorIs(t, err, chunk2Err)
+	require.EqualValues(t, opsErrorLogInsertChunkSize, inserted)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestOpsRepositoryBatchInsertSystemLogsTruncatesAllVarcharColumnsAndValidatesExtra(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+
+	repo := &opsRepository{db: db}
+	now := time.Now().UTC()
+
+	mock.ExpectBegin()
+	prep := mock.ExpectPrepare(regexp.QuoteMeta(`COPY "ops_system_logs"`))
+	prep.ExpectExec().
+		WithArgs(
+			now,
+			strings.Repeat("h", opsSystemLogMaxHostLen),
+			strings.Repeat("e", opsSystemLogMaxLevelLen),
+			strings.Repeat("c", opsSystemLogMaxComponentLen),
+			"hello world",
+			strings.Repeat("r", opsSystemLogMaxRequestIDLen),
+			strings.Repeat("i", opsSystemLogMaxRequestIDLen),
+			nil,
+			nil,
+			nil,
+			strings.Repeat("p", opsSystemLogMaxPlatformLen),
+			strings.Repeat("m", opsSystemLogMaxModelLen),
+			"{}",
+		).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	prep.ExpectExec().WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectCommit()
+
+	inserted, err := repo.BatchInsertSystemLogs(context.Background(), []*service.OpsInsertSystemLogInput{
+		{
+			CreatedAt:       now,
+			Host:            strings.Repeat("h", 300) + "\x00",
+			Level:           strings.Repeat("E", 30) + "\x00",
+			Component:       strings.Repeat("c", 200) + "\x00",
+			Message:         "hello\x00 world\xff",
+			RequestID:       strings.Repeat("r", 200) + "\x00",
+			ClientRequestID: strings.Repeat("i", 200) + "\x00",
+			Platform:        strings.Repeat("p", 50) + "\x00",
+			Model:           strings.Repeat("m", 200) + "\x00",
+			ExtraJSON:       `{"broken":`,
+		},
+	})
+	require.NoError(t, err)
+	require.EqualValues(t, 1, inserted)
+	require.NoError(t, mock.ExpectationsWereMet())
+}

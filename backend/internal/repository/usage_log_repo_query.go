@@ -189,7 +189,9 @@ func appendUsageRequestIDConditionWithOptions(conditions []string, args []any, i
 	if strings.HasPrefix(input, "*") {
 		id := strings.TrimSpace(input[1:])
 		if id == "" {
-			return conditions, args
+			// Non-empty request_id filter with empty wildcard target must fail closed
+			// rather than dropping the predicate (important for both reads and cleanup deletes).
+			return append(conditions, "FALSE"), args
 		}
 		pattern := "%" + escapeLikePattern(id) + "%"
 		if includeUpstream {
@@ -203,12 +205,16 @@ func appendUsageRequestIDConditionWithOptions(conditions []string, args []any, i
 		id := strings.TrimSpace(input[1:])
 		base := service.NormalizeUsageRequestIDKey(id)
 		if id == "" || base == "" {
-			return conditions, args
+			return append(conditions, "FALSE"), args
+		}
+		clientCond := fmt.Sprintf("client_request_id LIKE $%d", pos)
+		if id != base {
+			clientCond = fmt.Sprintf("(client_request_id LIKE $%d OR client_request_id LIKE $%d)", pos, pos+3)
 		}
 		if includeUpstream {
-			conditions = append(conditions, fmt.Sprintf("(request_id LIKE $%d OR request_id LIKE $%d OR request_id LIKE $%d OR response_request_id LIKE $%d OR client_request_id LIKE $%d OR response_msg_id LIKE $%d OR upstream_request_id LIKE $%d)", pos, pos+1, pos+2, pos+3, pos, pos+3, pos+3))
+			conditions = append(conditions, fmt.Sprintf("(request_id LIKE $%d OR request_id LIKE $%d OR request_id LIKE $%d OR response_request_id LIKE $%d OR %s OR response_msg_id LIKE $%d OR upstream_request_id LIKE $%d)", pos, pos+1, pos+2, pos+3, clientCond, pos+3, pos+3))
 		} else {
-			conditions = append(conditions, fmt.Sprintf("(request_id LIKE $%d OR request_id LIKE $%d OR request_id LIKE $%d OR response_request_id LIKE $%d OR client_request_id LIKE $%d OR response_msg_id LIKE $%d)", pos, pos+1, pos+2, pos+3, pos, pos+3))
+			conditions = append(conditions, fmt.Sprintf("(request_id LIKE $%d OR request_id LIKE $%d OR request_id LIKE $%d OR response_request_id LIKE $%d OR %s OR response_msg_id LIKE $%d)", pos, pos+1, pos+2, pos+3, clientCond, pos+3))
 		}
 		return conditions, append(args, escapeLikePattern(base)+"%", escapeLikePattern("client:"+base)+"%", escapeLikePattern("local:"+base)+"%", escapeLikePattern(id)+"%")
 	}
@@ -218,12 +224,16 @@ func appendUsageRequestIDConditionWithOptions(conditions []string, args []any, i
 	}
 	base := service.NormalizeUsageRequestIDKey(id)
 	if id == "" || base == "" {
-		return conditions, args
+		return append(conditions, "FALSE"), args
+	}
+	clientCond := fmt.Sprintf("client_request_id = $%d", pos)
+	if id != base {
+		clientCond = fmt.Sprintf("client_request_id IN ($%d, $%d)", pos, pos+3)
 	}
 	if includeUpstream {
-		conditions = append(conditions, fmt.Sprintf("(request_id IN ($%d, $%d, $%d) OR response_request_id = $%d OR client_request_id = $%d OR response_msg_id = $%d OR upstream_request_id = $%d)", pos, pos+1, pos+2, pos+3, pos, pos+3, pos+3))
+		conditions = append(conditions, fmt.Sprintf("(request_id IN ($%d, $%d, $%d) OR response_request_id = $%d OR %s OR response_msg_id = $%d OR upstream_request_id = $%d)", pos, pos+1, pos+2, pos+3, clientCond, pos+3, pos+3))
 	} else {
-		conditions = append(conditions, fmt.Sprintf("(request_id IN ($%d, $%d, $%d) OR response_request_id = $%d OR client_request_id = $%d OR response_msg_id = $%d)", pos, pos+1, pos+2, pos+3, pos, pos+3))
+		conditions = append(conditions, fmt.Sprintf("(request_id IN ($%d, $%d, $%d) OR response_request_id = $%d OR %s OR response_msg_id = $%d)", pos, pos+1, pos+2, pos+3, clientCond, pos+3))
 	}
 	return conditions, append(args, base, "client:"+base, "local:"+base, id)
 }

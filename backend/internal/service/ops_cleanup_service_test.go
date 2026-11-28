@@ -100,6 +100,9 @@ func TestOpsCleanupDeleteBatchSQL_UsesCTIDAndSafeBatchBounds(t *testing.T) {
 	if opsCleanupBatchTimeout <= 0 || opsCleanupBatchTimeout > 20*time.Second {
 		t.Fatalf("opsCleanupBatchTimeout = %v, want within (0, 20s]", opsCleanupBatchTimeout)
 	}
+	if opsCleanupTableTimeout <= opsCleanupBatchTimeout || opsCleanupTableTimeout >= opsCleanupRunTimeout {
+		t.Fatalf("opsCleanupTableTimeout = %v, want between (%v, %v)", opsCleanupTableTimeout, opsCleanupBatchTimeout, opsCleanupRunTimeout)
+	}
 
 	tsSQL := opsCleanupDeleteBatchSQL("ops_error_logs", "created_at", false)
 	for _, want := range []string{
@@ -292,6 +295,85 @@ func TestDeleteOldRowsByCTID_RespectsBatchTimeoutAndMissingRelation(t *testing.T
 		}
 		if parentCtx.Err() != nil {
 			t.Fatalf("parent ctx should stay alive after per-batch timeout")
+		}
+	})
+
+	t.Run("backlogged table hits per-table timeout without starving later tables or channel monitor", func(t *testing.T) {
+		prevTableTimeout := opsCleanupTableTimeout
+		prevBatchTimeout := opsCleanupBatchTimeout
+		opsCleanupTableTimeout = 40 * time.Millisecond
+		opsCleanupBatchTimeout = 200 * time.Millisecond
+		t.Cleanup(func() {
+			opsCleanupTableTimeout = prevTableTimeout
+			opsCleanupBatchTimeout = prevBatchTimeout
+		})
+
+		db, mock, err := sqlmock.New()
+		if err != nil {
+			t.Fatalf("sqlmock.New: %v", err)
+		}
+		t.Cleanup(func() { _ = db.Close() })
+
+		// Table 0 (ops_error_logs): batch 1 succeeds quickly, batch 2 exceeds table budget.
+		mock.ExpectExec(regexp.QuoteMeta("DELETE FROM ops_error_logs")).
+			WithArgs(sqlmock.AnyArg(), opsCleanupBatchSize).
+			WillDelayFor(15 * time.Millisecond).
+			WillReturnResult(sqlmock.NewResult(0, 1000))
+		mock.ExpectExec(regexp.QuoteMeta("DELETE FROM ops_error_logs")).
+			WithArgs(sqlmock.AnyArg(), opsCleanupBatchSize).
+			WillDelayFor(120 * time.Millisecond).
+			WillReturnResult(sqlmock.NewResult(0, 1000))
+
+		// Remaining 7 tables must still execute under the intact parent ctx.
+		for _, table := range []string{
+			"ops_ingress_reject_aggregates",
+			"ops_alert_events",
+			"ops_system_logs",
+			"ops_system_log_cleanup_audits",
+			"ops_system_metrics",
+			"ops_metrics_hourly",
+			"ops_metrics_daily",
+		} {
+			mock.ExpectExec(regexp.QuoteMeta("DELETE FROM "+table)).
+				WithArgs(sqlmock.AnyArg(), opsCleanupBatchSize).
+				WillReturnResult(sqlmock.NewResult(0, 1))
+			mock.ExpectExec(regexp.QuoteMeta("DELETE FROM "+table)).
+				WithArgs(sqlmock.AnyArg(), opsCleanupBatchSize).
+				WillReturnResult(sqlmock.NewResult(0, 0))
+		}
+
+		cmRepo := &opsCleanupChannelMonitorRepoStub{}
+		svc := &OpsCleanupService{
+			db:                db,
+			cfg:               &config.Config{},
+			channelMonitorSvc: &ChannelMonitorService{repo: cmRepo},
+			effective: opsCleanupEffectiveConfig{
+				OpsCleanupConfig: config.OpsCleanupConfig{
+					Enabled:                    true,
+					ErrorLogRetentionDays:      7,
+					MinuteMetricsRetentionDays: 30,
+					HourlyMetricsRetentionDays: 30,
+				},
+				SystemLogRetentionDays: 30,
+			},
+		}
+
+		parentCtx := context.Background()
+		counts, runErr := svc.runCleanupOnce(parentCtx)
+		if runErr == nil || !strings.Contains(runErr.Error(), "ops_error_logs") {
+			t.Fatalf("expected ops_error_logs table-timeout error, got %v", runErr)
+		}
+		if parentCtx.Err() != nil {
+			t.Fatalf("parent ctx should stay alive after per-table timeout")
+		}
+		if counts.errorLogs != 1000 || counts.ingressRejects != 1 || counts.dailyPreagg != 1 {
+			t.Fatalf("unexpected counts after table timeout: %+v", counts)
+		}
+		if cmRepo.watermarkCalls != 1 || cmRepo.deleteHistCalls != 1 || cmRepo.deleteRollupCalls != 1 {
+			t.Fatalf("channelMonitorSvc.RunDailyMaintenance was starved: %+v", cmRepo)
+		}
+		if err := mock.ExpectationsWereMet(); err != nil {
+			t.Fatalf("unmet expectations: %v", err)
 		}
 	})
 }

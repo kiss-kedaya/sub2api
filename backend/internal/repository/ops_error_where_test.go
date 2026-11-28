@@ -182,11 +182,11 @@ func TestBuildOpsErrorLogsWhere_RequestIDSearchModes(t *testing.T) {
 		})
 	}
 
-	for _, emptyInput := range []string{"=", "^", "*", "=client:", "^local:"} {
+	for _, emptyInput := range []string{"=", "^", "*", "=client:", "^local:", "client:", "local:"} {
 		t.Run("empty_"+emptyInput, func(t *testing.T) {
 			where, args := buildOpsErrorLogsWhere(&service.OpsErrorLogFilter{RequestID: emptyInput})
-			if strings.Contains(where, "e.request_id") || len(args) != 0 {
-				t.Fatalf("sigil-only request id %q should not emit filter, got where=%s args=%v", emptyInput, where, args)
+			if !strings.Contains(where, " AND FALSE") || strings.Contains(where, "e.request_id") || len(args) != 0 {
+				t.Fatalf("sigil-only or prefix-only request id %q must fail closed with FALSE, got where=%s args=%v", emptyInput, where, args)
 			}
 		})
 	}

@@ -21,6 +21,12 @@ const (
 // the cluster's 30s statement_timeout instead of hanging the whole run.
 var opsCleanupBatchTimeout = 20 * time.Second
 
+// opsCleanupTableTimeout bounds cumulative time spent cleaning any single table
+// so a heavily backlogged table executing many sub-20s batches cannot exhaust
+// opsCleanupRunTimeout (30m) and starve the remaining Ops tables or channel
+// monitor daily maintenance.
+var opsCleanupTableTimeout = 5 * time.Minute
+
 type opsCleanupTarget struct {
 	retentionDays int
 	table         string
@@ -77,10 +83,19 @@ func opsCleanupRunOne(
 	castDate bool,
 	batchSize int,
 ) (int64, error) {
-	if truncate {
-		return truncateOpsTable(ctx, db, table)
+	if ctx == nil {
+		ctx = context.Background()
 	}
-	return deleteOldRowsByCTID(ctx, db, table, timeCol, cutoff, batchSize, castDate)
+	tableCtx := ctx
+	var cancel context.CancelFunc
+	if opsCleanupTableTimeout > 0 {
+		tableCtx, cancel = context.WithTimeout(ctx, opsCleanupTableTimeout)
+		defer cancel()
+	}
+	if truncate {
+		return truncateOpsTable(tableCtx, db, table)
+	}
+	return deleteOldRowsByCTID(tableCtx, db, table, timeCol, cutoff, batchSize, castDate)
 }
 
 // opsCleanupDeleteBatchSQL builds a ctid + ARRAY(subquery) batch DELETE so

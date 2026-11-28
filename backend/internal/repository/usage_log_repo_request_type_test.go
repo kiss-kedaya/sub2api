@@ -500,10 +500,10 @@ func TestUsageLogRepositoryListWithFiltersRequestIDMatchesClientPrefixFragment(t
 	db, mock := newSQLMock(t)
 	repo := &usageLogRepository{sql: db}
 
-	// 落库的 request_id 形如 client:<uuid>，默认精确查询归一为裸 ID 并同时匹配 client:/local: 变体。
+	// 落库的 request_id 形如 client:<uuid>，默认精确查询归一为裸 ID 并同时匹配 client:/local: 与原始 client_request_id。
 	filters := usagestats.UsageLogFilters{RequestID: "client:0f3a"}
 
-	mock.ExpectQuery("SELECT .* FROM usage_logs WHERE \\(request_id IN \\(\\$1, \\$2, \\$3\\) OR response_request_id = \\$4 OR client_request_id = \\$1 OR response_msg_id = \\$4 OR upstream_request_id = \\$4\\) ORDER BY id DESC LIMIT \\$5 OFFSET \\$6").
+	mock.ExpectQuery("SELECT .* FROM usage_logs WHERE \\(request_id IN \\(\\$1, \\$2, \\$3\\) OR response_request_id = \\$4 OR client_request_id IN \\(\\$1, \\$4\\) OR response_msg_id = \\$4 OR upstream_request_id = \\$4\\) ORDER BY id DESC LIMIT \\$5 OFFSET \\$6").
 		WithArgs("0f3a", "client:0f3a", "local:0f3a", "client:0f3a", 21, 0).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}))
 

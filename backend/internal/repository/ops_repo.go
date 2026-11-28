@@ -116,23 +116,9 @@ func (r *opsRepository) BatchInsertErrorLogs(ctx context.Context, inputs []*serv
 		return 0, nil
 	}
 
-	tx, err := r.db.BeginTx(ctx, nil)
-	if err != nil {
-		return 0, err
-	}
-	defer func() {
-		if err != nil {
-			_ = tx.Rollback()
-		}
-	}()
-
-	// Error logs are diagnostic; disable synchronous_commit for this transaction
-	// only (matching execAsyncCommit) so bursty error writes do not stall primary
-	// WAL fsyncs. SET LOCAL resets automatically when the transaction ends.
-	if _, err = tx.ExecContext(ctx, "SET LOCAL synchronous_commit = off"); err != nil {
-		return 0, err
-	}
-
+	// Error logs are diagnostic, so each chunk runs through execAsyncCommit to
+	// avoid stalling primary WAL flushes. Committing per chunk also ensures the
+	// returned inserted count matches persisted rows if a later chunk fails.
 	for start := 0; start < len(valid); start += opsErrorLogInsertChunkSize {
 		end := start + opsErrorLogInsertChunkSize
 		if end > len(valid) {
@@ -144,14 +130,11 @@ func (r *opsRepository) BatchInsertErrorLogs(ctx context.Context, inputs []*serv
 			values = append(values, opsErrorLogValuePlaceholders(i*opsErrorLogInsertColumnCount))
 			args = append(args, opsInsertErrorLogArgs(input)...)
 		}
-		if _, err = tx.ExecContext(ctx, insertOpsErrorLogSQL+" VALUES "+strings.Join(values, ","), args...); err != nil {
+		if err := execAsyncCommit(ctx, r.db, insertOpsErrorLogSQL+" VALUES "+strings.Join(values, ","), args...); err != nil {
 			return int64(start), err
 		}
 	}
 
-	if err = tx.Commit(); err != nil {
-		return int64(len(valid)), err
-	}
 	return int64(len(valid)), nil
 }
 
@@ -163,9 +146,17 @@ const (
 	opsErrorLogMaxErrorPhaseLen   = 32
 	opsErrorLogMaxErrorTypeLen    = 64
 	opsErrorLogMaxSeverityLen     = 8
+	opsErrorLogDefaultSeverity    = "P2"
 	opsErrorLogMaxErrorSourceLen  = 64
 	opsErrorLogMaxErrorOwnerLen   = 32
 	opsErrorLogMaxAPIKeyPrefixLen = 32
+
+	opsSystemLogMaxHostLen      = 255
+	opsSystemLogMaxLevelLen     = 16
+	opsSystemLogMaxComponentLen = 128
+	opsSystemLogMaxRequestIDLen = 128
+	opsSystemLogMaxPlatformLen  = 32
+	opsSystemLogMaxModelLen     = 128
 )
 
 func opsInsertErrorLogArgs(input *service.OpsInsertErrorLogInput) []any {
@@ -189,7 +180,7 @@ func opsInsertErrorLogArgs(input *service.OpsInsertErrorLogInput) []any {
 		opsNullString(input.UserAgent),
 		opsRequiredStringMax(input.ErrorPhase, opsErrorLogMaxErrorPhaseLen),
 		opsRequiredStringMax(input.ErrorType, opsErrorLogMaxErrorTypeLen),
-		opsNullStringMax(input.Severity, opsErrorLogMaxSeverityLen),
+		opsRequiredStringMaxOrDefault(input.Severity, opsErrorLogMaxSeverityLen, opsErrorLogDefaultSeverity),
 		opsNullInt(input.StatusCode),
 		input.IsBusinessLimited,
 		input.IsCountTokens,
@@ -810,8 +801,8 @@ func (r *opsRepository) BatchInsertSystemLogs(ctx context.Context, inputs []*ser
 		if createdAt.IsZero() {
 			createdAt = time.Now().UTC()
 		}
-		component := opsTruncateRunes(strings.TrimSpace(opsSanitizeText(input.Component)), 128)
-		level := opsTruncateRunes(strings.ToLower(strings.TrimSpace(opsSanitizeText(input.Level))), 16)
+		component := strings.TrimSpace(opsTruncateRunes(strings.TrimSpace(opsSanitizeText(input.Component)), opsSystemLogMaxComponentLen))
+		level := strings.TrimSpace(opsTruncateRunes(strings.ToLower(strings.TrimSpace(opsSanitizeText(input.Level))), opsSystemLogMaxLevelLen))
 		message := strings.TrimSpace(opsSanitizeText(input.Message))
 		if level == "" || message == "" {
 			continue
@@ -820,23 +811,23 @@ func (r *opsRepository) BatchInsertSystemLogs(ctx context.Context, inputs []*ser
 			component = "app"
 		}
 		extra := strings.TrimSpace(opsSanitizeJSONB(input.ExtraJSON))
-		if extra == "" {
+		if extra == "" || !json.Valid([]byte(extra)) {
 			extra = "{}"
 		}
 		if _, err := stmt.ExecContext(
 			ctx,
 			createdAt.UTC(),
-			opsNullString(input.Host),
+			opsNullStringMax(input.Host, opsSystemLogMaxHostLen),
 			level,
 			component,
 			message,
-			opsNullString(input.RequestID),
-			opsNullString(input.ClientRequestID),
+			opsNullStringMax(input.RequestID, opsSystemLogMaxRequestIDLen),
+			opsNullStringMax(input.ClientRequestID, opsSystemLogMaxRequestIDLen),
 			opsNullInt64(input.UserID),
 			opsNullInt64(input.APIKeyID),
 			opsNullInt64(input.AccountID),
-			opsNullString(input.Platform),
-			opsNullString(input.Model),
+			opsNullStringMax(input.Platform, opsSystemLogMaxPlatformLen),
+			opsNullStringMax(input.Model, opsSystemLogMaxModelLen),
 			extra,
 		); err != nil {
 			_ = stmt.Close()
@@ -1007,6 +998,10 @@ func (r *opsRepository) InsertSystemLogCleanupAudit(ctx context.Context, input *
 	if createdAt.IsZero() {
 		createdAt = time.Now().UTC()
 	}
+	conditions := strings.TrimSpace(opsSanitizeJSONB(input.Conditions))
+	if conditions == "" || !json.Valid([]byte(conditions)) {
+		conditions = "{}"
+	}
 	_, err := r.db.ExecContext(ctx, `
 INSERT INTO ops_system_log_cleanup_audits (
   created_at,
@@ -1014,7 +1009,7 @@ INSERT INTO ops_system_log_cleanup_audits (
   conditions,
   deleted_rows
 ) VALUES ($1,$2,$3,$4)
-`, createdAt.UTC(), input.OperatorID, input.Conditions, input.DeletedRows)
+`, createdAt.UTC(), input.OperatorID, conditions, input.DeletedRows)
 	return err
 }
 
@@ -1150,6 +1145,10 @@ func buildOpsErrorLogsWhere(filter *service.OpsErrorLogFilter) (string, []any) {
 			args = append(args, pattern)
 			n := itoa(len(args))
 			clauses = append(clauses, "(e.request_id "+operator+" $"+n+" OR e.client_request_id "+operator+" $"+n+")")
+		} else {
+			// Non-empty request_id filter with empty target after sigil/prefix stripping
+			// must fail closed rather than dropping the predicate and returning all rows.
+			clauses = append(clauses, "FALSE")
 		}
 	}
 	if crid := strings.TrimSpace(filter.ClientRequestID); crid != "" {
@@ -1339,25 +1338,69 @@ func opsSanitizeText(s string) string {
 	return s
 }
 
-// opsSanitizeJSONB cleans raw NUL bytes, invalid UTF-8, and unescaped JSON \u0000
-// sequences (which PostgreSQL JSONB rejects with SQLSTATE 22P05) while preserving
-// escaped literal sequences such as \\u0000.
+func opsParseHex4(s string) (uint16, bool) {
+	if len(s) < 4 {
+		return 0, false
+	}
+	var v uint16
+	for i := 0; i < 4; i++ {
+		c := s[i]
+		var d uint16
+		switch {
+		case c >= '0' && c <= '9':
+			d = uint16(c - '0')
+		case c >= 'a' && c <= 'f':
+			d = uint16(c-'a') + 10
+		case c >= 'A' && c <= 'F':
+			d = uint16(c-'A') + 10
+		default:
+			return 0, false
+		}
+		v = (v << 4) | d
+	}
+	return v, true
+}
+
+// opsSanitizeJSONB cleans raw NUL bytes, invalid UTF-8, unescaped JSON \u0000
+// (SQLSTATE 22P05), and lone UTF-16 surrogates (SQLSTATE 22P02) while preserving
+// valid surrogate pairs and escaped literal sequences such as \\u0000.
 func opsSanitizeJSONB(s string) string {
 	s = opsSanitizeText(s)
-	if !strings.Contains(s, `\u0000`) {
+	if !strings.Contains(s, `\u`) {
 		return s
 	}
 	var b strings.Builder
 	b.Grow(len(s))
 	for i := 0; i < len(s); {
-		if i+6 <= len(s) && s[i:i+6] == `\u0000` {
+		if i+6 <= len(s) && s[i] == '\\' && s[i+1] == 'u' {
 			bs := 0
 			for j := i - 1; j >= 0 && s[j] == '\\'; j-- {
 				bs++
 			}
 			if bs%2 == 0 {
-				i += 6
-				continue
+				if code, ok := opsParseHex4(s[i+2 : i+6]); ok {
+					if code == 0 {
+						i += 6
+						continue
+					}
+					if code >= 0xD800 && code <= 0xDBFF {
+						if i+12 <= len(s) && s[i+6] == '\\' && s[i+7] == 'u' {
+							if low, ok2 := opsParseHex4(s[i+8 : i+12]); ok2 && low >= 0xDC00 && low <= 0xDFFF {
+								_, _ = b.WriteString(s[i : i+12])
+								i += 12
+								continue
+							}
+						}
+						_, _ = b.WriteString(`\ufffd`)
+						i += 6
+						continue
+					}
+					if code >= 0xDC00 && code <= 0xDFFF {
+						_, _ = b.WriteString(`\ufffd`)
+						i += 6
+						continue
+					}
+				}
 			}
 		}
 		_ = b.WriteByte(s[i])
@@ -1423,12 +1466,20 @@ func opsRequiredStringMax(s string, maxRunes int) string {
 	return cleaned
 }
 
+func opsRequiredStringMaxOrDefault(s string, maxRunes int, fallback string) string {
+	cleaned := opsRequiredStringMax(s, maxRunes)
+	if cleaned == "" {
+		return fallback
+	}
+	return cleaned
+}
+
 func opsNullJSONBString(v *string) any {
 	if v == nil {
 		return sql.NullString{}
 	}
 	cleaned := strings.TrimSpace(opsSanitizeJSONB(*v))
-	if cleaned == "" {
+	if cleaned == "" || !json.Valid([]byte(cleaned)) {
 		return sql.NullString{}
 	}
 	return sql.NullString{String: cleaned, Valid: true}

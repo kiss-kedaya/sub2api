@@ -59,7 +59,7 @@ func TestOpsSanitizeAndTruncateHelpers(t *testing.T) {
 		require.Equal(t, exact, opsTruncateRunes(exact, 100))
 	})
 
-	t.Run("sanitize JSONB strips unescaped u0000 and preserves escaped literal", func(t *testing.T) {
+	t.Run("sanitize JSONB strips unescaped u0000, replaces lone surrogates, and preserves valid pairs and escaped literals", func(t *testing.T) {
 		cases := []struct {
 			name string
 			in   string
@@ -70,6 +70,11 @@ func TestOpsSanitizeAndTruncateHelpers(t *testing.T) {
 			{"escaped backslash before u0000 kept", `{"a":"\\u0000"}`, `{"a":"\\u0000"}`},
 			{"double backslash plus u0000 strips only u0000", `{"a":"\\\u0000"}`, `{"a":"\\"}`},
 			{"escaped then unescaped", `{"a":"\\u0000\u0000"}`, `{"a":"\\u0000"}`},
+			{"valid emoji surrogate pair kept", `{"a":"\uD83D\uDE00"}`, `{"a":"\uD83D\uDE00"}`},
+			{"lone high surrogate replaced", `{"a":"\uD800x"}`, `{"a":"\ufffdx"}`},
+			{"lone low surrogate replaced", `{"a":"\uDC00x"}`, `{"a":"\ufffdx"}`},
+			{"high followed by valid pair", `{"a":"\uD83D\uD83D\uDE00"}`, `{"a":"\ufffd\uD83D\uDE00"}`},
+			{"escaped lone surrogate kept", `{"a":"\\uD800"}`, `{"a":"\\uD800"}`},
 		}
 		for _, tc := range cases {
 			t.Run(tc.name, func(t *testing.T) {
@@ -78,6 +83,21 @@ func TestOpsSanitizeAndTruncateHelpers(t *testing.T) {
 				require.True(t, json.Valid([]byte(got)), "sanitized JSON must remain valid: %s", got)
 			})
 		}
+	})
+
+	t.Run("malformed JSONB falls back to NULL instead of aborting batch", func(t *testing.T) {
+		bad := `{"truncated":`
+		require.Equal(t, sql.NullString{}, opsNullJSONBString(&bad))
+		valid := `[{"msg":"ok\u0000"}]`
+		require.Equal(t, sql.NullString{String: `[{"msg":"ok"}]`, Valid: true}, opsNullJSONBString(&valid))
+	})
+
+	t.Run("empty or NUL-only severity falls back to NOT NULL default P2", func(t *testing.T) {
+		argsEmpty := opsInsertErrorLogArgs(&service.OpsInsertErrorLogInput{})
+		require.Equal(t, "P2", argsEmpty[19])
+
+		argsNul := opsInsertErrorLogArgs(&service.OpsInsertErrorLogInput{Severity: " \x00 "})
+		require.Equal(t, "P2", argsNul[19])
 	})
 
 	t.Run("header snapshot drops pure-NUL keys and cleans values", func(t *testing.T) {
@@ -133,7 +153,7 @@ func TestOpsInsertErrorLogArgsEnforcesAllVarcharLimits(t *testing.T) {
 	assertNullStrLen(14, 100)
 	assertStrLen(17, 32)
 	assertStrLen(18, 64)
-	assertNullStrLen(19, 8)
+	assertStrLen(19, 8)
 	assertNullStrLen(25, 64)
 	assertNullStrLen(26, 32)
 	assertNullStrLen(37, 32)
