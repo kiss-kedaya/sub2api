@@ -56,6 +56,8 @@ func TestBuildOIDCAuthorizeURLIncludesNonceAndPKCE(t *testing.T) {
 }
 
 func TestOIDCParseAndValidateIDToken(t *testing.T) {
+	t.Cleanup(service.SetAdminOutboundAllowPrivateForTest(true))
+
 	priv, err := rsa.GenerateKey(rand.Reader, 2048)
 	require.NoError(t, err)
 
@@ -135,7 +137,7 @@ func buildRSAJWK(kid string, pub *rsa.PublicKey) oidcJWK {
 }
 
 func TestOIDCOAuthBindStartRedirectsAndSetsBindCookies(t *testing.T) {
-	handler := newOIDCOAuthTestHandler(t, false, config.OIDCConnectConfig{
+	handler, client := newOIDCOAuthHandlerAndClient(t, false, config.OIDCConnectConfig{
 		Enabled:              true,
 		ClientID:             "oidc-client",
 		ClientSecret:         "oidc-secret",
@@ -154,12 +156,22 @@ func TestOIDCOAuthBindStartRedirectsAndSetsBindCookies(t *testing.T) {
 		ClockSkewSeconds:     120,
 		RequireEmailVerified: false,
 	})
+	t.Cleanup(func() { _ = client.Close() })
+
+	user, err := client.User.Create().
+		SetEmail("oidc-bind-start@example.com").
+		SetUsername("oidc-bind-start").
+		SetPasswordHash("hash").
+		SetRole(service.RoleUser).
+		SetStatus(service.StatusActive).
+		Save(context.Background())
+	require.NoError(t, err)
 
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/oauth/oidc/bind/start?intent=bind_current_user&redirect=/settings/connections", nil)
 	c.Request = req
-	c.Set(string(servermiddleware.ContextKeyUser), servermiddleware.AuthSubject{UserID: 84})
+	c.Set(string(servermiddleware.ContextKeyUser), servermiddleware.AuthSubject{UserID: user.ID})
 
 	handler.OIDCOAuthStart(c)
 
@@ -184,7 +196,7 @@ func TestOIDCOAuthBindStartRedirectsAndSetsBindCookies(t *testing.T) {
 	require.NotNil(t, bindCookie)
 	userID, err := parseOAuthBindUserCookieValue(decodeCookieValueForTest(t, bindCookie.Value), "test-secret")
 	require.NoError(t, err)
-	require.Equal(t, int64(84), userID)
+	require.Equal(t, user.ID, userID)
 }
 
 func TestOIDCOAuthStartOmitsPKCEAndNonceWhenDisabled(t *testing.T) {
@@ -220,6 +232,8 @@ func TestOIDCOAuthStartOmitsPKCEAndNonceWhenDisabled(t *testing.T) {
 }
 
 func TestOIDCOAuthCallbackAllowsOptionalPKCEAndIDTokenValidation(t *testing.T) {
+	t.Cleanup(service.SetAdminOutboundAllowPrivateForTest(true))
+
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/token":
@@ -1229,6 +1243,7 @@ func newOIDCOAuthHandlerAndClientWithSettings(
 
 func newOIDCTestProvider(t *testing.T, fixture oidcProviderFixture) (config.OIDCConnectConfig, func()) {
 	t.Helper()
+	t.Cleanup(service.SetAdminOutboundAllowPrivateForTest(true))
 
 	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	require.NoError(t, err)

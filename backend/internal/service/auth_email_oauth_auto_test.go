@@ -88,8 +88,8 @@ func TestEmailOAuthAuto_SnapshotsPlatformQuotaDefaults(t *testing.T) {
 	require.InDelta(t, 100.0, *geminiRecord.MonthlyLimitUSD, 0.0001)
 }
 
-// 第三方登录（OAuth/passkey）不得绕过已启用账号的登录动态码：
-// 该判定必须与密码登录同口径，且功能总开关关闭/账号未开 TOTP 时不能误伤正常登录。
+// 第三方登录（OAuth/passkey）不得绕过已启用账号的登录二次验证：
+// 该判定必须与密码登录同口径（覆盖 TOTP / Passkey / 双因子），且功能总开关关闭/账号未开 2FA 时不能误伤正常登录。
 func TestLoginRequiresTOTPSharedAcrossLoginEntrypoints(t *testing.T) {
 	ctx := context.Background()
 
@@ -99,7 +99,9 @@ func TestLoginRequiresTOTPSharedAcrossLoginEntrypoints(t *testing.T) {
 			map[string]string{SettingKeyTotpEnabled: "true"},
 			nil,
 		)
-		require.True(t, svc.loginRequiresTOTP(ctx, &User{ID: 7, TotpEnabled: true}))
+		factors, err := svc.loginRequiredFactors(ctx, &User{ID: 7, TotpEnabled: true})
+		require.NoError(t, err)
+		require.Equal(t, []Factor{FactorTOTP}, factors)
 	})
 
 	t.Run("账号未启用TOTP：不误伤", func(t *testing.T) {
@@ -108,7 +110,9 @@ func TestLoginRequiresTOTPSharedAcrossLoginEntrypoints(t *testing.T) {
 			map[string]string{SettingKeyTotpEnabled: "true"},
 			nil,
 		)
-		require.False(t, svc.loginRequiresTOTP(ctx, &User{ID: 7, TotpEnabled: false}))
+		factors, err := svc.loginRequiredFactors(ctx, &User{ID: 7, TotpEnabled: false})
+		require.NoError(t, err)
+		require.Empty(t, factors)
 	})
 
 	t.Run("功能总开关关闭：不误伤", func(t *testing.T) {
@@ -117,12 +121,16 @@ func TestLoginRequiresTOTPSharedAcrossLoginEntrypoints(t *testing.T) {
 			map[string]string{SettingKeyTotpEnabled: "false"},
 			nil,
 		)
-		require.False(t, svc.loginRequiresTOTP(ctx, &User{ID: 7, TotpEnabled: true}))
+		factors, err := svc.loginRequiredFactors(ctx, &User{ID: 7, TotpEnabled: true})
+		require.NoError(t, err)
+		require.Empty(t, factors)
 	})
 
-	t.Run("nil用户：不误伤", func(t *testing.T) {
+	t.Run("nil用户：fail-closed 返回错误", func(t *testing.T) {
 		svc := newEmailOAuthAutoAuthService(&userRepoStub{nextID: 1}, map[string]string{SettingKeyTotpEnabled: "true"}, nil)
-		require.False(t, svc.loginRequiresTOTP(ctx, nil))
+		factors, err := svc.loginRequiredFactors(ctx, nil)
+		require.ErrorIs(t, err, ErrTwoFactorPolicyUnavailable)
+		require.Empty(t, factors)
 	})
 
 	t.Run("设置读取失败：fail-closed 仍要求挑战", func(t *testing.T) {

@@ -29,13 +29,29 @@ func (s *AuthService) LoginOrRegisterVerifiedEmailOAuth(ctx context.Context, inp
 	return s.loginOrRegisterVerifiedEmailOAuth(ctx, input, "", "", "")
 }
 
-// loginRequiresTOTP 判断一次第三方登录是否必须先完成动态码校验：
-// 与密码登录/待定 OAuth 流同口径（功能总开关开启且该账号自身启用了 TOTP）。
-func (s *AuthService) loginRequiresTOTP(ctx context.Context, user *User) bool {
-	if s == nil || s.settingService == nil {
-		return false
+// loginRequiredFactors 返回已有账号登录必须完成的全部二次验证因子（TOTP / Passkey / 两者）。
+// 唯一真相源为 TotpService.LoginRequiredFactors；策略读取失败一律 fail-closed。
+func (s *AuthService) loginRequiredFactors(ctx context.Context, user *User) ([]Factor, error) {
+	if s == nil || user == nil {
+		return nil, ErrTwoFactorPolicyUnavailable
 	}
-	return s.settingService.LoginRequiresTOTP(ctx, user)
+	if s.loginTwoFactorPolicy != nil {
+		factors, err := s.loginTwoFactorPolicy.LoginRequiredFactors(ctx, user)
+		if err != nil {
+			return nil, ErrTwoFactorPolicyUnavailable
+		}
+		return factors, nil
+	}
+	if s.settingService == nil {
+		if user.TotpEnabled {
+			return []Factor{FactorTOTP}, nil
+		}
+		return nil, nil
+	}
+	if s.settingService.LoginRequiresTOTP(ctx, user) {
+		return []Factor{FactorTOTP}, nil
+	}
+	return nil, nil
 }
 
 func (s *AuthService) LoginOrRegisterVerifiedEmailOAuthWithInvitation(
@@ -137,6 +153,18 @@ func (s *AuthService) loginOrRegisterVerifiedEmailOAuth(
 	if !user.IsActive() {
 		return nil, nil, ErrUserNotActive
 	}
+	// 登录二次验证必须在任何写库操作（绑定 auth_identities、修改用户名、发放首次绑定默认赠额）之前判定：
+	// 已有账号只要绑定了任一登录 2FA 因子（TOTP / Passkey / 两者），立即返回 ErrLoginTOTPRequired，
+	// 由 handler 转入 pending 2FA 登录会话，仅在全部因子通过后才真正落库绑定与签发会话。
+	if !created {
+		factors, factorErr := s.loginRequiredFactors(ctx, user)
+		if factorErr != nil {
+			return nil, nil, factorErr
+		}
+		if len(factors) > 0 {
+			return nil, user, ErrLoginTOTPRequired
+		}
+	}
 	if err := s.ensureEmailOAuthIdentity(ctx, user.ID, EmailOAuthIdentityInput{
 		ProviderType:     providerType,
 		ProviderKey:      providerKey,
@@ -163,12 +191,6 @@ func (s *AuthService) loginOrRegisterVerifiedEmailOAuth(
 		}
 	} else {
 		user = s.applyOAuthSignupPromoCode(ctx, user, promoCode)
-	}
-	// 登录二次验证不能被第三方 OAuth 绕过：密码登录与待定 OAuth 绑定流都会在
-	// step-up 前要求 TOTP，这条"邮箱已存在则直接登录"的路径必须同口径。
-	// 返回已解析出的 user，由 handler 创建 TOTP 临时登录会话（不签发 token）。
-	if s.loginRequiresTOTP(ctx, user) {
-		return nil, user, ErrLoginTOTPRequired
 	}
 	s.RecordSuccessfulLogin(ctx, user.ID)
 

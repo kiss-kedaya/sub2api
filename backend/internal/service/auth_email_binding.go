@@ -271,6 +271,7 @@ func (s *AuthService) revokeEmailIdentitySessions(ctx context.Context, userID in
 	if err := s.RevokeAllUserSessions(ctx, userID); err != nil {
 		logger.LegacyPrintf("service.auth", "[Auth] Failed to revoke refresh sessions after email identity bind for user %d: %v", userID, err)
 	}
+	s.RevokePersonalAPIKeyQuietly(ctx, userID, "email identity bind")
 }
 
 func replaceBoundEmailAuthIdentityWithClient(

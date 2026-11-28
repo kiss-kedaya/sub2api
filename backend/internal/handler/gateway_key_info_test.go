@@ -280,21 +280,26 @@ func TestKeyInfoUnlimitedKeyHasNoQuotaOrWindows(t *testing.T) {
 func TestKeyInfoSaysWhyAKeyCannotBeUsed(t *testing.T) {
 	f := newKeyInfoFixture(t)
 	for cause, mutate := range map[string]func(*service.APIKey){
-		"expired":           func(k *service.APIKey) { k.Status = service.StatusAPIKeyExpired },
 		"quota_exhausted":   func(k *service.APIKey) { k.Status = service.StatusAPIKeyQuotaExhausted },
 		"disabled":          func(k *service.APIKey) { k.Status = "inactive" },
 		"group_unavailable": func(k *service.APIKey) { g := *k.Group; g.Status = "inactive"; k.Group = &g },
 	} {
 		t.Run(cause, func(t *testing.T) {
 			code, body, _ := f.call(t, "/v1/sub2api/key", f.handler.KeyInfo, mutate)
-			require.Equal(t, http.StatusOK, code, "an unusable key can still describe itself")
+			require.Equal(t, http.StatusOK, code, "a non-expired unusable key can still describe itself")
 			require.Equal(t, false, body["is_usable"])
 			require.Equal(t, cause, body["unusable_cause"])
 		})
 	}
-	t.Run("runtime expiry beats an active status", func(t *testing.T) {
-		_, body, _ := f.call(t, "/v1/sub2api/key", f.handler.KeyInfo, func(k *service.APIKey) { past := time.Now().Add(-time.Hour); k.ExpiresAt = &past })
-		require.Equal(t, "expired", body["unusable_cause"])
+	t.Run("expired status is rejected", func(t *testing.T) {
+		code, _, raw := f.call(t, "/v1/sub2api/key", f.handler.KeyInfo, func(k *service.APIKey) { k.Status = service.StatusAPIKeyExpired })
+		require.Equal(t, http.StatusForbidden, code)
+		require.NotContains(t, raw, "sub2api.key")
+	})
+	t.Run("runtime expiry is rejected even when status is active", func(t *testing.T) {
+		code, _, raw := f.call(t, "/v1/sub2api/key", f.handler.KeyInfo, func(k *service.APIKey) { past := time.Now().Add(-time.Hour); k.ExpiresAt = &past })
+		require.Equal(t, http.StatusForbidden, code)
+		require.NotContains(t, raw, "sub2api.key")
 	})
 	t.Run("runtime quota beats an active status", func(t *testing.T) {
 		_, body, _ := f.call(t, "/v1/sub2api/key", f.handler.KeyInfo, func(k *service.APIKey) { k.QuotaUsed = k.Quota })

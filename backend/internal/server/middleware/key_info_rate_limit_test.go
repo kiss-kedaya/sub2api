@@ -186,7 +186,7 @@ func TestIsKeySelfServicePath(t *testing.T) {
 		"/v1/sub2api/key":      true,
 		"/v1/sub2api/groups":   true,
 		"/v1/sub2api/usage":    true,
-		"/v1/sub2api/account":  true,  // a key that is expired or out of quota must still be able to read its account
+		"/v1/sub2api/account":  true,  // skips wallet/subscription billing; expired & quota-exhausted keys are still rejected
 		"/v1/usage":            false, // keeps its own, older handling
 		"/v1/models":           false,
 		"/v1/sub2api/":         false,

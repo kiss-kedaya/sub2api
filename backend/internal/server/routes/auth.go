@@ -1,6 +1,7 @@
 package routes
 
 import (
+	"context"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/handler"
@@ -24,6 +25,17 @@ func RegisterAuthRoutes(
 ) {
 	// 创建速率限制器
 	rateLimiter := middleware.NewRateLimiter(redisClient)
+	if h != nil && h.Auth != nil {
+		// 统一 OAuth bind-login 的 IP+邮箱限流器，避免攻击者跨 provider 端点拆桶绕过。
+		h.Auth.SetBindLoginRateLimiter(func(ctx context.Context, key string, limit int, window time.Duration) (bool, time.Duration, error) {
+			res, err := rateLimiter.Allow(ctx, key, limit, window)
+			return res.Allowed, res.RetryAfter, err
+		})
+		// 将个人接口密钥吊销器同步给 TotpHandler/TotpService，确保关闭/重置 2FA 时同步吊销 uak_。
+		if h.Totp != nil {
+			h.Totp.SetPersonalAPIKeyRevoker(h.Auth.PersonalAPIKeyRevoker())
+		}
+	}
 
 	// 公开接口
 	auth := v1.Group("/auth")
@@ -158,7 +170,7 @@ func RegisterAuthRoutes(
 			h.Auth.CreatePendingOAuthAccount,
 		)
 		auth.POST("/oauth/pending/bind-login",
-			rateLimiter.LimitWithOptions("oauth-pending-bind-login", 10, time.Minute, middleware.RateLimitOptions{
+			rateLimiter.LimitWithOptions("oauth-bind-login", 10, time.Minute, middleware.RateLimitOptions{
 				FailureMode: middleware.RateLimitFailClose,
 			}),
 			h.Auth.BindPendingOAuthLogin,
@@ -170,7 +182,7 @@ func RegisterAuthRoutes(
 			h.Auth.CompleteLinuxDoOAuthRegistration,
 		)
 		auth.POST("/oauth/linuxdo/bind-login",
-			rateLimiter.LimitWithOptions("oauth-linuxdo-bind-login", 20, time.Minute, middleware.RateLimitOptions{
+			rateLimiter.LimitWithOptions("oauth-bind-login", 10, time.Minute, middleware.RateLimitOptions{
 				FailureMode: middleware.RateLimitFailClose,
 			}),
 			h.Auth.BindLinuxDoOAuthLogin,
@@ -188,7 +200,7 @@ func RegisterAuthRoutes(
 			h.Auth.CompleteWeChatOAuthRegistration,
 		)
 		auth.POST("/oauth/wechat/bind-login",
-			rateLimiter.LimitWithOptions("oauth-wechat-bind-login", 20, time.Minute, middleware.RateLimitOptions{
+			rateLimiter.LimitWithOptions("oauth-bind-login", 10, time.Minute, middleware.RateLimitOptions{
 				FailureMode: middleware.RateLimitFailClose,
 			}),
 			h.Auth.BindWeChatOAuthLogin,
@@ -217,7 +229,7 @@ func RegisterAuthRoutes(
 			h.Auth.CompleteOIDCOAuthRegistration,
 		)
 		auth.POST("/oauth/oidc/bind-login",
-			rateLimiter.LimitWithOptions("oauth-oidc-bind-login", 20, time.Minute, middleware.RateLimitOptions{
+			rateLimiter.LimitWithOptions("oauth-bind-login", 10, time.Minute, middleware.RateLimitOptions{
 				FailureMode: middleware.RateLimitFailClose,
 			}),
 			h.Auth.BindOIDCOAuthLogin,
@@ -246,7 +258,7 @@ func RegisterAuthRoutes(
 			h.Auth.CompleteDingTalkOAuthRegistration,
 		)
 		auth.POST("/oauth/dingtalk/bind-login",
-			rateLimiter.LimitWithOptions("oauth-dingtalk-bind-login", 20, time.Minute, middleware.RateLimitOptions{
+			rateLimiter.LimitWithOptions("oauth-bind-login", 10, time.Minute, middleware.RateLimitOptions{
 				FailureMode: middleware.RateLimitFailClose,
 			}),
 			h.Auth.BindDingTalkOAuthLogin,

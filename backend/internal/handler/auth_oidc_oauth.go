@@ -28,7 +28,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/imroc/req/v3"
 	"github.com/tidwall/gjson"
 )
 
@@ -397,15 +396,19 @@ func (h *AuthHandler) OIDCOAuthCallback(c *gin.Context) {
 		upstreamClaims["compat_email"] = compatEmail
 	}
 	if intent == oauthIntentBindCurrentUser {
-		targetUserID, err := h.readOAuthBindUserIDFromCookie(c, oidcOAuthBindUserCookieName)
+		bindMeta, err := h.readOAuthBindUserMetaFromCookie(c, oidcOAuthBindUserCookieName)
 		if err != nil {
 			redirectOAuthError(c, frontendCallback, "invalid_state", "invalid oauth bind target", "")
 			return
 		}
+		targetUserID := bindMeta.UserID
 		if err := h.createOAuthPendingSession(c, oauthPendingSessionPayload{
 			Intent:                 oauthIntentBindCurrentUser,
 			Identity:               identityRef,
 			TargetUserID:           &targetUserID,
+			BindTokenIssuedAt:      bindMeta.TokenIssuedAt,
+			BindTokenVersion:       bindMeta.TokenVersion,
+			HasBindTokenVersion:    bindMeta.HasTokenVersion,
 			ResolvedEmail:          email,
 			RedirectTo:             redirectTo,
 			BrowserSessionKey:      browserSessionKey,
@@ -740,7 +743,10 @@ func oidcExchangeCode(
 	redirectURI string,
 	codeVerifier string,
 ) (*oidcTokenResponse, error) {
-	client := req.C().SetTimeout(30 * time.Second)
+	tokenURL, err := service.ValidateOIDCOutboundURL(ctx, cfg.TokenURL)
+	if err != nil {
+		return nil, fmt.Errorf("token url not allowed: %w", err)
+	}
 
 	form := url.Values{}
 	form.Set("grant_type", "authorization_code")
@@ -751,26 +757,39 @@ func oidcExchangeCode(
 		form.Set("code_verifier", codeVerifier)
 	}
 
-	r := client.R().
-		SetContext(ctx).
-		SetHeader("Accept", "application/json")
-
+	var useBasicAuth bool
 	switch strings.ToLower(strings.TrimSpace(cfg.TokenAuthMethod)) {
 	case "", "client_secret_post":
 		form.Set("client_secret", cfg.ClientSecret)
 	case "client_secret_basic":
-		r.SetBasicAuth(cfg.ClientID, cfg.ClientSecret)
+		useBasicAuth = true
 	case "none":
 	default:
 		return nil, fmt.Errorf("unsupported token_auth_method: %s", cfg.TokenAuthMethod)
 	}
 
-	resp, err := r.SetFormDataFromValues(form).Post(cfg.TokenURL)
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, tokenURL, strings.NewReader(form.Encode()))
+	if err != nil {
+		return nil, fmt.Errorf("build token request: %w", err)
+	}
+	httpReq.Header.Set("Accept", "application/json")
+	httpReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	if useBasicAuth {
+		httpReq.SetBasicAuth(cfg.ClientID, cfg.ClientSecret)
+	}
+
+	resp, err := service.NewOIDCNoRedirectOutboundHTTPClient(30 * time.Second).Do(httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("request token: %w", err)
 	}
-	body := strings.TrimSpace(resp.String())
-	if !resp.IsSuccessState() {
+	defer func() { _ = resp.Body.Close() }()
+
+	rawBody, err := service.ReadOIDCResponseBody(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read token response: %w", err)
+	}
+	body := strings.TrimSpace(string(rawBody))
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 		providerErr, providerDesc := parseOAuthProviderError(body)
 		return nil, &oidcTokenExchangeError{
 			StatusCode:          resp.StatusCode,
@@ -852,26 +871,38 @@ func oidcFetchUserInfo(
 	if token == nil || strings.TrimSpace(token.AccessToken) == "" {
 		return nil, errors.New("missing access_token for userinfo request")
 	}
+	userInfoURL, err := service.ValidateOIDCOutboundURL(ctx, cfg.UserInfoURL)
+	if err != nil {
+		return nil, fmt.Errorf("userinfo url not allowed: %w", err)
+	}
 
-	client := req.C().SetTimeout(30 * time.Second)
 	authorization, err := buildBearerAuthorization(token.TokenType, token.AccessToken)
 	if err != nil {
 		return nil, fmt.Errorf("invalid token for userinfo request: %w", err)
 	}
 
-	resp, err := client.R().
-		SetContext(ctx).
-		SetHeader("Accept", "application/json").
-		SetHeader("Authorization", authorization).
-		Get(cfg.UserInfoURL)
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, userInfoURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("build userinfo request: %w", err)
+	}
+	httpReq.Header.Set("Accept", "application/json")
+	httpReq.Header.Set("Authorization", authorization)
+
+	resp, err := service.NewOIDCSameOriginOutboundHTTPClient(30 * time.Second).Do(httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("request userinfo: %w", err)
 	}
-	if !resp.IsSuccessState() {
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 		return nil, fmt.Errorf("userinfo status=%d", resp.StatusCode)
 	}
+	body, err := service.ReadOIDCResponseBody(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read userinfo response: %w", err)
+	}
 
-	return oidcParseUserInfo(resp.String(), cfg), nil
+	return oidcParseUserInfo(string(body), cfg), nil
 }
 
 func oidcParseUserInfo(body string, cfg config.OIDCConnectConfig) *oidcUserInfoClaims {
@@ -1041,20 +1072,31 @@ func oidcFetchJWKSet(ctx context.Context, jwksURL string) (*oidcJWKSet, error) {
 	if jwksURL == "" {
 		return nil, errors.New("missing jwks_url")
 	}
-	resp, err := req.C().
-		SetTimeout(30*time.Second).
-		R().
-		SetContext(ctx).
-		SetHeader("Accept", "application/json").
-		Get(jwksURL)
+	normalizedURL, err := service.ValidateOIDCOutboundURL(ctx, jwksURL)
+	if err != nil {
+		return nil, fmt.Errorf("jwks url not allowed: %w", err)
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, normalizedURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("build jwks request: %w", err)
+	}
+	httpReq.Header.Set("Accept", "application/json")
+
+	resp, err := service.NewOIDCOutboundHTTPClient(30 * time.Second).Do(httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("request jwks: %w", err)
 	}
-	if !resp.IsSuccessState() {
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 		return nil, fmt.Errorf("jwks status=%d", resp.StatusCode)
 	}
+	body, err := service.ReadOIDCResponseBody(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read jwks: %w", err)
+	}
 	set := &oidcJWKSet{}
-	if err := json.Unmarshal(resp.Bytes(), set); err != nil {
+	if err := json.Unmarshal(body, set); err != nil {
 		return nil, fmt.Errorf("parse jwks: %w", err)
 	}
 	if len(set.Keys) == 0 {
@@ -1281,33 +1323,50 @@ func (h *AuthHandler) tryOIDCVerifiedEmailFastPath(
 		readOAuthPromoCode(c),
 	)
 	if err != nil {
-		// 已启用 TOTP 的已有账号：与 GitHub/Google 邮箱 OAuth 同口径，
-		// 只下发 2FA 挑战，不签发会话，也不退回会直接登录的 pending 流程。
-		if errors.Is(err, service.ErrLoginTOTPRequired) && user != nil {
+		// 已启用 2FA（TOTP / Passkey / 双因子）的已有账号：与 GitHub/Google 邮箱 OAuth 同口径，
+		// 只下发 2FA 挑战，不落库绑定也不签发会话，更不退回会直接登录的 pending 流程。
+		if errors.Is(err, service.ErrLoginTOTPRequired) {
 			secureCookie := h.isRequestHTTPS(c)
 			clearOAuthPendingSessionCookie(c, secureCookie)
 			clearOAuthPendingBrowserCookie(c, secureCookie)
+			if user == nil {
+				redirectOAuthError(c, frontendCallback, "two_factor_unavailable", "two-factor verification is unavailable", "")
+				return true
+			}
 			provider := strings.TrimSpace(identity.ProviderType)
 			if provider == "" {
 				provider = "oidc"
 			}
-			h.redirectEmailOAuthTOTPChallenge(c, user, provider, frontendCallback, redirectTo)
+			h.redirectEmailOAuthPending2FAChallenge(c, user, provider, input, frontendCallback, redirectTo)
+			return true
+		}
+		if errors.Is(err, service.ErrTwoFactorPolicyUnavailable) {
+			secureCookie := h.isRequestHTTPS(c)
+			clearOAuthPendingSessionCookie(c, secureCookie)
+			clearOAuthPendingBrowserCookie(c, secureCookie)
+			redirectOAuthError(c, frontendCallback, "two_factor_unavailable", "two-factor verification is unavailable", "")
 			return true
 		}
 		log.Printf("[OIDC OAuth] verified-email fast path skipped: reason=%s", infraerrors.Reason(err))
 		return false
 	}
 
-	markAuthAuditSuccess(c, user.ID, user.Email)
-	fragment := url.Values{}
-	fragment.Set("access_token", tokenPair.AccessToken)
-	fragment.Set("refresh_token", tokenPair.RefreshToken)
-	fragment.Set("expires_in", fmt.Sprintf("%d", tokenPair.ExpiresIn))
-	fragment.Set("token_type", "Bearer")
-	fragment.Set("redirect", redirectTo)
 	secureCookie := h.isRequestHTTPS(c)
 	clearOAuthPendingSessionCookie(c, secureCookie)
 	clearOAuthPendingBrowserCookie(c, secureCookie)
-	redirectWithFragment(c, frontendCallback, fragment)
+	if err := h.ensureBackendModeAllowsUser(ctx, user); err != nil {
+		if tokenPair != nil {
+			_ = h.authService.RevokeRefreshToken(ctx, tokenPair.RefreshToken)
+		}
+		redirectOAuthError(c, frontendCallback, "login_blocked", infraerrors.Reason(err), infraerrors.Message(err))
+		return true
+	}
+
+	markAuthAuditSuccess(c, user.ID, user.Email)
+	provider := strings.TrimSpace(identity.ProviderType)
+	if provider == "" {
+		provider = "oidc"
+	}
+	h.redirectEmailOAuthSession(c, provider, frontendCallback, redirectTo, tokenPair, user)
 	return true
 }

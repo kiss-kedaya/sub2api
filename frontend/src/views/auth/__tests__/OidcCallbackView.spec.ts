@@ -11,8 +11,11 @@ const setPendingAuthSession = vi.fn()
 const clearPendingAuthSession = vi.fn()
 const exchangePendingOAuthCompletion = vi.fn()
 const completeOIDCOAuthRegistration = vi.fn()
+const exchangeOAuthLoginCode = vi.fn()
 const getPublicSettings = vi.fn()
 const login2FA = vi.fn()
+const login2FAPasskeyFinish = vi.fn()
+const acceptLoginChallenge = vi.fn()
 const apiClientPost = vi.fn()
 const sendVerifyCode = vi.fn()
 const sendPendingOAuthVerifyCode = vi.fn()
@@ -66,14 +69,23 @@ vi.mock('@/api/auth', async () => {
   const actual = await vi.importActual<typeof import('@/api/auth')>('@/api/auth')
   return {
     ...actual,
+    exchangeOAuthLoginCode: (...args: any[]) => exchangeOAuthLoginCode(...args),
     exchangePendingOAuthCompletion: (...args: any[]) => exchangePendingOAuthCompletion(...args),
     completeOIDCOAuthRegistration: (...args: any[]) => completeOIDCOAuthRegistration(...args),
     getPublicSettings: (...args: any[]) => getPublicSettings(...args),
     login2FA: (...args: any[]) => login2FA(...args),
+    login2FAPasskeyFinish: (...args: any[]) => login2FAPasskeyFinish(...args),
     sendVerifyCode: (...args: any[]) => sendVerifyCode(...args),
     sendPendingOAuthVerifyCode: (...args: any[]) => sendPendingOAuthVerifyCode(...args)
   }
 })
+
+vi.mock('@/api/passkey', () => ({
+  passkeyAPI: {
+    isSupported: () => true,
+    acceptLoginChallenge: (...args: any[]) => acceptLoginChallenge(...args)
+  }
+}))
 
 describe('OidcCallbackView', () => {
   beforeEach(() => {
@@ -83,10 +95,13 @@ describe('OidcCallbackView', () => {
     setToken.mockReset()
     setPendingAuthSession.mockReset()
     clearPendingAuthSession.mockReset()
+    exchangeOAuthLoginCode.mockReset()
     exchangePendingOAuthCompletion.mockReset()
     completeOIDCOAuthRegistration.mockReset()
     getPublicSettings.mockReset()
     login2FA.mockReset()
+    login2FAPasskeyFinish.mockReset()
+    acceptLoginChallenge.mockReset()
     apiClientPost.mockReset()
     sendVerifyCode.mockReset()
     sendPendingOAuthVerifyCode.mockReset()
@@ -686,5 +701,75 @@ describe('OidcCallbackView', () => {
     })
     expect(setToken).toHaveBeenCalledWith('2fa-access-token')
     expect(replace).toHaveBeenCalledWith('/profile')
+  })
+
+  it('exchanges one-time fragment code for token pair in OIDC callback', async () => {
+    window.location.hash = '#code=oidc-one-time-code&redirect=%2Fkeys'
+    exchangeOAuthLoginCode.mockResolvedValue({
+      access_token: 'exchanged-oidc-access',
+      refresh_token: 'exchanged-oidc-refresh',
+      expires_in: 3600,
+      redirect: '/keys'
+    })
+    setToken.mockResolvedValue({})
+
+    mount(OidcCallbackView, {
+      global: {
+        stubs: {
+          AuthLayout: { template: '<div><slot /></div>' },
+          Icon: true,
+          RouterLink: { template: '<a><slot /></a>' },
+          transition: false
+        }
+      }
+    })
+    await flushPromises()
+
+    expect(exchangeOAuthLoginCode).toHaveBeenCalledWith('oidc-one-time-code')
+    expect(exchangePendingOAuthCompletion).not.toHaveBeenCalled()
+    expect(setToken).toHaveBeenCalledWith('exchanged-oidc-access')
+    expect(replace).toHaveBeenCalledWith('/keys')
+  })
+
+  it('completes passkey-only challenge returned by OIDC pending exchange', async () => {
+    const pkOptions = { publicKey: { challenge: 'oidc-pk-chal' } }
+    exchangePendingOAuthCompletion.mockResolvedValue({
+      requires_2fa: true,
+      temp_token: 'oidc-pk-temp',
+      user_email_masked: 'p***k@example.com',
+      required_factors: ['passkey'],
+      passed_factors: [],
+      next_factor: 'passkey',
+      passkey_session_token: 'oidc-pk-sess',
+      passkey_options: pkOptions,
+      redirect: '/dashboard'
+    })
+    acceptLoginChallenge.mockResolvedValue({ id: 'oidc-cred', type: 'public-key' })
+    login2FAPasskeyFinish.mockResolvedValue({ access_token: 'oidc-pk-token' })
+    setToken.mockResolvedValue({})
+
+    const wrapper = mount(OidcCallbackView, {
+      global: {
+        stubs: {
+          AuthLayout: { template: '<div><slot /></div>' },
+          Icon: true,
+          RouterLink: { template: '<a><slot /></a>' },
+          transition: false
+        }
+      }
+    })
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="login-passkey-pane"]').exists()).toBe(true)
+    await wrapper.get('[data-testid="passkey-login-verify"]').trigger('click')
+    await flushPromises()
+
+    expect(login2FAPasskeyFinish).toHaveBeenCalledWith({
+      temp_token: 'oidc-pk-temp',
+      session_token: 'oidc-pk-sess',
+      credential: { id: 'oidc-cred', type: 'public-key' }
+    })
+    expect(setToken).toHaveBeenCalledWith('oidc-pk-token')
+    expect(replace).toHaveBeenCalledWith('/dashboard')
   })
 })

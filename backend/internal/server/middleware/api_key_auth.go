@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"path"
 	"strings"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
@@ -25,12 +26,12 @@ func NewAPIKeyAuthMiddleware(apiKeyService *service.APIKeyService, subscriptionS
 // apiKeyAuthWithSubscription API Key认证中间件（支持订阅验证）
 //
 // 中间件职责分为两层：
-//   - 鉴权（Authentication）：验证 Key 有效性、用户状态、IP 限制 —— 始终执行
-//   - 计费执行（Billing Enforcement）：过期/配额/订阅/余额检查 —— skipBilling 时整块跳过
+//   - 鉴权（Authentication）：验证 Key 有效性、过期状态、用户状态、IP 限制 —— 始终执行（含 SimpleMode 与 skipBilling）
+//   - 计费执行（Billing Enforcement）：配额/订阅/余额检查 —— skipBilling 时整块跳过（但账号级 /v1/sub2api/account 拒绝配额耗尽 Key）
 //
 // /v1/models、/v1/usage、/v1/sub2api/{billing,key,groups,usage,account} 端点与异步生图任务查询只需鉴权，不需要计费执行。
-// usage 允许过期/配额耗尽的 Key 查询自身用量，billing 用于读取当前 Key 的倍率配置，key/groups/usage/account 是 Key 自助查询，
-// 异步生图查询允许已耗尽额度的 Key 拉取自身任务结果。
+// usage / key 允许配额耗尽的 Key 查询自身用量与状态，billing 用于读取当前 Key 的倍率配置，
+// 异步生图查询允许已耗尽额度的 Key 拉取自身任务结果；已过期的 Key 在基础鉴权层一律 403 API_KEY_EXPIRED 拒绝。
 func apiKeyAuthWithSubscription(apiKeyService *service.APIKeyService, subscriptionService *service.SubscriptionService, cfg *config.Config) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// ── 1. 提取 API Key ──────────────────────────────────────────
@@ -126,7 +127,7 @@ func apiKeyAuthWithSubscription(apiKeyService *service.APIKeyService, subscripti
 
 		// ── 3. 基础鉴权（始终执行） ─────────────────────────────────
 
-		// disabled / 未知状态 → 无条件拦截（expired 和 quota_exhausted 留给计费阶段）
+		// disabled / 未知状态 → 无条件拦截（expired 紧随其后在基础鉴权拦截；quota_exhausted 留给账号级门禁与计费阶段）
 		if !apiKey.IsActive() &&
 			apiKey.Status != service.StatusAPIKeyExpired &&
 			apiKey.Status != service.StatusAPIKeyQuotaExhausted {
@@ -139,6 +140,13 @@ func apiKeyAuthWithSubscription(apiKeyService *service.APIKeyService, subscripti
 		}
 
 		anonymousCredentialSuccess(c)
+
+		// 过期属于凭证生命周期边界，必须在 SimpleMode 与 skipBilling 之前无条件拦截，
+		// 避免已过期 Key 继续读取 /v1/sub2api/{key,account,groups,usage,billing}、/v1/models 或在 SimpleMode 放行。
+		if apiKey.Status == service.StatusAPIKeyExpired || apiKey.IsExpired() {
+			AbortWithError(c, http.StatusForbidden, "API_KEY_EXPIRED", "API key 已过期")
+			return
+		}
 
 		// 检查 IP 限制（白名单/黑名单）
 		// 注意：错误信息故意模糊，避免暴露具体的 IP 限制机制
@@ -223,25 +231,19 @@ func apiKeyAuthWithSubscription(apiKeyService *service.APIKeyService, subscripti
 			}
 		}
 
+		// 账号级信息面（/v1/sub2api/account）暴露所属账号的钱包余额、全部订阅与全账号当日消耗，
+		// 配额已耗尽的 Key 不得继续读取全账号财务概览（仍可访问 /v1/sub2api/key 与 /v1/usage 查看自身状态）。
+		if (c.FullPath() == "/v1/sub2api/account" || path.Clean(c.Request.URL.Path) == "/v1/sub2api/account") &&
+			(apiKey.Status == service.StatusAPIKeyQuotaExhausted || apiKey.IsQuotaExhausted()) {
+			abortWithAPIKeyQuotaError(c)
+			return
+		}
+
 		// ── 6. 计费执行（skipBilling 时整块跳过） ────────────────────
 
 		if !skipBilling {
-			// Key 状态检查
-			switch apiKey.Status {
-			case service.StatusAPIKeyQuotaExhausted:
-				abortWithAPIKeyQuotaError(c)
-				return
-			case service.StatusAPIKeyExpired:
-				AbortWithError(c, 403, "API_KEY_EXPIRED", "API key 已过期")
-				return
-			}
-
-			// 运行时过期/配额检查（即使状态是 active，也要检查时间和用量）
-			if apiKey.IsExpired() {
-				AbortWithError(c, 403, "API_KEY_EXPIRED", "API key 已过期")
-				return
-			}
-			if apiKey.IsQuotaExhausted() {
+			// Key 配额检查（过期已在基础鉴权阶段拦截）
+			if apiKey.Status == service.StatusAPIKeyQuotaExhausted || apiKey.IsQuotaExhausted() {
 				abortWithAPIKeyQuotaError(c)
 				return
 			}

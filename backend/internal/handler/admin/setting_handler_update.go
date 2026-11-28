@@ -1218,13 +1218,13 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 			response.BadRequest(c, "OIDC Issuer URL is required when enabled")
 			return
 		}
-		if err := config.ValidateAbsoluteHTTPURL(req.OIDCConnectIssuerURL); err != nil {
-			response.BadRequest(c, "OIDC Issuer URL must be an absolute http(s) URL")
+		if _, err := service.ValidateOIDCOutboundURL(c.Request.Context(), req.OIDCConnectIssuerURL); err != nil {
+			response.BadRequest(c, "OIDC Issuer URL is not allowed")
 			return
 		}
 		if req.OIDCConnectDiscoveryURL != "" {
-			if err := config.ValidateAbsoluteHTTPURL(req.OIDCConnectDiscoveryURL); err != nil {
-				response.BadRequest(c, "OIDC Discovery URL must be an absolute http(s) URL")
+			if _, err := service.ValidateOIDCOutboundURL(c.Request.Context(), req.OIDCConnectDiscoveryURL); err != nil {
+				response.BadRequest(c, "OIDC Discovery URL is not allowed")
 				return
 			}
 		}
@@ -1235,14 +1235,14 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 			}
 		}
 		if req.OIDCConnectTokenURL != "" {
-			if err := config.ValidateAbsoluteHTTPURL(req.OIDCConnectTokenURL); err != nil {
-				response.BadRequest(c, "OIDC Token URL must be an absolute http(s) URL")
+			if _, err := service.ValidateOIDCOutboundURL(c.Request.Context(), req.OIDCConnectTokenURL); err != nil {
+				response.BadRequest(c, "OIDC Token URL is not allowed")
 				return
 			}
 		}
 		if req.OIDCConnectUserInfoURL != "" {
-			if err := config.ValidateAbsoluteHTTPURL(req.OIDCConnectUserInfoURL); err != nil {
-				response.BadRequest(c, "OIDC UserInfo URL must be an absolute http(s) URL")
+			if _, err := service.ValidateOIDCOutboundURL(c.Request.Context(), req.OIDCConnectUserInfoURL); err != nil {
+				response.BadRequest(c, "OIDC UserInfo URL is not allowed")
 				return
 			}
 		}
@@ -1281,8 +1281,8 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 			return
 		}
 		if req.OIDCConnectJWKSURL != "" {
-			if err := config.ValidateAbsoluteHTTPURL(req.OIDCConnectJWKSURL); err != nil {
-				response.BadRequest(c, "OIDC JWKS URL must be an absolute http(s) URL")
+			if _, err := service.ValidateOIDCOutboundURL(c.Request.Context(), req.OIDCConnectJWKSURL); err != nil {
+				response.BadRequest(c, "OIDC JWKS URL is not allowed")
 				return
 			}
 		}

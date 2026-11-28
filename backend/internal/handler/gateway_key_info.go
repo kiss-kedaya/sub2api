@@ -617,5 +617,9 @@ func (h *GatewayHandler) keyInfoSubject(c *gin.Context) (*service.APIKey, bool) 
 		h.errorResponse(c, http.StatusNotFound, "not_found_error", "Key information is not supported in simple mode")
 		return nil, false
 	}
+	if apiKey.Status == service.StatusAPIKeyExpired || apiKey.IsExpired() {
+		h.errorResponse(c, http.StatusForbidden, "permission_error", "API key 已过期")
+		return nil, false
+	}
 	return apiKey, true
 }

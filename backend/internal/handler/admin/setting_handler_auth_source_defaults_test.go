@@ -7,11 +7,13 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"testing"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
 	"github.com/Wei-Shaw/sub2api/internal/service"
+	"github.com/Wei-Shaw/sub2api/internal/util/urlvalidator"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
@@ -329,7 +331,11 @@ func TestSettingHandler_UpdateSettings_PersistsExplicitFalseOIDCCompatibilityFla
 
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
-	c.Request = httptest.NewRequest(http.MethodPut, "/api/v1/admin/settings", bytes.NewReader(rawBody))
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/admin/settings", bytes.NewReader(rawBody))
+	req = req.WithContext(urlvalidator.WithResolver(req.Context(), func(context.Context, string) ([]netip.Addr, error) {
+		return []netip.Addr{netip.MustParseAddr("93.184.216.34")}, nil
+	}))
+	c.Request = req
 	c.Request.Header.Set("Content-Type", "application/json")
 
 	handler.UpdateSettings(c)
@@ -405,7 +411,11 @@ func TestSettingHandler_UpdateSettings_DoesNotSolidifyImplicitOIDCSecurityDefaul
 
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
-	c.Request = httptest.NewRequest(http.MethodPut, "/api/v1/admin/settings", bytes.NewReader(rawBody))
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/admin/settings", bytes.NewReader(rawBody))
+	req = req.WithContext(urlvalidator.WithResolver(req.Context(), func(context.Context, string) ([]netip.Addr, error) {
+		return []netip.Addr{netip.MustParseAddr("93.184.216.34")}, nil
+	}))
+	c.Request = req
 	c.Request.Header.Set("Content-Type", "application/json")
 
 	handler.UpdateSettings(c)
@@ -511,4 +521,45 @@ func TestDiffSettings_IncludesAuthSourceDefaultsAndForceEmail(t *testing.T) {
 	require.Contains(t, changed, "auth_source_default_email_grant_on_signup")
 	require.Contains(t, changed, "auth_source_default_email_grant_on_first_bind")
 	require.Contains(t, changed, "force_email_on_third_party_signup")
+}
+
+func TestUpdateSettings_RejectsOIDCPrivateSSRFURLs(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	t.Cleanup(service.SetAdminOutboundAllowPrivateForTest(false))
+
+	cases := []struct {
+		name  string
+		field string
+		value string
+	}{
+		{"issuer loopback", "oidc_connect_issuer_url", "http://127.0.0.1:8080"},
+		{"discovery metadata", "oidc_connect_discovery_url", "http://169.254.169.254/latest/meta-data/"},
+		{"token private ip", "oidc_connect_token_url", "http://10.0.0.1/token"},
+		{"userinfo ipv6 loopback", "oidc_connect_userinfo_url", "http://[::1]:8080/userinfo"},
+		{"jwks file scheme", "oidc_connect_jwks_url", "file:///etc/passwd"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := &settingHandlerRepoStub{values: map[string]string{}}
+			settingService := service.NewSettingService(repo, &config.Config{})
+			handler := NewSettingHandler(settingService, nil, nil, nil, nil, nil, nil)
+
+			rawBody, err := json.Marshal(map[string]any{
+				"oidc_connect_enabled": true,
+				tc.field:               tc.value,
+			})
+			require.NoError(t, err)
+
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+			c.Request = httptest.NewRequest(http.MethodPut, "/api/v1/admin/settings", bytes.NewReader(rawBody))
+			c.Request.Header.Set("Content-Type", "application/json")
+
+			handler.UpdateSettings(c)
+
+			require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+			require.Empty(t, repo.lastUpdates, "rejected SSRF URL must not be persisted")
+		})
+	}
 }

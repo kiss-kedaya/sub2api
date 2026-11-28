@@ -555,6 +555,23 @@ func (h *AuthHandler) CompleteWeChatOAuthRegistration(c *gin.Context) {
 		return
 	}
 
+	client := h.entClient()
+	if client == nil {
+		response.ErrorFrom(c, infraerrors.ServiceUnavailable("PENDING_AUTH_NOT_READY", "pending auth service is not ready"))
+		return
+	}
+	if err := ensurePendingOAuthRegistrationIdentityAvailable(c.Request.Context(), client, session); err != nil {
+		respondPendingOAuthBindingApplyError(c, err)
+		return
+	}
+	decision, err := h.ensurePendingOAuthAdoptionDecision(c, session.ID, oauthAdoptionDecisionRequest{
+		AdoptDisplayName: req.AdoptDisplayName,
+		AdoptAvatar:      req.AdoptAvatar,
+	})
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
 	tokenPair, user, err := h.authService.LoginOrRegisterOAuthWithTokenPairAndPromoCode(
 		c.Request.Context(),
 		email,
@@ -568,26 +585,18 @@ func (h *AuthHandler) CompleteWeChatOAuthRegistration(c *gin.Context) {
 		response.ErrorFrom(c, err)
 		return
 	}
-	decision, err := h.ensurePendingOAuthAdoptionDecision(c, session.ID, oauthAdoptionDecisionRequest{
-		AdoptDisplayName: req.AdoptDisplayName,
-		AdoptAvatar:      req.AdoptAvatar,
-	})
-	if err != nil {
-		response.ErrorFrom(c, err)
-		return
-	}
-	if err := applyPendingOAuthAdoption(c.Request.Context(), h.entClient(), h.authService, h.userService, session, decision, &user.ID); err != nil {
-		response.ErrorFrom(c, infraerrors.InternalServer("PENDING_AUTH_ADOPTION_APPLY_FAILED", "failed to apply oauth profile adoption").WithCause(err))
+	if err := applyPendingOAuthAdoptionAndConsumeSession(c.Request.Context(), client, h.authService, h.userService, session, decision, user.ID); err != nil {
+		if errors.Is(err, service.ErrPendingAuthSessionConsumed) ||
+			errors.Is(err, service.ErrPendingAuthSessionExpired) ||
+			errors.Is(err, service.ErrPendingAuthSessionNotFound) {
+			clearOAuthPendingSessionCookie(c, secureCookie)
+			clearOAuthPendingBrowserCookie(c, secureCookie)
+		}
+		respondPendingOAuthBindingApplyError(c, err)
 		return
 	}
 	h.authService.RecordSuccessfulLogin(c.Request.Context(), user.ID)
 	markAuthAuditSuccess(c, user.ID, user.Email)
-	if _, err := pendingSvc.ConsumeBrowserSession(c.Request.Context(), sessionToken, browserSessionKey); err != nil {
-		clearOAuthPendingSessionCookie(c, secureCookie)
-		clearOAuthPendingBrowserCookie(c, secureCookie)
-		response.ErrorFrom(c, err)
-		return
-	}
 	clearOAuthPendingSessionCookie(c, secureCookie)
 	clearOAuthPendingBrowserCookie(c, secureCookie)
 
@@ -711,44 +720,52 @@ func (h *AuthHandler) createWeChatBindPendingSession(
 	browserSessionKey string,
 	upstreamClaims map[string]any,
 ) error {
-	currentUser, err := h.readOAuthBindTargetUser(c, wechatOAuthBindUserCookieName)
+	currentUser, bindMeta, err := h.readOAuthBindTargetUser(c, wechatOAuthBindUserCookieName)
 	if err != nil {
 		return err
 	}
 	if err := h.ensureWeChatBindOwnership(c.Request.Context(), currentUser.ID, providerSubject, cfg, channelSubject); err != nil {
 		return err
 	}
-	return h.createWeChatPendingSession(
-		c,
-		wechatOAuthIntentBind,
-		providerSubject,
-		currentUser.Email,
-		redirectTo,
-		browserSessionKey,
-		upstreamClaims,
-		nil,
-		nil,
-		&currentUser.ID,
-	)
+	targetUserID := currentUser.ID
+	return h.createOAuthPendingSession(c, oauthPendingSessionPayload{
+		Intent: wechatOAuthIntentBind,
+		Identity: service.PendingAuthIdentityKey{
+			ProviderType:    "wechat",
+			ProviderKey:     wechatOAuthProviderKey,
+			ProviderSubject: providerSubject,
+		},
+		TargetUserID:           &targetUserID,
+		BindTokenIssuedAt:      bindMeta.TokenIssuedAt,
+		BindTokenVersion:       bindMeta.TokenVersion,
+		HasBindTokenVersion:    bindMeta.HasTokenVersion,
+		ResolvedEmail:          currentUser.Email,
+		RedirectTo:             redirectTo,
+		BrowserSessionKey:      browserSessionKey,
+		UpstreamIdentityClaims: upstreamClaims,
+		CompletionResponse: map[string]any{
+			"redirect": redirectTo,
+		},
+	})
 }
 
-func (h *AuthHandler) readOAuthBindTargetUser(c *gin.Context, cookieName string) (*dbent.User, error) {
+func (h *AuthHandler) readOAuthBindTargetUser(c *gin.Context, cookieName string) (*dbent.User, oauthBindTargetMeta, error) {
 	client := h.entClient()
 	if client == nil {
-		return nil, infraerrors.ServiceUnavailable("PENDING_AUTH_NOT_READY", "pending auth service is not ready")
+		return nil, oauthBindTargetMeta{}, infraerrors.ServiceUnavailable("PENDING_AUTH_NOT_READY", "pending auth service is not ready")
 	}
-	userID, err := h.readOAuthBindUserIDFromCookie(c, cookieName)
+	bindMeta, err := h.readOAuthBindUserMetaFromCookie(c, cookieName)
 	if err != nil {
-		return nil, infraerrors.Unauthorized("AUTH_REQUIRED", "current user is required to bind wechat account")
+		return nil, oauthBindTargetMeta{}, infraerrors.Unauthorized("AUTH_REQUIRED", "current user is required to bind wechat account")
 	}
-	userEntity, err := client.User.Get(c.Request.Context(), userID)
+	userEntity, err := client.User.Get(c.Request.Context(), bindMeta.UserID)
 	if err != nil {
 		if dbent.IsNotFound(err) {
-			return nil, infraerrors.Unauthorized("AUTH_REQUIRED", "current user is required to bind wechat account")
+			return nil, oauthBindTargetMeta{}, infraerrors.Unauthorized("AUTH_REQUIRED", "current user is required to bind wechat account")
 		}
-		return nil, infraerrors.InternalServer("WECHAT_BIND_USER_LOOKUP_FAILED", "failed to load current user").WithCause(err)
+		return nil, oauthBindTargetMeta{}, infraerrors.InternalServer("WECHAT_BIND_USER_LOOKUP_FAILED", "failed to load current user").WithCause(err)
 	}
-	return userEntity, nil
+	return userEntity, bindMeta, nil
 }
 
 func (h *AuthHandler) ensureWeChatBindOwnership(

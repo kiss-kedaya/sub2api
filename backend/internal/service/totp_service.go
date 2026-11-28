@@ -14,6 +14,7 @@ import (
 	"github.com/pquerna/otp/totp"
 
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 )
 
 var (
@@ -144,6 +145,26 @@ type TotpService struct {
 	// passkeys 用于判定「用户是否绑定了 Passkey 因子」。装配缺失时为 nil：
 	// 视为该部署没有 Passkey 因子（旧部署行为），登录/step-up 只要求 TOTP。
 	passkeys PasskeyRepository
+	// personalAPIKeyRevoker 在关闭/重置 2FA 等高危安全状态变更时同步吊销个人接口密钥（uak_）。
+	personalAPIKeyRevoker PersonalAPIKeyRevoker
+}
+
+// SetPersonalAPIKeyRevoker 注入个人接口密钥吊销器，供 2FA 关闭/重置路径同步吊销 uak_。
+func (s *TotpService) SetPersonalAPIKeyRevoker(revoker PersonalAPIKeyRevoker) {
+	if s == nil {
+		return
+	}
+	s.personalAPIKeyRevoker = revoker
+}
+
+func (s *TotpService) revokePersonalAPIKeyQuietly(ctx context.Context, userID int64, reason string) {
+	if s == nil || s.personalAPIKeyRevoker == nil || userID <= 0 {
+		return
+	}
+	if _, err := s.personalAPIKeyRevoker.Delete(ctx, userID); err != nil {
+		logger.LegacyPrintf("service.totp",
+			"revoke personal api key after %s failed: user_id=%d err=%v", reason, userID, err)
+	}
 }
 
 // NewTotpService creates a new TOTP service
@@ -510,8 +531,8 @@ func (s *TotpService) Disable(ctx context.Context, userID int64, _, _ string, to
 	if err := disabler.DisableTotpWithExpectedRole(ctx, userID, user.Role, user.TotpSecretEncrypted); err != nil {
 		return fmt.Errorf("disable totp: %w", err)
 	}
-	// 关闭 2FA 后该用户全部 5 分钟 2FA 凭证立即作废（不能在 2FA 状态已变更后
-	// 继续用旧凭证跳过本应重新验证的流程）。
+	// 关闭 2FA 后该用户全部 5 分钟 2FA 凭证与个人接口密钥（uak_）立即作废（不能在 2FA 状态已变更后
+	// 继续用旧凭证跳过本应重新验证的流程或继续使用长期管理凭据）。
 	s.revokeTwoFactorGrantsQuietly(ctx, userID)
 
 	return nil
@@ -539,7 +560,7 @@ func (s *TotpService) DisableWithServerAuthorization(ctx context.Context, userID
 	if err := disabler.DisableTotpWithExpectedRole(ctx, userID, verified.Role, verified.TotpSecretEncrypted); err != nil {
 		return fmt.Errorf("disable totp: %w", err)
 	}
-	// 服务端恢复码重置 2FA 同样立即撤销全部 5 分钟凭证。
+	// 服务端恢复码重置 2FA 同样立即撤销全部 5 分钟凭证与个人接口密钥（uak_）。
 	s.revokeTwoFactorGrantsQuietly(ctx, userID)
 	return nil
 }
@@ -760,7 +781,7 @@ func (s *TotpService) CreateLoginSession(ctx context.Context, userID int64, emai
 }
 
 // CreatePendingOAuthBindLoginSession creates a temporary 2FA session that will
-// finalize a pending OAuth bind after the TOTP code is verified.
+// finalize a pending OAuth bind after all required 2FA factors are verified.
 func (s *TotpService) CreatePendingOAuthBindLoginSession(
 	ctx context.Context,
 	userID int64,
@@ -768,10 +789,17 @@ func (s *TotpService) CreatePendingOAuthBindLoginSession(
 	pendingSessionToken string,
 	browserSessionKey string,
 ) (string, error) {
-	return s.createLoginSession(ctx, userID, email, &PendingOAuthBindLoginSession{
-		PendingSessionToken: pendingSessionToken,
-		BrowserSessionKey:   browserSessionKey,
-	})
+	return s.CreateLoginSessionForFactors(
+		ctx,
+		userID,
+		email,
+		[]Factor{FactorTOTP},
+		nil,
+		&PendingOAuthBindLoginSession{
+			PendingSessionToken: pendingSessionToken,
+			BrowserSessionKey:   browserSessionKey,
+		},
+	)
 }
 
 func (s *TotpService) createLoginSession(
@@ -810,30 +838,37 @@ func (s *TotpService) DeleteLoginSession(ctx context.Context, tempToken string) 
 	return s.cache.DeleteLoginSession(ctx, tempToken)
 }
 
-// CreateLoginSessionForFactors 创建带因子状态的临时登录会话。
+// CreateLoginSessionForFactors 创建带因子状态的临时登录会话（可选挂接 PendingOAuthBind）。
 //
 // required 是本次登录必须完成的因子（按 TOTP → Passkey 顺序），passed 是
 // 第一步就已经用 5 分钟凭证跳过的因子。之后每完成一个因子调用
-// MarkLoginFactorPassed 推进会话状态；全部 required ⊆ passed 才允许签发令牌。
+// MarkLoginFactorPassed 推进会话状态；全部 required ⊆ passed 才允许完成 OAuth 绑定并签发令牌。
 func (s *TotpService) CreateLoginSessionForFactors(
 	ctx context.Context,
 	userID int64,
 	email string,
 	required, passed []Factor,
+	pendingOAuthBind ...*PendingOAuthBindLoginSession,
 ) (string, error) {
 	if userID <= 0 {
 		return "", fmt.Errorf("invalid login session user")
+	}
+	var pending *PendingOAuthBindLoginSession
+	if len(pendingOAuthBind) > 0 && pendingOAuthBind[0] != nil {
+		copied := *pendingOAuthBind[0]
+		pending = &copied
 	}
 	tempToken, err := generateRandomToken(32)
 	if err != nil {
 		return "", fmt.Errorf("generate temp token: %w", err)
 	}
 	session := &TotpLoginSession{
-		UserID:          userID,
-		Email:           email,
-		TokenExpiry:     time.Now().Add(totpLoginTTL),
-		RequiredFactors: sortFactorsForChallenge(required),
-		PassedFactors:   append([]Factor(nil), sortFactorsForChallenge(passed)...),
+		UserID:           userID,
+		Email:            email,
+		TokenExpiry:      time.Now().Add(totpLoginTTL),
+		PendingOAuthBind: pending,
+		RequiredFactors:  sortFactorsForChallenge(required),
+		PassedFactors:    append([]Factor(nil), sortFactorsForChallenge(passed)...),
 	}
 	if err := s.cache.SetLoginSession(ctx, tempToken, session, totpLoginTTL); err != nil {
 		return "", fmt.Errorf("store login session: %w", err)

@@ -488,6 +488,7 @@ func (s *AuthService) ValidatePasswordCredentials(ctx context.Context, email, pa
 	user, err := s.userRepo.GetByEmail(ctx, strings.TrimSpace(strings.ToLower(email)))
 	if err != nil {
 		if errors.Is(err, ErrUserNotFound) {
+			s.EqualizePasswordTiming(password)
 			return nil, ErrInvalidCredentials
 		}
 		return nil, ErrServiceUnavailable

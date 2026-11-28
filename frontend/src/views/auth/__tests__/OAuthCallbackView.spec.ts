@@ -14,6 +14,9 @@ const {
   copyToClipboardMock,
   exchangePendingOAuthCompletionMock,
   exchangeOAuthLoginCodeMock,
+  login2FAPasskeyFinishMock,
+  acceptLoginChallengeMock,
+  passkeyIsSupportedMock,
   apiPostMock,
 } = vi.hoisted(() => ({
   routeState: {
@@ -35,6 +38,9 @@ const {
   copyToClipboardMock: vi.fn(),
   exchangePendingOAuthCompletionMock: vi.fn(),
   exchangeOAuthLoginCodeMock: vi.fn(),
+  login2FAPasskeyFinishMock: vi.fn(),
+  acceptLoginChallengeMock: vi.fn(),
+  passkeyIsSupportedMock: vi.fn(() => true),
   apiPostMock: vi.fn(),
 }))
 
@@ -75,9 +81,17 @@ vi.mock('@/api/auth', async () => {
     ...actual,
     exchangePendingOAuthCompletion: (...args: any[]) => exchangePendingOAuthCompletionMock(...args),
     exchangeOAuthLoginCode: (...args: any[]) => exchangeOAuthLoginCodeMock(...args),
+    login2FAPasskeyFinish: (...args: any[]) => login2FAPasskeyFinishMock(...args),
     persistOAuthTokenContext: vi.fn(),
   }
 })
+
+vi.mock('@/api/passkey', () => ({
+  passkeyAPI: {
+    isSupported: () => passkeyIsSupportedMock(),
+    acceptLoginChallenge: (...args: any[]) => acceptLoginChallengeMock(...args),
+  },
+}))
 
 vi.mock('@/composables/useClipboard', () => ({
   useClipboard: () => ({
@@ -106,6 +120,10 @@ describe('OAuthCallbackView', () => {
     copyToClipboardMock.mockReset()
     exchangePendingOAuthCompletionMock.mockReset()
     exchangeOAuthLoginCodeMock.mockReset()
+    login2FAPasskeyFinishMock.mockReset()
+    acceptLoginChallengeMock.mockReset()
+    passkeyIsSupportedMock.mockReset()
+    passkeyIsSupportedMock.mockReturnValue(true)
     apiPostMock.mockReset()
     window.sessionStorage.clear()
     vi.spyOn(window.history, 'replaceState').mockImplementation(() => {})
@@ -403,5 +421,99 @@ describe('OAuthCallbackView', () => {
       '',
       '/auth/oauth/callback'
     )
+  })
+
+  it('completes passkey-only 2FA challenge returned by pending oauth exchange', async () => {
+    routeState.path = '/auth/oauth/callback'
+    const pkOptions = { publicKey: { challenge: 'pk-chal-1' } }
+    exchangePendingOAuthCompletionMock.mockResolvedValue({
+      requires_2fa: true,
+      temp_token: 'temp-pk-only',
+      user_email_masked: 'p***k@example.com',
+      required_factors: ['passkey'],
+      passed_factors: [],
+      next_factor: 'passkey',
+      passkey_session_token: 'pk-sess-1',
+      passkey_options: pkOptions,
+      provider: 'github',
+      redirect: '/dashboard',
+    })
+    acceptLoginChallengeMock.mockResolvedValue({ id: 'cred-1', type: 'public-key' })
+    login2FAPasskeyFinishMock.mockResolvedValue({
+      access_token: 'pk-access-token',
+      refresh_token: 'pk-refresh-token',
+      expires_in: 3600,
+      token_type: 'Bearer',
+    })
+
+    const wrapper = mount(OAuthCallbackView)
+    await vi.dynamicImportSettled()
+    await wrapper.vm.$nextTick()
+
+    expect(wrapper.find('[data-testid="login-passkey-pane"]').exists()).toBe(true)
+    await wrapper.get('[data-testid="passkey-login-verify"]').trigger('click')
+    await vi.dynamicImportSettled()
+
+    expect(acceptLoginChallengeMock).toHaveBeenCalledWith(pkOptions)
+    expect(login2FAPasskeyFinishMock).toHaveBeenCalledWith({
+      temp_token: 'temp-pk-only',
+      session_token: 'pk-sess-1',
+      credential: { id: 'cred-1', type: 'public-key' },
+    })
+    expect(setTokenMock).toHaveBeenCalledWith('pk-access-token')
+    expect(routerReplaceMock).toHaveBeenCalledWith('/dashboard')
+  })
+
+  it('progresses from TOTP to passkey for dual-factor accounts', async () => {
+    routeState.path = '/auth/oauth/callback'
+    const pkOptions = { publicKey: { challenge: 'pk-chal-dual' } }
+    exchangePendingOAuthCompletionMock.mockResolvedValue({
+      requires_2fa: true,
+      temp_token: 'temp-dual',
+      user_email_masked: 'd***l@example.com',
+      required_factors: ['totp', 'passkey'],
+      passed_factors: [],
+      next_factor: 'totp',
+      provider: 'google',
+      redirect: '/keys',
+    })
+    login2FAMock.mockResolvedValue({
+      requires_2fa: true,
+      temp_token: 'temp-dual',
+      user_email_masked: 'd***l@example.com',
+      required_factors: ['totp', 'passkey'],
+      passed_factors: ['totp'],
+      next_factor: 'passkey',
+      passkey_session_token: 'pk-sess-dual',
+      passkey_options: pkOptions,
+    })
+    acceptLoginChallengeMock.mockResolvedValue({ id: 'cred-dual', type: 'public-key' })
+    login2FAPasskeyFinishMock.mockResolvedValue({
+      access_token: 'dual-access-token',
+      token_type: 'Bearer',
+    })
+
+    const wrapper = mount(OAuthCallbackView)
+    await vi.dynamicImportSettled()
+    await wrapper.vm.$nextTick()
+
+    await wrapper.get('[data-testid="oauth-callback-totp"]').setValue('123456')
+    await wrapper.get('[data-testid="oauth-callback-totp-submit"]').trigger('click')
+    await vi.dynamicImportSettled()
+    await wrapper.vm.$nextTick()
+
+    expect(routerReplaceMock).not.toHaveBeenCalled()
+    expect(wrapper.find('[data-testid="login-passkey-pane"]').exists()).toBe(true)
+
+    await wrapper.get('[data-testid="passkey-login-verify"]').trigger('click')
+    await vi.dynamicImportSettled()
+
+    expect(login2FAPasskeyFinishMock).toHaveBeenCalledWith({
+      temp_token: 'temp-dual',
+      session_token: 'pk-sess-dual',
+      credential: { id: 'cred-dual', type: 'public-key' },
+    })
+    expect(setTokenMock).toHaveBeenCalledWith('dual-access-token')
+    expect(routerReplaceMock).toHaveBeenCalledWith('/keys')
   })
 })

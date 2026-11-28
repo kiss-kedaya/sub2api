@@ -193,9 +193,23 @@ func (h *UserHandler) ChangePassword(c *gin.Context) {
 		return
 	}
 
+	// 密码已变更：同步撤销全部访问/刷新会话、个人接口密钥（uak_）与 2FA 凭证。
+	// 使用脱离客户端断连取消的有界上下文，避免改密落库后客户端立即断开导致吊销被跳过。
+	revokeCtx, cancelRevoke := context.WithTimeout(context.WithoutCancel(c.Request.Context()), 5*time.Second)
+	defer cancelRevoke()
+
+	if h.authService != nil {
+		if err := h.authService.RevokeAllUserTokens(revokeCtx, subject.UserID); err != nil {
+			slog.Warn("revoke sessions after password change failed",
+				"user_id", subject.UserID, "error", err)
+			// 即使 Redis 吊销失败，也确保单独吊销个人接口密钥（uak_）。
+			h.authService.RevokePersonalAPIKeyQuietly(revokeCtx, subject.UserID, "password change")
+		}
+	}
+
 	// 密码已变更：该用户全部未过期的 2FA 凭证立即作废，本浏览器的 Cookie 一并清掉。
 	if h.totpService != nil {
-		if err := h.totpService.RevokeTwoFactorGrantsForUser(c.Request.Context(), subject.UserID); err != nil {
+		if err := h.totpService.RevokeTwoFactorGrantsForUser(revokeCtx, subject.UserID); err != nil {
 			slog.Warn("revoke two-factor grants after password change failed",
 				"user_id", subject.UserID, "error", err)
 		}

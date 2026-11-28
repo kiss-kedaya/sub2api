@@ -190,8 +190,8 @@ func TestKeySelfServiceAnswersForExpiredAndExhaustedKeysButNotDisabledOnes(t *te
 		status int
 		cause  string
 	}{
-		{"expired by status", func(k *service.APIKey, _ *service.User) { k.Status = service.StatusAPIKeyExpired }, http.StatusOK, "expired"},
-		{"expired by clock", func(k *service.APIKey, _ *service.User) { past := time.Now().Add(-time.Hour); k.ExpiresAt = &past }, http.StatusOK, "expired"},
+		{"expired by status", func(k *service.APIKey, _ *service.User) { k.Status = service.StatusAPIKeyExpired }, http.StatusForbidden, ""},
+		{"expired by clock", func(k *service.APIKey, _ *service.User) { past := time.Now().Add(-time.Hour); k.ExpiresAt = &past }, http.StatusForbidden, ""},
 		{"quota exhausted by status", func(k *service.APIKey, _ *service.User) { k.Status = service.StatusAPIKeyQuotaExhausted }, http.StatusOK, "quota_exhausted"},
 		{"quota exhausted by counter", func(k *service.APIKey, _ *service.User) { k.Quota, k.QuotaUsed = 5, 5 }, http.StatusOK, "quota_exhausted"},
 		{"wallet empty", func(_ *service.APIKey, u *service.User) { u.Balance = 0 }, http.StatusOK, ""},

@@ -83,40 +83,55 @@
         <h1 class="text-lg font-semibold text-highlighted">
           {{ t('auth.oidc.callbackTitle', { providerName }) }}
         </h1>
-        <p class="mt-2 text-sm text-muted">
-          {{
-            t('auth.oauthFlow.totpHint', {
-              providerName,
-              account: totpUserEmailMasked || t('auth.oauthFlow.yourAccount')
-            })
-          }}
-        </p>
-
-        <div class="mt-6 space-y-3">
-          <input
-            v-model="totpCode"
-            data-testid="oauth-callback-totp"
-            type="text"
-            inputmode="numeric"
-            maxlength="6"
-            class="input w-full"
-            placeholder="123456"
-            :disabled="isSubmitting"
-            @keyup.enter="handleSubmitTotpChallenge"
-          />
-          <p v-if="totpError" class="text-sm text-error">
-            {{ totpError }}
+        <template v-if="twoFactorNextFactor === 'passkey'">
+          <div class="mt-6 space-y-3">
+            <PasskeyFactorPane
+              :supported="passkeySupported"
+              :verifying="passkeyVerifying"
+              :user-email-masked="totpUserEmailMasked"
+              @verify="handlePasskeyFactorVerify"
+            />
+            <p v-if="totpError" class="text-sm text-error">
+              {{ totpError }}
+            </p>
+          </div>
+        </template>
+        <template v-else>
+          <p class="mt-2 text-sm text-muted">
+            {{
+              t('auth.oauthFlow.totpHint', {
+                providerName,
+                account: totpUserEmailMasked || t('auth.oauthFlow.yourAccount')
+              })
+            }}
           </p>
-          <button
-            data-testid="oauth-callback-totp-submit"
-            class="btn btn-primary w-full [@media(pointer:coarse)]:min-h-11"
-            type="button"
-            :disabled="isSubmitting || totpCode.trim().length !== 6"
-            @click="handleSubmitTotpChallenge"
-          >
-            {{ isSubmitting ? t('common.processing') : t('auth.oauthFlow.verifyAndContinue') }}
-          </button>
-        </div>
+
+          <div class="mt-6 space-y-3">
+            <input
+              v-model="totpCode"
+              data-testid="oauth-callback-totp"
+              type="text"
+              inputmode="numeric"
+              maxlength="6"
+              class="input w-full"
+              placeholder="123456"
+              :disabled="isSubmitting"
+              @keyup.enter="handleSubmitTotpChallenge"
+            />
+            <p v-if="totpError" class="text-sm text-error">
+              {{ totpError }}
+            </p>
+            <button
+              data-testid="oauth-callback-totp-submit"
+              class="btn btn-primary w-full [@media(pointer:coarse)]:min-h-11"
+              type="button"
+              :disabled="isSubmitting || totpCode.trim().length !== 6"
+              @click="handleSubmitTotpChallenge"
+            >
+              {{ isSubmitting ? t('common.processing') : t('auth.oauthFlow.verifyAndContinue') }}
+            </button>
+          </div>
+        </template>
       </div>
 
       <div v-else-if="invalidCallback" class="card p-6 text-center">
@@ -191,15 +206,20 @@ import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import { useClipboard } from '@/composables/useClipboard'
 import { useAppStore, useAuthStore } from '@/stores'
+import PasskeyFactorPane from '@/components/auth/PasskeyFactorPane.vue'
 import { apiClient } from '@/api/client'
 import { buildApiUrl } from '@/api/url'
 import {
   exchangeOAuthLoginCode,
   exchangePendingOAuthCompletion,
   isOAuthLoginCompletion,
+  isTotp2FARequired,
+  login2FAPasskeyFinish,
   persistOAuthTokenContext,
   type OAuthTokenResponse
 } from '@/api/auth'
+import { passkeyAPI } from '@/api/passkey'
+import type { TotpLoginResponse } from '@/types'
 import {
   clearAllAffiliateReferralCodes,
   loadOAuthAffiliateCode,
@@ -230,6 +250,11 @@ const totpTempToken = ref('')
 const totpCode = ref('')
 const totpError = ref('')
 const totpUserEmailMasked = ref('')
+const twoFactorNextFactor = ref<'totp' | 'passkey'>('totp')
+const passkeySessionToken = ref('')
+const passkeyOptions = ref<{ publicKey: Record<string, unknown> } | undefined>(undefined)
+const passkeyVerifying = ref(false)
+const passkeySupported = computed(() => passkeyAPI.isSupported())
 const invalidCallback = ref(false)
 const callbackError = ref('')
 const EMAIL_OAUTH_PENDING_PROVIDER_KEY = 'email_oauth_pending_provider'
@@ -245,6 +270,11 @@ type EmailOAuthPendingCompletion = Partial<OAuthTokenResponse> & {
   requires_2fa?: boolean
   temp_token?: string
   user_email_masked?: string
+  required_factors?: string[]
+  passed_factors?: string[]
+  next_factor?: string
+  passkey_session_token?: string
+  passkey_options?: { publicKey: Record<string, unknown> }
 }
 
 const code = computed(() => (route.query.code as string) || '')
@@ -302,21 +332,33 @@ function readPendingEmailOAuthProvider(): 'github' | 'google' | null {
   return null
 }
 
-// applyTotpChallenge 处理"已有账号已启用 TOTP"的第三方登录挑战：
-// 后端只下发一次性 temp_token，这里必须完成动态码校验后才能拿到会话。
+// applyTotpChallenge 处理"已有账号已启用 2FA（TOTP / Passkey / 双因子）"的第三方登录挑战：
+// 后端只下发一次性 temp_token 与当前待验因子，全部必需因子通过后才能拿到会话。
 function applyTotpChallenge(completion: {
   requires_2fa?: boolean
   temp_token?: string
   user_email_masked?: string
+  required_factors?: string[]
+  passed_factors?: string[]
+  next_factor?: string
+  passkey_session_token?: string
+  passkey_options?: { publicKey: Record<string, unknown> }
   provider?: string
   redirect?: string
 }): boolean {
   if (completion.requires_2fa !== true || !completion.temp_token) return false
+  const required = completion.required_factors?.length ? completion.required_factors : ['totp']
+  const passed = completion.passed_factors ?? []
+  const next = completion.next_factor || required.find((factor) => !passed.includes(factor)) || 'totp'
+
   needsTotpChallenge.value = true
   totpTempToken.value = completion.temp_token
   totpCode.value = ''
   totpError.value = ''
   totpUserEmailMasked.value = completion.user_email_masked || ''
+  twoFactorNextFactor.value = next === 'passkey' ? 'passkey' : 'totp'
+  passkeySessionToken.value = completion.passkey_session_token || ''
+  passkeyOptions.value = completion.passkey_options
   const provider = String(completion.provider || '').toLowerCase()
   if (provider === 'github' || provider === 'google') pendingProvider.value = provider
   if (completion.redirect) redirectTo.value = sanitizeRedirectPath(completion.redirect)
@@ -331,7 +373,11 @@ async function handleSubmitTotpChallenge() {
 
   isSubmitting.value = true
   try {
-    await authStore.login2FA(totpTempToken.value, code)
+    const response = await authStore.login2FA(totpTempToken.value, code)
+    if (response && isTotp2FARequired(response)) {
+      applyTotpChallenge(response as TotpLoginResponse)
+      return
+    }
     if (typeof window !== 'undefined') {
       window.sessionStorage.removeItem(EMAIL_OAUTH_PENDING_PROVIDER_KEY)
     }
@@ -343,6 +389,38 @@ async function handleSubmitTotpChallenge() {
     totpError.value = err.response?.data?.message || err.message || t('auth.loginFailed')
   } finally {
     isSubmitting.value = false
+  }
+}
+
+async function handlePasskeyFactorVerify() {
+  totpError.value = ''
+  if (!passkeySupported.value) {
+    totpError.value = t('auth.passkeyUnsupported')
+    return
+  }
+  if (!totpTempToken.value || !passkeySessionToken.value || !passkeyOptions.value) {
+    totpError.value = t('auth.passkeyFailed')
+    return
+  }
+
+  passkeyVerifying.value = true
+  try {
+    const credential = await passkeyAPI.acceptLoginChallenge(passkeyOptions.value)
+    const completion = await login2FAPasskeyFinish({
+      temp_token: totpTempToken.value,
+      session_token: passkeySessionToken.value,
+      credential
+    })
+    await finalizeTokenResponse(completion, redirectTo.value)
+  } catch (e: unknown) {
+    const fallback =
+      e instanceof DOMException && e.name === 'NotAllowedError'
+        ? t('auth.passkeyCancelled')
+        : t('auth.passkeyFailed')
+    const err = e as { message?: string; response?: { data?: { message?: string } } }
+    totpError.value = err.response?.data?.message || err.message || fallback
+  } finally {
+    passkeyVerifying.value = false
   }
 }
 
@@ -478,6 +556,10 @@ onMounted(async () => {
       requires_2fa: params.get('requires_2fa') === '1',
       temp_token: params.get('temp_token') || '',
       user_email_masked: params.get('user_email_masked') || '',
+      required_factors: params.get('required_factors')
+        ? params.get('required_factors')!.split(',').map((item) => item.trim()).filter(Boolean)
+        : undefined,
+      next_factor: params.get('next_factor') || undefined,
       provider: params.get('provider') || '',
       redirect: params.get('redirect') || ''
     })

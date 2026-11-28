@@ -259,8 +259,9 @@ func authenticatePersonalAPIKey(
 
 // isPersonalAPIKeyRouteForbidden 判断某个用户端路由是否禁止由个人接口密钥调用。
 //
-// 个人接口密钥定位于「远程服务端免 AT/RT 自动化管理（查询余额/分组/渠道/用量、创建/轮换/管理 API Key、
-// 兑换/订阅/工单等）」，绝不允许借此接管账号、削弱双因素/密码保护、读取浏览器封存密文或递归管理自身。
+// 个人接口密钥定位于「远程服务端免 AT/RT 自动化只读查询与基础运维（查询余额/分组/渠道/用量/API Key 列表、
+// 兑换/订阅/工单等）」，绝不允许借此接管账号、削弱双因素/密码保护、派生/轮换/删除推理 API Key（明文 sk-）、
+// 增删推广邀请码、读取浏览器封存密文或递归管理自身。
 // 同时匹配 Gin 路由模板与归一化原始路径，避免斜杠/路径清洗绕过。
 func isPersonalAPIKeyRouteForbidden(method, fullPath, rawPath string) bool {
 	return matchPersonalAPIKeyForbiddenPath(method, fullPath) ||
@@ -317,6 +318,19 @@ func matchPersonalAPIKeyForbiddenPath(method, target string) bool {
 
 	// 4. 修改个人资料/余额告警配置（PUT /api/v1/user）仅限交互式会话；查询资料（GET /api/v1/user/profile）照常放行。
 	if cleaned == "/api/v1/user" && !strings.EqualFold(method, http.MethodGet) && !strings.EqualFold(method, http.MethodHead) {
+		return true
+	}
+
+	// 5. 推理 API Key 写操作（创建/编辑/轮换/批量轮换/删除/封禁机房 IP）仅限交互式会话，
+	// 禁止受限个人接口密钥派生或轮换新的明文 sk- 推理密钥；只读查询（GET /api/v1/keys...）照常放行。
+	if (cleaned == "/api/v1/keys" || strings.HasPrefix(cleaned, "/api/v1/keys/")) &&
+		!strings.EqualFold(method, http.MethodGet) && !strings.EqualFold(method, http.MethodHead) {
+		return true
+	}
+
+	// 6. 推广邀请码增删（POST/DELETE /api/v1/user/aff/codes...）仅限交互式会话；查询（GET）照常放行。
+	if (cleaned == "/api/v1/user/aff/codes" || strings.HasPrefix(cleaned, "/api/v1/user/aff/codes/")) &&
+		!strings.EqualFold(method, http.MethodGet) && !strings.EqualFold(method, http.MethodHead) {
 		return true
 	}
 

@@ -187,11 +187,12 @@ func (h *AuthHandler) emailOAuthCallbackBindWithProfile(
 	redirectTo string,
 	profile *emailOAuthProfile,
 ) {
-	targetUserID, err := h.readOAuthBindUserIDFromCookie(c, emailOAuthBindUserCookie)
+	bindMeta, err := h.readOAuthBindUserMetaFromCookie(c, emailOAuthBindUserCookie)
 	if err != nil {
 		redirectOAuthError(c, frontendCallback, "invalid_state", "invalid oauth bind target", "")
 		return
 	}
+	targetUserID := bindMeta.UserID
 	browserSessionKey, err := generateOAuthPendingBrowserSession()
 	if err != nil {
 		redirectOAuthError(c, frontendCallback, "session_error", "failed to continue oauth bind", "")
@@ -220,6 +221,9 @@ func (h *AuthHandler) emailOAuthCallbackBindWithProfile(
 		Intent:                 oauthIntentBindCurrentUser,
 		Identity:               service.PendingAuthIdentityKey{ProviderType: provider, ProviderKey: provider, ProviderSubject: strings.TrimSpace(profile.Subject)},
 		TargetUserID:           &targetUserID,
+		BindTokenIssuedAt:      bindMeta.TokenIssuedAt,
+		BindTokenVersion:       bindMeta.TokenVersion,
+		HasBindTokenVersion:    bindMeta.HasTokenVersion,
 		ResolvedEmail:          email,
 		RedirectTo:             redirectTo,
 		BrowserSessionKey:      browserSessionKey,
@@ -288,7 +292,7 @@ func (h *AuthHandler) emailOAuthCallbackWithProfile(
 				redirectOAuthError(c, frontendCallback, "two_factor_unavailable", "two-factor verification is unavailable", "")
 				return
 			}
-			h.redirectEmailOAuthTOTPChallenge(c, user, provider, frontendCallback, redirectTo)
+			h.redirectEmailOAuthPending2FAChallenge(c, user, provider, input, frontendCallback, redirectTo)
 			return
 		}
 		if errors.Is(err, service.ErrOAuthInvitationRequired) {
@@ -304,6 +308,9 @@ func (h *AuthHandler) emailOAuthCallbackWithProfile(
 		return
 	}
 	if err := h.ensureBackendModeAllowsUser(c.Request.Context(), user); err != nil {
+		if tokenPair != nil {
+			_ = h.authService.RevokeRefreshToken(c.Request.Context(), tokenPair.RefreshToken)
+		}
 		redirectOAuthError(c, frontendCallback, "login_blocked", infraerrors.Reason(err), infraerrors.Message(err))
 		return
 	}
@@ -423,7 +430,92 @@ func (h *AuthHandler) OAuthCodeExchange(c *gin.Context) {
 	})
 }
 
-// redirectEmailOAuthTOTPChallenge 为已启用 TOTP 的已有账号签发一次性 2FA 登录会话，
+// redirectEmailOAuthPending2FAChallenge 在已有账号触发 2FA（TOTP / Passkey / 双因子）时，
+// 不向 auth_identities/users 提前落库，也不签发任何令牌，而是把待绑定身份写入 pending 会话并跳回前端回调页，
+// 由前端通过 POST /auth/oauth/pending/exchange 拉取完整多因子挑战（含 Passkey options），
+// 等全部必需因子验证通过后再原子完成绑定并签发会话。
+func (h *AuthHandler) redirectEmailOAuthPending2FAChallenge(
+	c *gin.Context,
+	user *service.User,
+	provider string,
+	input service.EmailOAuthIdentityInput,
+	frontendCallback string,
+	redirectTo string,
+) {
+	if h == nil || user == nil || h.totpService == nil {
+		redirectOAuthError(c, frontendCallback, "two_factor_unavailable", "two-factor verification is unavailable", "")
+		return
+	}
+	if err := h.ensureBackendModeAllowsUser(c.Request.Context(), user); err != nil {
+		redirectOAuthError(c, frontendCallback, "login_blocked", infraerrors.Reason(err), infraerrors.Message(err))
+		return
+	}
+	factors, err := h.totpService.LoginRequiredFactors(c.Request.Context(), user)
+	if err != nil || len(factors) == 0 {
+		redirectOAuthError(c, frontendCallback, "two_factor_unavailable", "two-factor verification is unavailable", "")
+		return
+	}
+	if h.entClient() != nil && strings.TrimSpace(input.ProviderType) != "" && strings.TrimSpace(input.ProviderSubject) != "" {
+		browserSessionKey, genErr := generateOAuthPendingBrowserSession()
+		if genErr != nil {
+			redirectOAuthError(c, frontendCallback, "two_factor_unavailable", "failed to create two-factor session", "")
+			return
+		}
+		secureCookie := h.isRequestHTTPS(c)
+		setOAuthPendingBrowserCookie(c, browserSessionKey, secureCookie)
+
+		providerType := strings.TrimSpace(input.ProviderType)
+		providerKey := strings.TrimSpace(input.ProviderKey)
+		if providerKey == "" {
+			providerKey = providerType
+		}
+		upstreamClaims := map[string]any{
+			"email":            strings.TrimSpace(strings.ToLower(input.Email)),
+			"email_verified":   input.EmailVerified,
+			"username":         strings.TrimSpace(input.Username),
+			"provider":         provider,
+			"provider_key":     providerKey,
+			"provider_subject": strings.TrimSpace(input.ProviderSubject),
+		}
+		if strings.TrimSpace(input.DisplayName) != "" {
+			upstreamClaims["suggested_display_name"] = strings.TrimSpace(input.DisplayName)
+		}
+		if strings.TrimSpace(input.AvatarURL) != "" {
+			upstreamClaims["suggested_avatar_url"] = strings.TrimSpace(input.AvatarURL)
+		}
+		for key, value := range input.UpstreamMetadata {
+			if _, exists := upstreamClaims[key]; !exists {
+				upstreamClaims[key] = value
+			}
+		}
+		targetUserID := user.ID
+		if createErr := h.createOAuthPendingSession(c, oauthPendingSessionPayload{
+			Intent:                 oauthIntentLogin,
+			Identity:               service.PendingAuthIdentityKey{ProviderType: providerType, ProviderKey: providerKey, ProviderSubject: strings.TrimSpace(input.ProviderSubject)},
+			TargetUserID:           &targetUserID,
+			PendingBindAfter2FA:    true,
+			ResolvedEmail:          user.Email,
+			RedirectTo:             redirectTo,
+			BrowserSessionKey:      browserSessionKey,
+			UpstreamIdentityClaims: upstreamClaims,
+			CompletionResponse: map[string]any{
+				"provider": provider,
+				"redirect": redirectTo,
+			},
+		}); createErr != nil {
+			clearOAuthPendingSessionCookie(c, secureCookie)
+			clearOAuthPendingBrowserCookie(c, secureCookie)
+			redirectOAuthError(c, frontendCallback, "two_factor_unavailable", "failed to create two-factor session", "")
+			return
+		}
+		markAuthAuditChallenge(c, user.ID, user.Email)
+		redirectToFrontendCallback(c, frontendCallback)
+		return
+	}
+	h.redirectEmailOAuthTOTPChallenge(c, user, provider, frontendCallback, redirectTo)
+}
+
+// redirectEmailOAuthTOTPChallenge 为已启用 2FA 的已有账号签发一次性 2FA 登录会话，
 // 前端拿到 requires_2fa + temp_token 后走 /auth/login/2fa 完成验证再拿 token。
 // 这里不签发任何 access/refresh token，避免 OAuth 路径绕过登录二次验证。
 func (h *AuthHandler) redirectEmailOAuthTOTPChallenge(
@@ -433,7 +525,7 @@ func (h *AuthHandler) redirectEmailOAuthTOTPChallenge(
 	frontendCallback string,
 	redirectTo string,
 ) {
-	if h.totpService == nil {
+	if h.totpService == nil || user == nil {
 		redirectOAuthError(c, frontendCallback, "two_factor_unavailable", "two-factor verification is unavailable", "")
 		return
 	}
@@ -441,7 +533,12 @@ func (h *AuthHandler) redirectEmailOAuthTOTPChallenge(
 		redirectOAuthError(c, frontendCallback, "login_blocked", infraerrors.Reason(err), infraerrors.Message(err))
 		return
 	}
-	tempToken, err := h.totpService.CreateLoginSession(c.Request.Context(), user.ID, user.Email)
+	factors, err := h.totpService.LoginRequiredFactors(c.Request.Context(), user)
+	if err != nil || len(factors) == 0 {
+		redirectOAuthError(c, frontendCallback, "two_factor_unavailable", "two-factor verification is unavailable", "")
+		return
+	}
+	tempToken, err := h.totpService.CreateLoginSessionForFactors(c.Request.Context(), user.ID, user.Email, factors, nil)
 	if err != nil {
 		redirectOAuthError(c, frontendCallback, "two_factor_unavailable", "failed to create two-factor session", "")
 		return
@@ -452,6 +549,8 @@ func (h *AuthHandler) redirectEmailOAuthTOTPChallenge(
 	fragment.Set("requires_2fa", "1")
 	fragment.Set("temp_token", tempToken)
 	fragment.Set("user_email_masked", service.MaskEmail(user.Email))
+	fragment.Set("required_factors", strings.Join(service.FactorStrings(factors), ","))
+	fragment.Set("next_factor", factors[0].String())
 	fragment.Set("provider", provider)
 	fragment.Set("redirect", redirectTo)
 	redirectWithFragment(c, frontendCallback, fragment)

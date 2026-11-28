@@ -87,7 +87,7 @@ func APIKeyAuthWithSubscriptionGoogle(apiKeyService *service.APIKeyService, subs
 		// user/group/platform。
 		SetOpsFallbackAPIKey(c, apiKey)
 
-		// disabled / 未知状态 → 无条件拦截（expired 和 quota_exhausted 留给计费阶段，
+		// disabled / 未知状态 → 无条件拦截（expired 紧随其后在基础鉴权拦截；quota_exhausted 留给计费阶段，
 		// 与主中间件 api_key_auth.go 保持一致）。
 		if !apiKey.IsActive() &&
 			apiKey.Status != service.StatusAPIKeyExpired &&
@@ -101,6 +101,12 @@ func APIKeyAuthWithSubscriptionGoogle(apiKeyService *service.APIKeyService, subs
 		}
 
 		anonymousCredentialSuccess(c)
+
+		// 过期校验属于基础鉴权，必须在 RunModeSimple 早退之前执行，防止简易模式下过期 Key 绕过拦截。
+		if apiKey.Status == service.StatusAPIKeyExpired || apiKey.IsExpired() {
+			abortWithGoogleError(c, http.StatusForbidden, "API key 已过期")
+			return
+		}
 
 		// 检查 IP 限制（白名单/黑名单）。与主中间件保持一致，避免 Gemini 端点绕过 Key 的 IP ACL。
 		if len(apiKey.IPWhitelist) > 0 || len(apiKey.IPBlacklist) > 0 {
@@ -158,22 +164,8 @@ func APIKeyAuthWithSubscriptionGoogle(apiKeyService *service.APIKeyService, subs
 			return
 		}
 
-		// Key 状态检查（状态字段可能因后台异步刷新而滞后，故显式拦截）。
-		switch apiKey.Status {
-		case service.StatusAPIKeyQuotaExhausted:
-			abortWithGoogleError(c, 429, "API key 额度已用完")
-			return
-		case service.StatusAPIKeyExpired:
-			abortWithGoogleError(c, 403, "API key 已过期")
-			return
-		}
-
-		// 运行时过期/配额检查（即使状态是 active，也要检查时间和用量，与主中间件一致）。
-		if apiKey.IsExpired() {
-			abortWithGoogleError(c, 403, "API key 已过期")
-			return
-		}
-		if apiKey.IsQuotaExhausted() {
+		// Key 配额检查（过期已在基础鉴权阶段拦截，状态字段可能因后台异步刷新而滞后，故同时检查运行时用量）。
+		if apiKey.Status == service.StatusAPIKeyQuotaExhausted || apiKey.IsQuotaExhausted() {
 			abortWithGoogleError(c, 429, "API key 额度已用完")
 			return
 		}

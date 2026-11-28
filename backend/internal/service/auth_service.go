@@ -132,7 +132,8 @@ type AuthService struct {
 	defaultSubAssigner    DefaultSubscriptionAssigner
 	userPlatformQuotaRepo UserPlatformQuotaRepository
 	billingCacheService   *BillingCacheService
-	personalAPIKeyRevoker personalAPIKeyRevoker
+	personalAPIKeyRevoker PersonalAPIKeyRevoker
+	loginTwoFactorPolicy  LoginTwoFactorPolicy
 
 	// stats 是登录会话的进程内计数（refresh 结果、会话绑定、登录发令牌兜底），按需创建。
 	statsOnce sync.Once
@@ -150,8 +151,13 @@ type DefaultSubscriptionAssigner interface {
 	AssignOrExtendSubscription(ctx context.Context, input *AssignSubscriptionInput) (*UserSubscription, bool, error)
 }
 
-type personalAPIKeyRevoker interface {
+type PersonalAPIKeyRevoker interface {
 	Delete(ctx context.Context, userID int64) (bool, error)
+}
+
+// LoginTwoFactorPolicy 提供登录所需二次验证因子列表（唯一真相源：TotpService.LoginRequiredFactors）。
+type LoginTwoFactorPolicy interface {
+	LoginRequiredFactors(ctx context.Context, user *User) ([]Factor, error)
 }
 
 type signupGrantPlan struct {
@@ -213,8 +219,32 @@ func (s *AuthService) SetBillingCacheService(billingCacheService *BillingCacheSe
 	s.billingCacheService = billingCacheService
 }
 
-func (s *AuthService) SetPersonalAPIKeyRevoker(revoker personalAPIKeyRevoker) {
+func (s *AuthService) SetPersonalAPIKeyRevoker(revoker PersonalAPIKeyRevoker) {
 	s.personalAPIKeyRevoker = revoker
+}
+
+func (s *AuthService) PersonalAPIKeyRevoker() PersonalAPIKeyRevoker {
+	if s == nil {
+		return nil
+	}
+	return s.personalAPIKeyRevoker
+}
+
+func (s *AuthService) SetLoginTwoFactorPolicy(policy LoginTwoFactorPolicy) {
+	if s == nil {
+		return
+	}
+	s.loginTwoFactorPolicy = policy
+}
+
+// RevokePersonalAPIKeyQuietly 尽力吊销目标用户的个人接口密钥（uak_），失败仅记录日志不回滚已完成的安全状态变更。
+func (s *AuthService) RevokePersonalAPIKeyQuietly(ctx context.Context, userID int64, reason string) {
+	if s == nil || s.personalAPIKeyRevoker == nil || userID <= 0 {
+		return
+	}
+	if _, err := s.personalAPIKeyRevoker.Delete(ctx, userID); err != nil {
+		logger.LegacyPrintf("service.auth", "[Auth] Failed to revoke personal API key after %s for user %d: %v", reason, userID, err)
+	}
 }
 
 // Register 用户注册，返回token和用户
@@ -669,6 +699,7 @@ func (s *AuthService) LoginOrRegisterOAuth(ctx context.Context, email, username 
 	username = SanitizeUsername(username)
 
 	user, err := s.userRepo.GetByEmail(ctx, email)
+	created := false
 	if err != nil {
 		if errors.Is(err, ErrUserNotFound) {
 			// OAuth 首次登录视为注册（fail-close：settingService 未配置时不允许注册）
@@ -719,6 +750,7 @@ func (s *AuthService) LoginOrRegisterOAuth(ctx context.Context, email, username 
 				}
 			} else {
 				user = newUser
+				created = true
 				s.postAuthUserBootstrap(ctx, user, signupSource, false)
 				s.assignSubscriptions(ctx, user.ID, grantPlan.Subscriptions, "auto assigned by signup defaults")
 				// snapshot user × platform quota（fail-open）
@@ -732,6 +764,17 @@ func (s *AuthService) LoginOrRegisterOAuth(ctx context.Context, email, username 
 
 	if !user.IsActive() {
 		return "", nil, ErrUserNotActive
+	}
+
+	// 已有账号启用了任一登录 2FA 因子时，拒绝直接签发令牌，防止旧直登接口绕过 2FA。
+	if !created {
+		factors, factorErr := s.loginRequiredFactors(ctx, user)
+		if factorErr != nil {
+			return "", nil, factorErr
+		}
+		if len(factors) > 0 {
+			return "", user, ErrLoginTOTPRequired
+		}
 	}
 
 	// 尽力补全：当用户名为空时，使用第三方返回的用户名回填。
@@ -933,6 +976,18 @@ func (s *AuthService) loginOrRegisterOAuthWithTokenPair(ctx context.Context, ema
 
 	if !user.IsActive() {
 		return nil, nil, ErrUserNotActive
+	}
+
+	// 已有账号启用了任一登录 2FA 因子（TOTP / Passkey / 两者）时，严禁直接签发令牌或修改用户名，
+	// 必须返回 ErrLoginTOTPRequired 交由上层进入 2FA 挑战流程。
+	if !created {
+		factors, factorErr := s.loginRequiredFactors(ctx, user)
+		if factorErr != nil {
+			return nil, nil, factorErr
+		}
+		if len(factors) > 0 {
+			return nil, user, ErrLoginTOTPRequired
+		}
 	}
 
 	if user.Username == "" && username != "" {
@@ -1749,39 +1804,45 @@ func (s *AuthService) RequestPasswordResetAsync(ctx context.Context, email, fron
 // ResetPassword 重置密码
 // Security: Increments TokenVersion to invalidate all existing JWT tokens
 func (s *AuthService) ResetPassword(ctx context.Context, email, token, newPassword string) error {
+	_, err := s.ResetPasswordForUser(ctx, email, token, newPassword)
+	return err
+}
+
+// ResetPasswordForUser 重置密码并返回被重置的用户 ID，供调用方继续清理 2FA 登录凭证等关联会话态。
+func (s *AuthService) ResetPasswordForUser(ctx context.Context, email, token, newPassword string) (int64, error) {
 	// Check if password reset is enabled
 	if !s.IsPasswordResetEnabled(ctx) {
-		return infraerrors.Forbidden("PASSWORD_RESET_DISABLED", "password reset is not enabled")
+		return 0, infraerrors.Forbidden("PASSWORD_RESET_DISABLED", "password reset is not enabled")
 	}
 
 	if s.emailService == nil {
-		return ErrServiceUnavailable
+		return 0, ErrServiceUnavailable
 	}
 
 	// Verify and consume the reset token (one-time use)
 	if err := s.emailService.ConsumePasswordResetToken(ctx, email, token); err != nil {
-		return err
+		return 0, err
 	}
 
 	// Get user
 	user, err := s.userRepo.GetByEmail(ctx, email)
 	if err != nil {
 		if errors.Is(err, ErrUserNotFound) {
-			return ErrInvalidResetToken // Token was valid but user was deleted
+			return 0, ErrInvalidResetToken // Token was valid but user was deleted
 		}
 		logger.LegacyPrintf("service.auth", "[Auth] Database error getting user for password reset: %v", err)
-		return ErrServiceUnavailable
+		return 0, ErrServiceUnavailable
 	}
 
 	// Check if user is active
 	if !user.IsActive() {
-		return ErrUserNotActive
+		return 0, ErrUserNotActive
 	}
 
 	// Hash new password
 	hashedPassword, err := s.HashPassword(newPassword)
 	if err != nil {
-		return fmt.Errorf("hash password: %w", err)
+		return 0, fmt.Errorf("hash password: %w", err)
 	}
 
 	// Update password and increment TokenVersion
@@ -1792,7 +1853,7 @@ func (s *AuthService) ResetPassword(ctx context.Context, email, token, newPasswo
 	// 写回 password_hash 本身即可让旧 token 失效。
 	if err := s.userRepo.Update(ctx, user, UserUpdateFields{PasswordHash: true}); err != nil {
 		logger.LegacyPrintf("service.auth", "[Auth] Database error updating password for user %d: %v", user.ID, err)
-		return ErrServiceUnavailable
+		return 0, ErrServiceUnavailable
 	}
 
 	// Also revoke all refresh tokens for this user
@@ -1802,14 +1863,10 @@ func (s *AuthService) ResetPassword(ctx context.Context, email, token, newPasswo
 	}
 
 	// 忘记密码重置属于账号找回/应急恢复场景：同步吊销个人接口密钥，防止遗留 uak_ 继续持有访问权限。
-	if s.personalAPIKeyRevoker != nil {
-		if _, err := s.personalAPIKeyRevoker.Delete(ctx, user.ID); err != nil {
-			logger.LegacyPrintf("service.auth", "[Auth] Failed to revoke personal API key for user %d: %v", user.ID, err)
-		}
-	}
+	s.RevokePersonalAPIKeyQuietly(ctx, user.ID, "password reset")
 
 	logger.LegacyPrintf("service.auth", "[Auth] Password reset successful for user: %s", email)
-	return nil
+	return user.ID, nil
 }
 
 // ==================== Refresh Token Methods ====================
@@ -2577,6 +2634,9 @@ func (s *AuthService) RevokeAllUserTokens(ctx context.Context, userID int64) err
 	if _, err := s.userRepo.GetByID(ctx, userID); err != nil {
 		return fmt.Errorf("get user: %w", err)
 	}
+
+	// 个人接口密钥（uak_）吊销独立于 Redis，即使 Redis 会话吊销失败也要确保立即作废。
+	s.RevokePersonalAPIKeyQuietly(ctx, userID, "revoke all tokens")
 
 	if err := s.RevokeAllUserSessions(ctx, userID); err != nil {
 		logger.LegacyPrintf("service.auth", "[Auth] Failed to revoke refresh sessions after token invalidation for user %d: %v", userID, err)

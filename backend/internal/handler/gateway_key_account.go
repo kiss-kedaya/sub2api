@@ -53,14 +53,19 @@ const keyAccountUnit = "USD"
 // of all the owner's keys together. That is deliberate (a program holding only an API key can read it), so whoever
 // holds a valid key can read these figures. Nothing that says who the owner is (email, username, phone, id) and
 // nothing about the owner's other keys is returned, and the account is always the key's own owner, never chosen by a
-// request parameter. Like the other self-service endpoints it answers for a key that is expired or out of quota
-// (authentication has already refused a switched-off key, a disabled owner and an IP the key does not allow).
+// request parameter. Expired keys are refused at base authentication (and again here in keyInfoSubject), and
+// quota-exhausted keys are refused from reading account-wide wallet/subscription/usage figures (they may still inspect
+// their own key status on /v1/sub2api/key and /v1/usage).
 //
 // Every block is read separately and may be missing: a slow or busy database never turns into zero balance or zero
 // usage, the block is left out and named in "partial". Nothing here is written to a log.
 func (h *GatewayHandler) KeyAccount(c *gin.Context) {
 	apiKey, ok := h.keyInfoSubject(c)
 	if !ok {
+		return
+	}
+	if apiKey.Status == service.StatusAPIKeyQuotaExhausted || apiKey.IsQuotaExhausted() {
+		h.errorResponse(c, http.StatusTooManyRequests, "rate_limit_error", "API key 额度已用完")
 		return
 	}
 	if h.apiKeyService == nil || h.usageService == nil {

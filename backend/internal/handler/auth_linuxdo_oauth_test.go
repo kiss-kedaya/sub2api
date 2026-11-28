@@ -166,7 +166,7 @@ func TestSingleLineStripsWhitespace(t *testing.T) {
 }
 
 func TestLinuxDoOAuthBindStartRedirectsAndSetsBindCookies(t *testing.T) {
-	handler := newLinuxDoOAuthTestHandler(t, false, config.LinuxDoConnectConfig{
+	handler, client := newLinuxDoOAuthHandlerAndClient(t, false, config.LinuxDoConnectConfig{
 		Enabled:             true,
 		ClientID:            "linuxdo-client",
 		ClientSecret:        "linuxdo-secret",
@@ -179,12 +179,22 @@ func TestLinuxDoOAuthBindStartRedirectsAndSetsBindCookies(t *testing.T) {
 		TokenAuthMethod:     "client_secret_post",
 		UsePKCE:             true,
 	})
+	t.Cleanup(func() { _ = client.Close() })
+
+	user, err := client.User.Create().
+		SetEmail("linuxdo-bind-start@example.com").
+		SetUsername("linuxdo-bind-start").
+		SetPasswordHash("hash").
+		SetRole(service.RoleUser).
+		SetStatus(service.StatusActive).
+		Save(context.Background())
+	require.NoError(t, err)
 
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/oauth/linuxdo/bind/start?intent=bind_current_user&redirect=/settings/connections", nil)
 	c.Request = req
-	c.Set(string(servermiddleware.ContextKeyUser), servermiddleware.AuthSubject{UserID: 42})
+	c.Set(string(servermiddleware.ContextKeyUser), servermiddleware.AuthSubject{UserID: user.ID})
 
 	handler.LinuxDoOAuthStart(c)
 
@@ -208,7 +218,7 @@ func TestLinuxDoOAuthBindStartRedirectsAndSetsBindCookies(t *testing.T) {
 	require.NotNil(t, bindCookie)
 	userID, err := parseOAuthBindUserCookieValue(decodeCookieValueForTest(t, bindCookie.Value), "test-secret")
 	require.NoError(t, err)
-	require.Equal(t, int64(42), userID)
+	require.Equal(t, user.ID, userID)
 }
 
 func TestLinuxDoOAuthStartOmitsPKCEWhenDisabled(t *testing.T) {

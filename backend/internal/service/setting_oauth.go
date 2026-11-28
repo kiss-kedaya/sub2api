@@ -4,14 +4,18 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
+	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
-	"github.com/imroc/req/v3"
+	"github.com/Wei-Shaw/sub2api/internal/util/urlvalidator"
 )
 
 // CoerceDingTalkCorpPolicyForWrite 是 coerceDeprecatedDingTalkCorpPolicy 的导出版本，
@@ -876,7 +880,7 @@ func (s *SettingService) GetOIDCConnectOAuthConfig(ctx context.Context) (config.
 		return config.OIDCConnectConfig{}, infraerrors.InternalServer("OAUTH_CONFIG_INVALID", "oauth clock skew must be between 0 and 600")
 	}
 
-	if err := config.ValidateAbsoluteHTTPURL(effective.IssuerURL); err != nil {
+	if _, err := ValidateOIDCOutboundURL(ctx, effective.IssuerURL); err != nil {
 		return config.OIDCConnectConfig{}, infraerrors.InternalServer("OAUTH_CONFIG_INVALID", "oauth issuer url invalid")
 	}
 
@@ -886,7 +890,7 @@ func (s *SettingService) GetOIDCConnectOAuthConfig(ctx context.Context) (config.
 		effective.DiscoveryURL = discoveryURL
 	}
 	if discoveryURL != "" {
-		if err := config.ValidateAbsoluteHTTPURL(discoveryURL); err != nil {
+		if _, err := ValidateOIDCOutboundURL(ctx, discoveryURL); err != nil {
 			return config.OIDCConnectConfig{}, infraerrors.InternalServer("OAUTH_CONFIG_INVALID", "oauth discovery url invalid")
 		}
 	}
@@ -922,11 +926,11 @@ func (s *SettingService) GetOIDCConnectOAuthConfig(ctx context.Context) (config.
 	if err := config.ValidateAbsoluteHTTPURL(effective.AuthorizeURL); err != nil {
 		return config.OIDCConnectConfig{}, infraerrors.InternalServer("OAUTH_CONFIG_INVALID", "oauth authorize url invalid")
 	}
-	if err := config.ValidateAbsoluteHTTPURL(effective.TokenURL); err != nil {
+	if _, err := ValidateOIDCOutboundURL(ctx, effective.TokenURL); err != nil {
 		return config.OIDCConnectConfig{}, infraerrors.InternalServer("OAUTH_CONFIG_INVALID", "oauth token url invalid")
 	}
 	if v := strings.TrimSpace(effective.UserInfoURL); v != "" {
-		if err := config.ValidateAbsoluteHTTPURL(v); err != nil {
+		if _, err := ValidateOIDCOutboundURL(ctx, v); err != nil {
 			return config.OIDCConnectConfig{}, infraerrors.InternalServer("OAUTH_CONFIG_INVALID", "oauth userinfo url invalid")
 		}
 	}
@@ -939,7 +943,7 @@ func (s *SettingService) GetOIDCConnectOAuthConfig(ctx context.Context) (config.
 		}
 	}
 	if v := strings.TrimSpace(effective.JWKSURL); v != "" {
-		if err := config.ValidateAbsoluteHTTPURL(v); err != nil {
+		if _, err := ValidateOIDCOutboundURL(ctx, v); err != nil {
 			return config.OIDCConnectConfig{}, infraerrors.InternalServer("OAUTH_CONFIG_INVALID", "oauth jwks url invalid")
 		}
 	}
@@ -988,27 +992,195 @@ func oidcDefaultDiscoveryURL(issuerURL string) string {
 	return strings.TrimRight(issuerURL, "/") + "/.well-known/openid-configuration"
 }
 
+// OIDCMaxResponseBodyBytes 限制 OIDC Discovery / Token / UserInfo / JWKS 出站响应体上限（1 MiB），
+// 防止恶意或异常上游返回超大载荷耗尽内存。
+const OIDCMaxResponseBodyBytes int64 = 1 << 20
+
+const oidcMaxRedirects = 5
+
+func oidcOutboundPolicy() urlvalidator.OutboundPolicy {
+	if adminOutboundAllowPrivateForTest.Load() {
+		return urlvalidator.OutboundPolicy{
+			AllowPrivate:      true,
+			AllowInsecureHTTP: true,
+		}
+	}
+	return urlvalidator.OutboundPolicy{}
+}
+
+// ValidateOIDCOutboundURL 校验 OIDC 服务端出站端点（Issuer / Discovery / Token / UserInfo / JWKS）：
+// 生产强制 HTTPS + 公网解析目标，拦截私网/环回/元数据段与 DNS 失败。
+func ValidateOIDCOutboundURL(ctx context.Context, raw string) (string, error) {
+	return urlvalidator.ValidateOutboundURL(ctx, raw, oidcOutboundPolicy())
+}
+
+var (
+	oidcSafeTransportOnce sync.Once
+	oidcSafeTransport     http.RoundTripper
+)
+
+func getOIDCOutboundTransport(policy urlvalidator.OutboundPolicy) http.RoundTripper {
+	if policy.AllowPrivate {
+		// 测试模式允许私网目标时关闭长连接，避免短命 httptest.Server 泄漏空闲连接/goroutine。
+		client := urlvalidator.NewSafeHTTPClient(policy, urlvalidator.HTTPClientOptions{})
+		if tr, ok := client.Transport.(*http.Transport); ok {
+			tr.DisableKeepAlives = true
+		}
+		return client.Transport
+	}
+	oidcSafeTransportOnce.Do(func() {
+		client := urlvalidator.NewSafeHTTPClient(urlvalidator.OutboundPolicy{}, urlvalidator.HTTPClientOptions{
+			MaxIdleConns:        32,
+			MaxIdleConnsPerHost: 8,
+		})
+		oidcSafeTransport = client.Transport
+	})
+	return oidcSafeTransport
+}
+
+func sameURLOrigin(a, b *url.URL) bool {
+	if a == nil || b == nil {
+		return false
+	}
+	schemeA := strings.ToLower(strings.TrimSpace(a.Scheme))
+	schemeB := strings.ToLower(strings.TrimSpace(b.Scheme))
+	if schemeA == "" || schemeA != schemeB {
+		return false
+	}
+	hostA := strings.ToLower(strings.TrimSpace(a.Hostname()))
+	hostB := strings.ToLower(strings.TrimSpace(b.Hostname()))
+	if hostA == "" || hostA != hostB {
+		return false
+	}
+	portA := effectiveURLPort(schemeA, a.Port())
+	portB := effectiveURLPort(schemeB, b.Port())
+	return portA == portB
+}
+
+func effectiveURLPort(scheme, port string) string {
+	if port != "" {
+		return port
+	}
+	switch scheme {
+	case "https":
+		return "443"
+	case "http":
+		return "80"
+	default:
+		return ""
+	}
+}
+
+// NewOIDCOutboundHTTPClient 构造带安全拨号（防 DNS rebinding）与重定向守卫的 OIDC 出站 HTTP 客户端
+// （适用于不含敏感凭据的 Discovery / JWKS GET 请求）。
+func NewOIDCOutboundHTTPClient(timeout time.Duration) *http.Client {
+	policy := oidcOutboundPolicy()
+	return &http.Client{
+		Transport: getOIDCOutboundTransport(policy),
+		Timeout:   timeout,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= oidcMaxRedirects {
+				return urlvalidator.ErrOutboundTargetNotAllowed
+			}
+			if req == nil || req.URL == nil {
+				return urlvalidator.ErrOutboundTargetNotAllowed
+			}
+			if policy.AllowPrivate {
+				return nil
+			}
+			if _, err := urlvalidator.ValidateOutboundURL(req.Context(), req.URL.String(), policy); err != nil {
+				return err
+			}
+			return nil
+		},
+	}
+}
+
+// NewOIDCNoRedirectOutboundHTTPClient 构造禁止任何 3xx 重定向的 OIDC 安全出站客户端，
+// 用于携带 client_secret / authorization code 的 Token 交换 POST 请求，防止 307/308 重放泄露凭据。
+func NewOIDCNoRedirectOutboundHTTPClient(timeout time.Duration) *http.Client {
+	policy := oidcOutboundPolicy()
+	return &http.Client{
+		Transport: getOIDCOutboundTransport(policy),
+		Timeout:   timeout,
+		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+			return urlvalidator.ErrOutboundTargetNotAllowed
+		},
+	}
+}
+
+// NewOIDCSameOriginOutboundHTTPClient 构造仅允许同源重定向的 OIDC 安全出站客户端，
+// 用于携带 Bearer access_token 的 UserInfo GET 请求，防止跨源重定向泄露令牌。
+func NewOIDCSameOriginOutboundHTTPClient(timeout time.Duration) *http.Client {
+	policy := oidcOutboundPolicy()
+	return &http.Client{
+		Transport: getOIDCOutboundTransport(policy),
+		Timeout:   timeout,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) == 0 || len(via) >= oidcMaxRedirects || req == nil || req.URL == nil {
+				return urlvalidator.ErrOutboundTargetNotAllowed
+			}
+			if !sameURLOrigin(via[0].URL, req.URL) {
+				return urlvalidator.ErrOutboundTargetNotAllowed
+			}
+			if policy.AllowPrivate {
+				return nil
+			}
+			if _, err := urlvalidator.ValidateOutboundURL(req.Context(), req.URL.String(), policy); err != nil {
+				return err
+			}
+			return nil
+		},
+	}
+}
+
+// ReadOIDCResponseBody 带严格字节上限读取 OIDC 响应体。
+func ReadOIDCResponseBody(r io.Reader) ([]byte, error) {
+	if r == nil {
+		return nil, fmt.Errorf("empty response body")
+	}
+	body, err := io.ReadAll(io.LimitReader(r, OIDCMaxResponseBodyBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(body)) > OIDCMaxResponseBodyBytes {
+		return nil, fmt.Errorf("oidc response body exceeds limit (%d bytes)", OIDCMaxResponseBodyBytes)
+	}
+	return body, nil
+}
+
 func oidcResolveProviderMetadata(ctx context.Context, discoveryURL string) (*oidcProviderMetadata, error) {
 	discoveryURL = strings.TrimSpace(discoveryURL)
 	if discoveryURL == "" {
 		return nil, fmt.Errorf("discovery url is empty")
 	}
+	normalizedURL, err := ValidateOIDCOutboundURL(ctx, discoveryURL)
+	if err != nil {
+		return nil, fmt.Errorf("discovery url not allowed: %w", err)
+	}
 
-	resp, err := req.C().
-		SetTimeout(15*time.Second).
-		R().
-		SetContext(ctx).
-		SetHeader("Accept", "application/json").
-		Get(discoveryURL)
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, normalizedURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("build discovery request: %w", err)
+	}
+	httpReq.Header.Set("Accept", "application/json")
+
+	resp, err := NewOIDCOutboundHTTPClient(15 * time.Second).Do(httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("request discovery document: %w", err)
 	}
-	if !resp.IsSuccessState() {
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 		return nil, fmt.Errorf("discovery request failed: status=%d", resp.StatusCode)
+	}
+	body, err := ReadOIDCResponseBody(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read discovery document: %w", err)
 	}
 
 	metadata := &oidcProviderMetadata{}
-	if err := json.Unmarshal(resp.Bytes(), metadata); err != nil {
+	if err := json.Unmarshal(body, metadata); err != nil {
 		return nil, fmt.Errorf("parse discovery document: %w", err)
 	}
 	return metadata, nil
