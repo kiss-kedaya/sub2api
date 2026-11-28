@@ -495,17 +495,28 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 					upstreamErrorPending = true
 				} else if rootType == "response.completed" || rootType == "response.done" {
 					nonBillableUpstreamError = false
-				} else if strings.Contains(payload, `"finish_reason"`) || strings.Contains(payload, `\u`) {
-					root.Get("choices").ForEach(func(_, choice gjson.Result) bool {
-						reason := choice.Get("finish_reason").String()
+				} else if jsonMayContainText(payload, "finish_reason") {
+					choices := root.Get("choices")
+					if !root.IsObject() {
+						choices = gjson.Get(payload, "choices")
+					}
+					if choices.IsArray() {
+						choices.ForEach(func(_, choice gjson.Result) bool {
+							reason := choice.Get("finish_reason").String()
+							if reason != "" && reason != "error" {
+								nonBillableUpstreamError = false
+								return false
+							}
+							return true
+						})
+					} else if choices.Exists() {
+						reason := choices.Get("finish_reason").String()
 						if reason != "" && reason != "error" {
 							nonBillableUpstreamError = false
-							return false
 						}
-						return true
-					})
+					}
 				}
-				if strings.Contains(payload, `"model"`) || strings.Contains(payload, `\u`) {
+				if jsonMayContainText(payload, "model") {
 					observer.ObserveOpenAIFrame(openAISSEDataFrame{
 						root:      root,
 						eventType: strings.TrimSpace(rootType),
@@ -780,10 +791,16 @@ func isOpenAIChatUsageOnlyStreamRoot(root gjson.Result, payload string) bool {
 	if !jsonMayContainText(payload, "usage") {
 		return false
 	}
-	if !root.Get("usage").Exists() {
+	lookup := func(path string) gjson.Result {
+		if root.IsObject() {
+			return root.Get(path)
+		}
+		return gjson.Get(payload, path)
+	}
+	if !lookup("usage").Exists() {
 		return false
 	}
-	choices := root.Get("choices")
+	choices := lookup("choices")
 	return choices.Exists() && choices.IsArray() && len(choices.Array()) == 0
 }
 
@@ -847,7 +864,11 @@ func (t *compatChatTally) AddRoot(root gjson.Result, payload string) int {
 		return 0
 	}
 	added := 0
-	root.Get("choices").ForEach(func(_, choice gjson.Result) bool {
+	choices := root.Get("choices")
+	if !root.IsObject() {
+		choices = gjson.Get(payload, "choices")
+	}
+	choices.ForEach(func(_, choice gjson.Result) bool {
 		delta := choice.Get("delta")
 		if !delta.IsObject() {
 			return true

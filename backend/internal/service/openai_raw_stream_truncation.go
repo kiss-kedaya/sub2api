@@ -52,31 +52,46 @@ func (t *openAIRawStreamTerminalState) ObserveDataLine(payload string) {
 }
 
 // ObserveRoot reuses an already-parsed SSE data root to avoid re-scanning the
-// chunk payload on every token delta.
+// chunk payload on every token delta. When root is empty (e.g. a leading junk
+// byte that gjson.Get skips but gjson.Parse stops on), it falls back to
+// gjson.Get so behavior stays identical to ObserveDataLine.
 func (t *openAIRawStreamTerminalState) ObserveRoot(root gjson.Result, payload string) {
 	if t == nil {
 		return
 	}
 	t.sawDataLine = true
+	lookup := func(path string) gjson.Result {
+		if root.IsObject() {
+			return root.Get(path)
+		}
+		return gjson.Get(payload, path)
+	}
 	if !t.sawUsage && jsonMayContainText(payload, "usage") {
-		if usage := root.Get("usage"); usage.Exists() && usage.IsObject() {
+		if usage := lookup("usage"); usage.Exists() && usage.IsObject() {
 			t.sawUsage = true
 		}
 	}
 	if t.sawFinishReason {
 		return
 	}
-	if !strings.Contains(payload, `"finish_reason"`) && !strings.Contains(payload, `\u`) {
+	if !jsonMayContainText(payload, "finish_reason") {
 		return
 	}
-	root.Get("choices").ForEach(func(_, choice gjson.Result) bool {
-		// finish_reason 为 null 时 String() 返回空串，不算终止。
-		if strings.TrimSpace(choice.Get("finish_reason").String()) != "" {
+	choices := lookup("choices")
+	if choices.IsArray() {
+		choices.ForEach(func(_, choice gjson.Result) bool {
+			// finish_reason 为 null 时 String() 返回空串，不算终止。
+			if strings.TrimSpace(choice.Get("finish_reason").String()) != "" {
+				t.sawFinishReason = true
+				return false
+			}
+			return true
+		})
+	} else if choices.Exists() {
+		if strings.TrimSpace(choices.Get("finish_reason").String()) != "" {
 			t.sawFinishReason = true
-			return false
 		}
-		return true
-	})
+	}
 }
 
 // Terminated 表示上游给出过终止信号。

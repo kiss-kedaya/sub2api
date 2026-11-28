@@ -38,11 +38,19 @@ func TestInlineOpaqueBlobFolding_Boundaries(t *testing.T) {
 	dataURI := countStr(`"data:image/png;base64,` + long + `"`)
 	require.Less(t, dataURI, 20)
 
-	// Escaped slashes (\/) belong to the base64 run; other escapes (\n) break the run.
+	// Escaped slashes (\/) and \uXXXX escapes decoding to base64 bytes belong to
+	// the run; decoded newlines (\u000a) and other escapes (\n) break the run.
 	escapedSlashes := countStr(`"` + strings.Repeat(`ab\/`, 400) + `"`)
 	require.Equal(t, 2, escapedSlashes)
+	literalBlob := countStr(`"` + run(opaqueBlobMinRun) + `"`)
+	unicodeEscapedBlob := countStr(`"` + run(512) + `\u0041` + run(511) + `"`)
+	require.Equal(t, literalBlob, unicodeEscapedBlob, "\\uXXXX decoding to base64 byte must keep run open")
 	brokenRun := countStr(`"` + strings.Repeat(run(600)+`\n`, 3) + `"`)
 	require.Greater(t, brokenRun, 300)
+	unicodeNewlineSplit := countStr(`"` + run(600) + `\u000a` + run(600) + `"`)
+	require.Greater(t, unicodeNewlineSplit, 200, "\\u000a must separate runs under threshold")
+	unicodeNewlineTwoBlobs := countStr(`"` + long + `\u000a` + long + `"`)
+	require.Less(t, unicodeNewlineTwoBlobs, 10, "\\u000a separating two opaque runs folds both")
 
 	// Two blobs separated by prose fold independently while keeping prose counted.
 	twoBlobs := countStr(`"` + long + ` hello world ` + long + `"`)

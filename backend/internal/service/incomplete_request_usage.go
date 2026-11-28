@@ -520,6 +520,38 @@ func (c *fastTokenCounter) observeJSONString(b []byte, start, end int) {
 					i += 2
 					continue
 				}
+				if next == 'u' && i+6 <= limit {
+					if u, ok := parseFastHex4(b[i+2 : i+6]); ok {
+						if u < 0x80 && isOpaqueBlobByte(byte(u)) {
+							w := fastASCIIByteWeight(byte(u))
+							c.weight += w
+							runLen++
+							runWeight += w
+							i += 6
+							continue
+						}
+						if runLen > 0 {
+							flushBlob()
+						}
+						if u >= 0xD800 && u <= 0xDBFF && i+12 <= limit && b[i+6] == '\\' && b[i+7] == 'u' {
+							if u2, ok2 := parseFastHex4(b[i+8 : i+12]); ok2 && u2 >= 0xDC00 && u2 <= 0xDFFF {
+								c.weight += fastWeightUTF8_4
+								i += 12
+								continue
+							}
+						}
+						switch {
+						case u < 0x80:
+							c.weight += fastASCIIByteWeight(byte(u))
+						case u < 0x800:
+							c.weight += fastWeightUTF8_2
+						default:
+							c.weight += fastWeightUTF8_3
+						}
+						i += 6
+						continue
+					}
+				}
 				if runLen > 0 {
 					flushBlob()
 				}
@@ -529,30 +561,6 @@ func (c *fastTokenCounter) observeJSONString(b []byte, start, end int) {
 					i += 2
 				case 't':
 					c.weight += fastWeightASCIISpace
-					i += 2
-				case 'u':
-					if i+6 <= limit {
-						if u, ok := parseFastHex4(b[i+2 : i+6]); ok {
-							if u >= 0xD800 && u <= 0xDBFF && i+12 <= limit && b[i+6] == '\\' && b[i+7] == 'u' {
-								if u2, ok2 := parseFastHex4(b[i+8 : i+12]); ok2 && u2 >= 0xDC00 && u2 <= 0xDFFF {
-									c.weight += fastWeightUTF8_4
-									i += 12
-									continue
-								}
-							}
-							switch {
-							case u < 0x80:
-								c.weight += fastASCIIByteWeight(byte(u))
-							case u < 0x800:
-								c.weight += fastWeightUTF8_2
-							default:
-								c.weight += fastWeightUTF8_3
-							}
-							i += 6
-							continue
-						}
-					}
-					c.weight += fastWeightASCIIPunct
 					i += 2
 				default:
 					c.weight += fastWeightASCIIPunct
@@ -635,26 +643,18 @@ type fastWalkMode uint8
 const (
 	fastWalkResponses fastWalkMode = iota
 	fastWalkAnthropic
-	fastWalkGemini
 	fastWalkSchema
 )
 
 func shouldSkipMetadataKey(mode fastWalkMode, key string) bool {
-	switch mode {
-	case fastWalkSchema:
+	if mode == fastWalkSchema {
 		return false
-	case fastWalkGemini:
-		switch key {
-		case "role", "mime_type", "mimeType", "thoughtSignature", "thought_signature":
-			return true
-		}
-	default:
-		switch key {
-		case "role", "type", "id", "call_id", "tool_use_id", "tool_call_id",
-			"status", "index", "media_type", "mime_type", "mimeType",
-			"cache_control", "encrypted_content", "signature", "detail":
-			return true
-		}
+	}
+	switch key {
+	case "role", "type", "id", "call_id", "tool_use_id", "tool_call_id",
+		"status", "index", "media_type", "mime_type", "mimeType",
+		"cache_control", "encrypted_content", "signature", "detail":
+		return true
 	}
 	return false
 }
@@ -673,9 +673,11 @@ func (c *fastTokenCounter) observeJSONValue(b []byte, start, end, depth int, mod
 		})
 	case '{':
 		// Skip inline base64 image/binary data objects (e.g. Anthropic image source
-		// {"type":"base64","media_type":"image/png","data":"..."} or Gemini inline_data)
-		// without counting binary payloads as text.
+		// {"type":"base64","media_type":"image/png","data":"..."}) without counting
+		// binary payloads as text. For Anthropic tool_use blocks, walk "input" in
+		// schema mode so argument keys and numeric/boolean values are counted.
 		skipDataField := false
+		isToolUse := false
 		if mode != fastWalkSchema {
 			jsonForEachMemberSpan(b, start, end, func(key string, vs, ve, _, _ int) bool {
 				switch key {
@@ -685,6 +687,10 @@ func (c *fastTokenCounter) observeJSONValue(b []byte, start, end, depth int, mod
 				case "type":
 					if ve-vs == 8 && string(b[vs:ve]) == `"base64"` {
 						skipDataField = true
+						return false
+					}
+					if mode == fastWalkAnthropic && ve-vs == 10 && string(b[vs:ve]) == `"tool_use"` {
+						isToolUse = true
 						return false
 					}
 				}
@@ -702,7 +708,11 @@ func (c *fastTokenCounter) observeJSONValue(b []byte, start, end, depth int, mod
 				c.observeJSONString(b, ks, ke)
 				c.weight += fastWeightASCIIPunct
 			}
-			c.observeJSONValue(b, vs, ve, depth+1, mode)
+			childMode := mode
+			if isToolUse && key == "input" {
+				childMode = fastWalkSchema
+			}
+			c.observeJSONValue(b, vs, ve, depth+1, childMode)
 			return !c.saturated()
 		})
 	default:
@@ -713,14 +723,191 @@ func (c *fastTokenCounter) observeJSONValue(b []byte, start, end, depth int, mod
 }
 
 func estimateGeminiInputTokensFast(body []byte, spans incompleteRequestSpans) int {
-	var c fastTokenCounter
+	total := 0
 	if spans.systemInstruction.valid() && !spans.systemInstruction.isNull(body) {
-		c.observeJSONValue(body, spans.systemInstruction.start, spans.systemInstruction.end, 0, fastWalkGemini)
+		total += estimateGeminiPartsObjectFast(body, spans.systemInstruction.start, spans.systemInstruction.end)
 	}
-	if spans.contents.valid() && !spans.contents.isNull(body) {
-		c.observeJSONValue(body, spans.contents.start, spans.contents.end, 0, fastWalkGemini)
+	if spans.contents.valid() && !spans.contents.isNull(body) && body[spans.contents.start] == '[' {
+		jsonForEachElementSpan(body, spans.contents.start, spans.contents.end, func(es, ee int) bool {
+			total += estimateGeminiPartsObjectFast(body, es, ee)
+			return total < maxIncompleteInputTokens
+		})
 	}
-	return c.tokens()
+	if total <= 0 {
+		return 0
+	}
+	return clampIncompleteInputTokens(total)
+}
+
+func estimateGeminiPartsObjectFast(body []byte, objStart, objEnd int) int {
+	if objEnd <= objStart || body[objStart] != '{' {
+		return 0
+	}
+	total := 0
+	jsonForEachMemberSpan(body, objStart, objEnd, func(key string, vs, ve, _, _ int) bool {
+		if key != "parts" || ve <= vs || body[vs] != '[' {
+			return true
+		}
+		jsonForEachElementSpan(body, vs, ve, func(ps, pe int) bool {
+			if pe <= ps || body[ps] != '{' {
+				return true
+			}
+			jsonForEachMemberSpan(body, ps, pe, func(pk string, tvs, tve, _, _ int) bool {
+				if pk == "text" {
+					total += countGeminiTextJSONStringFast(body, tvs, tve)
+				}
+				return total < maxIncompleteInputTokens
+			})
+			return total < maxIncompleteInputTokens
+		})
+		return total < maxIncompleteInputTokens
+	})
+	return total
+}
+
+func isFastASCIISpace(c byte) bool {
+	return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\v' || c == '\f'
+}
+
+// countGeminiTextJSONStringFast matches estimateTokensForText on a JSON string
+// span in a single zero-allocation pass while folding >= opaqueBlobMinRun
+// base64 runs inline to "[blob]" (6 ASCII runes).
+func countGeminiTextJSONStringFast(b []byte, start, end int) int {
+	if end-start <= 2 || b[start] != '"' || b[end-1] != '"' {
+		return 0
+	}
+	limit := end - 1
+	totalRunes := 0
+	asciiRunes := 0
+	seenNonSpace := false
+	trailingSpace := 0
+	runLen := 0
+	runRunes := 0
+	flushBlob := func() {
+		if runLen >= opaqueBlobMinRun {
+			const blobRunes = 6 // len("[blob]")
+			totalRunes = totalRunes - runRunes + blobRunes
+			asciiRunes = asciiRunes - runRunes + blobRunes
+		}
+		runLen = 0
+		runRunes = 0
+	}
+	addRune := func(isASCII, isSpace, isBlob bool, blobStep int) {
+		if isBlob {
+			if !seenNonSpace {
+				seenNonSpace = true
+			}
+			trailingSpace = 0
+			totalRunes++
+			asciiRunes++
+			runLen += blobStep
+			runRunes++
+			return
+		}
+		if runLen > 0 {
+			flushBlob()
+		}
+		if !seenNonSpace {
+			if isSpace {
+				return
+			}
+			seenNonSpace = true
+		}
+		if isSpace {
+			totalRunes++
+			if isASCII {
+				asciiRunes++
+			}
+			trailingSpace++
+			return
+		}
+		trailingSpace = 0
+		totalRunes++
+		if isASCII {
+			asciiRunes++
+		}
+	}
+
+	i := start + 1
+	for i < limit {
+		ch := b[i]
+		if ch == '\\' {
+			if i+1 < limit {
+				next := b[i+1]
+				if next == '/' {
+					addRune(true, false, true, 2)
+					i += 2
+					continue
+				}
+				if next == 'u' && i+6 <= limit {
+					if u, ok := parseFastHex4(b[i+2 : i+6]); ok {
+						if u < 0x80 {
+							c := byte(u)
+							addRune(true, isFastASCIISpace(c), isOpaqueBlobByte(c), 1)
+							i += 6
+							continue
+						}
+						if u >= 0xD800 && u <= 0xDBFF && i+12 <= limit && b[i+6] == '\\' && b[i+7] == 'u' {
+							if u2, ok2 := parseFastHex4(b[i+8 : i+12]); ok2 && u2 >= 0xDC00 && u2 <= 0xDFFF {
+								addRune(false, false, false, 0)
+								i += 12
+								continue
+							}
+						}
+						addRune(false, u == 0x00A0 || u == 0x3000, false, 0)
+						i += 6
+						continue
+					}
+				}
+				switch next {
+				case 'n', 'r', 't', 'f':
+					addRune(true, true, false, 0)
+				default:
+					addRune(true, false, false, 0)
+				}
+				i += 2
+				continue
+			}
+			i++
+			continue
+		}
+		if ch < 0x80 {
+			addRune(true, isFastASCIISpace(ch), isOpaqueBlobByte(ch), 1)
+			i++
+			continue
+		}
+		if ch < 0xC0 {
+			i++
+			continue
+		}
+		addRune(false, false, false, 0)
+		switch {
+		case ch < 0xE0:
+			i += 2
+		case ch < 0xF0:
+			i += 3
+		default:
+			i += 4
+		}
+	}
+	if runLen > 0 {
+		flushBlob()
+	}
+	if trailingSpace > 0 {
+		totalRunes -= trailingSpace
+		if asciiRunes >= trailingSpace {
+			asciiRunes -= trailingSpace
+		} else {
+			asciiRunes = 0
+		}
+	}
+	if totalRunes <= 0 {
+		return 0
+	}
+	if asciiRunes*5 >= totalRunes*4 {
+		return (totalRunes + 3) / 4
+	}
+	return totalRunes
 }
 
 func estimateResponsesInputTokensFast(body []byte, spans incompleteRequestSpans) int {
