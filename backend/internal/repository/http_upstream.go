@@ -307,13 +307,18 @@ func (s *httpUpstreamService) Do(req *http.Request, proxyURL string, accountID i
 	// 执行请求
 	client := s.httpClientForUpstreamRequest(entry.client, req)
 	client = httpClientWithGrokAccessDeniedFallback(client)
-	releaseWrappedPayload := wrapUpstreamRequestPayloadForRelease(req)
+	wrappedBody, releaseWrappedPayload := wrapUpstreamRequestPayloadForRelease(req)
 	resp, err := observedUpstreamRequest(client, req)
 	captureUpstreamHeadersForOps(req, resp)
 	s.observeUpstreamAttempt(req, accountID, resp, err)
 	releaseWrappedPayload()
-	releaseUpstreamRequestPayload(origReq, resp)
-	releaseUpstreamRequestPayload(req, resp)
+	if origReq != nil && origReq != req {
+		origReq.Body = nil
+		origReq.GetBody = nil
+	}
+	if wrappedBody == nil || wrappedBody.IsClosed() {
+		releaseUpstreamRequestPayload(req, resp)
+	}
 	if err != nil {
 		// 请求失败，立即减少计数
 		atomic.AddInt64(&entry.inFlight, -1)
@@ -384,13 +389,18 @@ func (s *httpUpstreamService) DoWithTLS(req *http.Request, proxyURL string, acco
 
 	client := s.httpClientForUpstreamRequest(entry.client, req)
 	client = httpClientWithGrokAccessDeniedFallback(client)
-	releaseWrappedPayload := wrapUpstreamRequestPayloadForRelease(req)
+	wrappedBody, releaseWrappedPayload := wrapUpstreamRequestPayloadForRelease(req)
 	resp, err := observedUpstreamRequest(client, req)
 	captureUpstreamHeadersForOps(req, resp)
 	s.observeUpstreamAttempt(req, accountID, resp, err)
 	releaseWrappedPayload()
-	releaseUpstreamRequestPayload(origReq, resp)
-	releaseUpstreamRequestPayload(req, resp)
+	if origReq != nil && origReq != req {
+		origReq.Body = nil
+		origReq.GetBody = nil
+	}
+	if wrappedBody == nil || wrappedBody.IsClosed() {
+		releaseUpstreamRequestPayload(req, resp)
+	}
 	if err != nil {
 		atomic.AddInt64(&entry.inFlight, -1)
 		atomic.StoreInt64(&entry.lastUsed, time.Now().UnixNano())
@@ -1783,8 +1793,9 @@ func observedUpstreamRequest(client *http.Client, req *http.Request) (result *ht
 }
 
 type releasableRequestBody struct {
-	mu sync.Mutex
-	rc io.ReadCloser
+	mu     sync.Mutex
+	rc     io.ReadCloser
+	closed bool
 }
 
 func (b *releasableRequestBody) Read(p []byte) (int, error) {
@@ -1800,15 +1811,35 @@ func (b *releasableRequestBody) Read(p []byte) (int, error) {
 func (b *releasableRequestBody) Close() error {
 	b.mu.Lock()
 	rc := b.rc
+	b.rc = nil
+	b.closed = true
 	b.mu.Unlock()
 	if rc == nil {
 		return nil
 	}
-	return rc.Close()
+	err := rc.Close()
+	if r, ok := rc.(interface{ Release() }); ok {
+		r.Release()
+	}
+	return err
 }
 
+func (b *releasableRequestBody) IsClosed() bool {
+	b.mu.Lock()
+	closed := b.closed
+	b.mu.Unlock()
+	return closed
+}
+
+// Release detaches the wrapped reader only if the transport has already closed
+// it. Keeping b.rc intact while an HTTP/2 upload is still streaming prevents
+// premature EOF truncation and guarantees Close runs on the underlying reader.
 func (b *releasableRequestBody) Release() {
 	b.mu.Lock()
+	if !b.closed {
+		b.mu.Unlock()
+		return
+	}
 	rc := b.rc
 	b.rc = nil
 	b.mu.Unlock()
@@ -1838,9 +1869,9 @@ func (g *releasableRequestGetBody) release() {
 	g.mu.Unlock()
 }
 
-func wrapUpstreamRequestPayloadForRelease(req *http.Request) func() {
+func wrapUpstreamRequestPayloadForRelease(req *http.Request) (*releasableRequestBody, func()) {
 	if req == nil {
-		return func() {}
+		return nil, func() {}
 	}
 	var rb *releasableRequestBody
 	if req.Body != nil && req.Body != http.NoBody {
@@ -1852,7 +1883,7 @@ func wrapUpstreamRequestPayloadForRelease(req *http.Request) func() {
 		gb = &releasableRequestGetBody{fn: req.GetBody}
 		req.GetBody = gb.get
 	}
-	return func() {
+	return rb, func() {
 		if rb != nil {
 			rb.Release()
 		}

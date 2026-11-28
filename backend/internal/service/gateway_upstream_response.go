@@ -1442,6 +1442,7 @@ func (s *GatewayService) extractSSEUsagePatch(event map[string]any) *sseUsagePat
 		// #8407). A bare placeholder zero - what re-serializing relays emit -
 		// must keep the message_start input, otherwise the whole
 		// uncached-input bucket disappears from billing.
+		hasPositiveInputUsage := sseDeltaReportsPositiveInputUsage(usageObj)
 		if v, ok := parseSSEUsageInt(usageObj["input_tokens"]); ok {
 			if v != 0 || sseDeltaReportsPositiveCacheUsage(usageObj) {
 				patch.inputTokens = v
@@ -1453,12 +1454,16 @@ func (s *GatewayService) extractSSEUsagePatch(event map[string]any) *sseUsagePat
 			patch.hasOutputTokens = true
 		}
 		if v, ok := parseSSEUsageInt(usageObj["cache_creation_input_tokens"]); ok {
-			patch.cacheCreationInputTokens = v
-			patch.hasCacheCreationInput = true
+			if v != 0 || hasPositiveInputUsage {
+				patch.cacheCreationInputTokens = v
+				patch.hasCacheCreationInput = true
+			}
 		}
 		if v, ok := parseSSEUsageInt(usageObj["cache_read_input_tokens"]); ok {
-			patch.cacheReadInputTokens = v
-			patch.hasCacheReadInput = true
+			if v != 0 || hasPositiveInputUsage {
+				patch.cacheReadInputTokens = v
+				patch.hasCacheReadInput = true
+			}
 		}
 		if cc, ok := usageObj["cache_creation"].(map[string]any); ok {
 			if v, exists := parseSSEUsageInt(cc["ephemeral_5m_input_tokens"]); exists {
@@ -1501,6 +1506,13 @@ func mapServerToolWebSearchRequests(usageObj map[string]any) (int, bool) {
 // object restates the cached portion of the prompt in the same event. The
 // helper mirrors anthropicDeltaCarriesPositiveCacheUsage for the map-based
 // event parser; see the message_delta branch in extractSSEUsagePatch.
+func sseDeltaReportsPositiveInputUsage(usageObj map[string]any) bool {
+	if v, ok := parseSSEUsageInt(usageObj["input_tokens"]); ok && v > 0 {
+		return true
+	}
+	return sseDeltaReportsPositiveCacheUsage(usageObj)
+}
+
 func sseDeltaReportsPositiveCacheUsage(usageObj map[string]any) bool {
 	for _, key := range []string{"cache_read_input_tokens", "cache_creation_input_tokens", "cached_tokens"} {
 		if v, ok := parseSSEUsageInt(usageObj[key]); ok && v > 0 {

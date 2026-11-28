@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 	"weak"
@@ -95,4 +96,92 @@ func TestHTTPUpstreamDo_ReleasesRequestBodyMidStream(t *testing.T) {
 			}, 3*time.Second, 5*time.Millisecond, "request body must be collectible while streaming response is still open")
 		})
 	}
+}
+
+type trackingSlowBody struct {
+	firstSent chan struct{}
+	unblock   chan struct{}
+	chunks    [][]byte
+	idx       int
+	closes    atomic.Int32
+}
+
+func (b *trackingSlowBody) Read(p []byte) (int, error) {
+	if b.idx == 0 {
+		n := copy(p, b.chunks[0])
+		b.chunks[0] = b.chunks[0][n:]
+		if len(b.chunks[0]) == 0 {
+			b.idx++
+			close(b.firstSent)
+		}
+		return n, nil
+	}
+	if b.idx == 1 {
+		<-b.unblock
+	}
+	if b.idx >= len(b.chunks) {
+		return 0, io.EOF
+	}
+	n := copy(p, b.chunks[b.idx])
+	b.chunks[b.idx] = b.chunks[b.idx][n:]
+	if len(b.chunks[b.idx]) == 0 {
+		b.idx++
+	}
+	return n, nil
+}
+
+func (b *trackingSlowBody) Close() error {
+	b.closes.Add(1)
+	return nil
+}
+
+func TestHTTPUpstreamDo_HTTP2EarlyResponseDoesNotTruncateOrSkipClose(t *testing.T) {
+	expectedTail := strings.Repeat("Z", 64<<10)
+	expectedFull := "head-" + expectedTail
+	gotBodyCh := make(chan string, 1)
+	headersSent := make(chan struct{})
+
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Reply with 200 headers BEFORE draining the HTTP/2 POST body.
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+		close(headersSent)
+		data, _ := io.ReadAll(r.Body)
+		gotBodyCh <- string(data)
+		_, _ = w.Write([]byte("data: ok\n\n"))
+	}))
+	srv.EnableHTTP2 = true
+	srv.StartTLS()
+	t.Cleanup(srv.Close)
+
+	slow := &trackingSlowBody{
+		firstSent: make(chan struct{}),
+		unblock:   make(chan struct{}),
+		chunks:    [][]byte{[]byte("head-"), []byte(expectedTail)},
+	}
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, srv.URL+"/v1/responses", slow)
+	require.NoError(t, err)
+	req.ContentLength = int64(len(expectedFull))
+
+	wrappedBody, releaseWrapped := wrapUpstreamRequestPayloadForRelease(req)
+	resp, err := observedUpstreamRequest(srv.Client(), req)
+	require.NoError(t, err)
+	defer func() { _ = resp.Body.Close() }()
+	<-headersSent
+	require.Equal(t, 2, resp.ProtoMajor, "test must exercise HTTP/2")
+
+	// Simulate Do returning while upload is still blocked mid-body.
+	releaseWrapped()
+	require.False(t, wrappedBody.IsClosed(), "body must stay open while HTTP/2 upload is still streaming")
+
+	close(slow.unblock)
+	require.Equal(t, expectedFull, <-gotBodyCh, "HTTP/2 early-200 release must not truncate the remaining upload")
+	_, err = io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Eventually(t, func() bool {
+		return slow.closes.Load() == 1 && wrappedBody.IsClosed()
+	}, 3*time.Second, 5*time.Millisecond, "underlying request body Close must be called once when transport finishes")
 }

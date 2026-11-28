@@ -861,15 +861,17 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	// Explicit BPS routes share the model rewrite, feature gates and fast-tier
 	// policy above. Their independent grant is selected before native Codex
 	// token/ticket acquisition and before the WebSocket transport branch.
-	if !isCompactRequest {
+	if !isCompactRequest && ExcelBPSRouteSelected(account, RequestBodyTop(c, body).Get("model").String()) {
+		bpsReasoningEffort := extractOpenAIReasoningEffortFromBody(c, body, upstreamModel, billingModel, originalModel)
+		bpsServiceTier := resolvedOpenAIUpstreamServiceTier(c, extractOpenAIServiceTierFromBody(c, body))
 		if result, handled, bpsErr := s.forwardSelectedExcelBPS(ctx, c, account, body, startTime, originalModel); handled {
 			if result != nil {
 				result.Model = originalModel
 				result.BillingModel = billingModel
 				result.UpstreamModel = upstreamModel
 				result.Stream = reqStream
-				result.ReasoningEffort = extractOpenAIReasoningEffortFromBody(c, body, upstreamModel, billingModel, originalModel)
-				result.ServiceTier = resolvedOpenAIUpstreamServiceTier(c, extractOpenAIServiceTierFromBody(c, body))
+				result.ReasoningEffort = bpsReasoningEffort
+				result.ServiceTier = bpsServiceTier
 			}
 			return result, bpsErr
 		}

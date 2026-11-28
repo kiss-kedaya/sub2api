@@ -53,9 +53,15 @@ type responsesInputIndex struct {
 	items                    []responsesInputItemMeta
 }
 
+// maxResponsesInputIndexItems caps retained item metadata per request so an
+// unauthenticated/pre-admission payload with tens of thousands of tiny elements
+// cannot amplify heap allocation; oversized inputs fall back to span walkers.
+const maxResponsesInputIndexItems = 4096
+
 func (x *bodyTopIndex) responsesInput() *responsesInputIndex {
 	x.inputOnce.Do(func() {
 		x.inputIdx = buildResponsesInputIndex(x)
+		x.inputBuilt.Store(true)
 	})
 	return x.inputIdx
 }
@@ -215,6 +221,10 @@ func buildResponsesInputIndex(x *bodyTopIndex) *responsesInputIndex {
 	var dropBuf [2]jsonEdit
 
 	elemOK := jsonForEachElementSpan(b, inputStart, inputEnd, func(elemStart, elemEnd int) bool {
+		if len(idx.items) >= maxResponsesInputIndexItems {
+			idx.usable = false
+			return false
+		}
 		if b[elemStart] != '{' {
 			idx.items = append(idx.items, responsesInputItemMeta{
 				start:       int32(elemStart),

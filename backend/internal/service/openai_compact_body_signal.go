@@ -254,7 +254,7 @@ func HasCompactionTriggerInInputCtx(c *gin.Context, body []byte) bool {
 	if !bytes.Contains(body, []byte("compaction_trigger")) && !bytes.Contains(body, []byte(`\u`)) {
 		return false
 	}
-	if idx := RequestBodyTop(c, body).responsesInput(); idx != nil && idx.usable {
+	if idx := RequestBodyTop(c, body).cachedResponsesInput(); idx != nil && idx.usable {
 		return idx.hasCompactionTrigger
 	}
 	inputStart, inputEnd, isArray, ok := locateJSONInputArraySpan(c, body)

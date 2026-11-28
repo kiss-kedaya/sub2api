@@ -315,7 +315,7 @@ func detectRequestInputShape(body []byte) (hasGemini, hasInput, hasMessages bool
 			case "messages":
 				hasMessages = true
 			}
-			return !(hasGemini && hasInput && hasMessages)
+			return !hasGemini || !hasInput || !hasMessages
 		})
 		if walkOK {
 			return hasGemini, hasInput, hasMessages
