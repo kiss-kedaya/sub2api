@@ -1221,9 +1221,11 @@ func (h *AuthHandler) ResetPassword(c *gin.Context) {
 		return
 	}
 
-	// 密码重置与改密同口径：立即吊销该用户全部未过期的 2FA 凭证并清掉当前浏览器 Cookie。
+	// 密码重置与改密同口径：使用脱离客户端断连取消的有界上下文，确保 2FA 凭证必然吊销。
 	if h.totpService != nil && userID > 0 {
-		if err := h.totpService.RevokeTwoFactorGrantsForUser(c.Request.Context(), userID); err != nil {
+		revokeCtx, cancelRevoke := context.WithTimeout(context.WithoutCancel(c.Request.Context()), 5*time.Second)
+		defer cancelRevoke()
+		if err := h.totpService.RevokeTwoFactorGrantsForUser(revokeCtx, userID); err != nil {
 			slog.Warn("revoke two-factor grants after password reset failed",
 				"user_id", userID, "error", err)
 		}
