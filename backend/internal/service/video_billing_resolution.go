@@ -25,7 +25,7 @@ const (
 // NormalizeVideoBillingDurationSecondsForProvider 按提供方上限归一化计费用视频时长。
 // Grok/xAI 保持 1-15 秒口径；MiniMax-H3 允许到 30 秒；Ark Seedance 允许到 60 秒。
 func NormalizeVideoBillingDurationSecondsForProvider(provider string, durationSeconds int) int {
-	maxSeconds := VideoBillingMaxDurationSeconds
+	var maxSeconds int
 	switch provider {
 	case VideoProviderSeedance:
 		maxSeconds = SeedanceVideoBillingMaxDurationSeconds
