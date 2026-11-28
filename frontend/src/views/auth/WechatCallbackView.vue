@@ -349,7 +349,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { AuthLayout } from '@/components/layout'
@@ -460,24 +460,37 @@ const needsCreateAccount = computed(() => pendingAccountAction.value === 'create
 const needsBindLogin = computed(() => pendingAccountAction.value === 'bind_login')
 const hasCurrentAuthToken = computed(() => Boolean(getAuthToken()) || authStore.isAuthenticated)
 
-async function loadBindCaptchaSettings() {
-  if (bindCaptchaSettingsLoaded.value) return
-  bindCaptchaSettingsLoaded.value = true
-  try {
-    const settings = appStore.cachedPublicSettings ?? (await getPublicSettings())
-    if (!settings) return
-    bindTurnstileEnabled.value = Boolean(settings.turnstile_enabled)
-    bindTurnstileSiteKey.value = settings.turnstile_site_key || ''
-    bindTencentCaptchaEnabled.value = Boolean(settings.tencent_captcha_enabled)
-    bindTencentCaptchaAppId.value = settings.tencent_captcha_app_id || ''
-    bindTencentCaptchaRegion.value = settings.tencent_captcha_region || 'cn'
-    bindAliyunCaptchaEnabled.value = Boolean(settings.aliyun_captcha_enabled)
-    bindAliyunCaptchaSceneId.value = settings.aliyun_captcha_scene_id || ''
-    bindAliyunCaptchaPrefix.value = settings.aliyun_captcha_prefix || ''
-    bindAliyunCaptchaRegion.value = settings.aliyun_captcha_region || 'cn'
-  } catch {
-    bindCaptchaSettingsLoaded.value = false
-  }
+let bindCaptchaSettingsPromise: Promise<boolean> | null = null
+
+async function loadBindCaptchaSettings(): Promise<boolean> {
+  if (bindCaptchaSettingsLoaded.value) return true
+  if (bindCaptchaSettingsPromise) return bindCaptchaSettingsPromise
+  bindCaptchaSettingsPromise = (async () => {
+    try {
+      const settings = appStore.cachedPublicSettings ?? (await getPublicSettings())
+      if (!settings) {
+        bindCaptchaSettingsLoaded.value = false
+        return false
+      }
+      bindTurnstileEnabled.value = Boolean(settings.turnstile_enabled)
+      bindTurnstileSiteKey.value = settings.turnstile_site_key || ''
+      bindTencentCaptchaEnabled.value = Boolean(settings.tencent_captcha_enabled)
+      bindTencentCaptchaAppId.value = settings.tencent_captcha_app_id || ''
+      bindTencentCaptchaRegion.value = settings.tencent_captcha_region || 'cn'
+      bindAliyunCaptchaEnabled.value = Boolean(settings.aliyun_captcha_enabled)
+      bindAliyunCaptchaSceneId.value = settings.aliyun_captcha_scene_id || ''
+      bindAliyunCaptchaPrefix.value = settings.aliyun_captcha_prefix || ''
+      bindAliyunCaptchaRegion.value = settings.aliyun_captcha_region || 'cn'
+      bindCaptchaSettingsLoaded.value = true
+      return true
+    } catch {
+      bindCaptchaSettingsLoaded.value = false
+      return false
+    } finally {
+      bindCaptchaSettingsPromise = null
+    }
+  })()
+  return bindCaptchaSettingsPromise
 }
 
 watch(needsBindLogin, active => {
@@ -1066,6 +1079,15 @@ async function handleBindLogin() {
   const email = bindLoginEmail.value.trim()
   const password = bindLoginPassword.value
   if (!email || !password) return
+
+  if (!bindCaptchaSettingsLoaded.value) {
+    const loaded = await loadBindCaptchaSettings()
+    if (!loaded) {
+      accountActionError.value = t('auth.completeVerification')
+      return
+    }
+    await nextTick()
+  }
 
   if (bindTurnstileReady.value && !bindCaptchaToken.value) {
     accountActionError.value = t('auth.completeVerification')
