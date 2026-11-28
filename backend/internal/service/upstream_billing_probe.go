@@ -1165,7 +1165,7 @@ func (s *UpstreamBillingProbeService) fetchUpstreamProbeBody(
 		profile = HTTPUpstreamProfileOpenAI
 	}
 	reqCtx := WithHTTPUpstreamProfile(req.Context(), profile)
-	req = req.WithContext(WithHTTPUpstreamRedirectsDisabled(reqCtx))
+	req = req.WithContext(WithHTTPUpstreamPublicHostsOnly(WithHTTPUpstreamRedirectsDisabled(reqCtx)))
 	req.Header.Set("Accept", "application/json")
 	if target.apiKey != "" {
 		req.Header.Set("Authorization", "Bearer "+target.apiKey)

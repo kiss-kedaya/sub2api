@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
@@ -26,6 +27,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
+	"github.com/Wei-Shaw/sub2api/internal/util/urlvalidator"
 )
 
 const (
@@ -917,6 +919,18 @@ func (s *BackupService) GetS3Config(ctx context.Context) (*BackupS3Config, error
 }
 
 func (s *BackupService) UpdateS3Config(ctx context.Context, cfg BackupS3Config) (*BackupS3Config, error) {
+	// 与 TestS3Connection 保持同一出站安全口径：保存前校验 endpoint，
+	// 避免绕过测试入口直接持久化内网/回环/元数据地址。
+	if endpoint := strings.TrimSpace(cfg.Endpoint); endpoint != "" {
+		normalized, err := validateAdminOutboundTarget(ctx, endpoint)
+		if err != nil {
+			return nil, err
+		}
+		cfg.Endpoint = normalized
+	} else {
+		cfg.Endpoint = ""
+	}
+
 	// 如果没提供 secret，保留原有值
 	if cfg.SecretAccessKey == "" {
 		old, _ := s.loadS3Config(ctx)
@@ -1768,7 +1782,7 @@ func (s *BackupService) RestoreBackup(ctx context.Context, backupID string) erro
 	}
 
 	if len(record.Parts) > 0 {
-		archivePath, err := s.downloadBackupParts(ctx, objectStore, record.Parts)
+		archivePath, err := s.downloadBackupPartsWithDigest(ctx, objectStore, record.Parts, record.SHA256)
 		if err != nil {
 			return err
 		}
@@ -1776,26 +1790,12 @@ func (s *BackupService) RestoreBackup(ctx context.Context, backupID string) erro
 		return s.restoreArchive(ctx, archivePath)
 	}
 
-	// 旧记录从 S3 流式下载
-	body, err := objectStore.Download(ctx, record.S3Key)
+	archivePath, err := s.downloadSingleBackupArchive(ctx, objectStore, record)
 	if err != nil {
-		return fmt.Errorf("S3 download failed: %w", err)
+		return err
 	}
-	defer func() { _ = body.Close() }()
-
-	// 流式解压 gzip -> psql（不将全部数据加载到内存）
-	gzReader, err := gzip.NewReader(body)
-	if err != nil {
-		return fmt.Errorf("gzip reader: %w", err)
-	}
-	defer func() { _ = gzReader.Close() }()
-
-	// 流式恢复
-	if err := s.dumper.Restore(ctx, gzReader); err != nil {
-		return fmt.Errorf("pg restore: %w", err)
-	}
-
-	return nil
+	defer func() { _ = cleanupBackupFiles(archivePath) }()
+	return s.restoreArchive(ctx, archivePath)
 }
 
 // StartRestore 异步恢复备份，立即返回
@@ -1885,7 +1885,7 @@ func (s *BackupService) executeRestore(record *BackupRecord, objectStore BackupO
 	defer cancel()
 
 	if len(record.Parts) > 0 {
-		archivePath, err := s.downloadBackupParts(ctx, objectStore, record.Parts)
+		archivePath, err := s.downloadBackupPartsWithDigest(ctx, objectStore, record.Parts, record.SHA256)
 		if err != nil {
 			record.RestoreStatus = "failed"
 			record.RestoreError = err.Error()
@@ -1907,25 +1907,16 @@ func (s *BackupService) executeRestore(record *BackupRecord, objectStore BackupO
 		return
 	}
 
-	body, err := objectStore.Download(ctx, record.S3Key)
+	archivePath, err := s.downloadSingleBackupArchive(ctx, objectStore, record)
 	if err != nil {
 		record.RestoreStatus = "failed"
-		record.RestoreError = fmt.Sprintf("S3 download failed: %v", err)
+		record.RestoreError = err.Error()
 		_ = s.saveRecord(context.Background(), record)
 		return
 	}
-	defer func() { _ = body.Close() }()
+	defer func() { _ = cleanupBackupFiles(archivePath) }()
 
-	gzReader, err := gzip.NewReader(body)
-	if err != nil {
-		record.RestoreStatus = "failed"
-		record.RestoreError = fmt.Sprintf("gzip reader: %v", err)
-		_ = s.saveRecord(context.Background(), record)
-		return
-	}
-	defer func() { _ = gzReader.Close() }()
-
-	if err := s.dumper.Restore(ctx, gzReader); err != nil {
+	if err := s.restoreArchive(ctx, archivePath); err != nil {
 		record.RestoreStatus = "failed"
 		record.RestoreError = fmt.Sprintf("pg restore: %v", err)
 		_ = s.saveRecord(context.Background(), record)
@@ -1939,7 +1930,66 @@ func (s *BackupService) executeRestore(record *BackupRecord, objectStore BackupO
 	}
 }
 
+func (s *BackupService) downloadSingleBackupArchive(ctx context.Context, objectStore BackupObjectStore, record *BackupRecord) (path string, err error) {
+	if record == nil || strings.TrimSpace(record.S3Key) == "" {
+		return "", errors.New("backup object key is empty")
+	}
+	body, err := objectStore.Download(ctx, record.S3Key)
+	if err != nil {
+		return "", fmt.Errorf("S3 download failed: %w", err)
+	}
+
+	archive, err := os.CreateTemp("", "sub2api-restore-*.sql.gz")
+	if err != nil {
+		_ = body.Close()
+		return "", fmt.Errorf("create restore archive: %w", err)
+	}
+	path = archive.Name()
+	cleanup := func() {
+		_ = archive.Close()
+		_ = cleanupBackupFiles(path)
+	}
+
+	hash := sha256.New()
+	written, copyErr := io.Copy(io.MultiWriter(archive, hash), body)
+	closeErr := body.Close()
+	if copyErr != nil {
+		cleanup()
+		return "", fmt.Errorf("read backup archive: %w", copyErr)
+	}
+	if closeErr != nil {
+		cleanup()
+		return "", fmt.Errorf("close backup archive stream: %w", closeErr)
+	}
+	if record.SizeBytes > 0 && written != record.SizeBytes {
+		cleanup()
+		return "", fmt.Errorf("backup archive size mismatch: got %d, want %d", written, record.SizeBytes)
+	}
+	expectedDigest := strings.TrimSpace(record.SHA256)
+	if expectedDigest != "" {
+		actualDigest := hex.EncodeToString(hash.Sum(nil))
+		if !strings.EqualFold(expectedDigest, actualDigest) {
+			cleanup()
+			return "", errors.New("backup archive checksum mismatch")
+		}
+	} else {
+		// Default whole-database records intentionally omit SHA256 for backward
+		// record compatibility; log so operators see when an unhashed legacy
+		// single-file backup is being replayed.
+		logger.LegacyPrintf("service.backup", "[Backup] restoring single-file backup %s without recorded SHA256 digest", record.ID)
+	}
+	if err := archive.Close(); err != nil {
+		_ = cleanupBackupFiles(path)
+		return "", fmt.Errorf("close restore archive: %w", err)
+	}
+	return path, nil
+}
+
 func (s *BackupService) downloadBackupParts(ctx context.Context, objectStore BackupObjectStore, parts []BackupPart) (path string, err error) {
+	return s.downloadBackupPartsWithDigest(ctx, objectStore, parts, "")
+}
+
+func (s *BackupService) downloadBackupPartsWithDigest(ctx context.Context, objectStore BackupObjectStore, parts []BackupPart, expectedArchiveSHA256 string) (path string, err error) {
 	if len(parts) == 0 {
 		return "", errors.New("backup parts are empty")
 	}
@@ -1961,6 +2011,7 @@ func (s *BackupService) downloadBackupParts(ctx context.Context, objectStore Bac
 		_ = cleanupBackupFiles(path)
 	}
 
+	totalHash := sha256.New()
 	for _, part := range ordered {
 		body, downloadErr := objectStore.Download(ctx, part.S3Key)
 		if downloadErr != nil {
@@ -1968,7 +2019,7 @@ func (s *BackupService) downloadBackupParts(ctx context.Context, objectStore Bac
 			return "", fmt.Errorf("download backup part %d: %w", part.Index, downloadErr)
 		}
 		hash := sha256.New()
-		written, copyErr := io.Copy(io.MultiWriter(archive, hash), body)
+		written, copyErr := io.Copy(io.MultiWriter(archive, hash, totalHash), body)
 		closeErr := body.Close()
 		if copyErr != nil {
 			cleanup()
@@ -1982,9 +2033,20 @@ func (s *BackupService) downloadBackupParts(ctx context.Context, objectStore Bac
 			cleanup()
 			return "", fmt.Errorf("backup part %d size mismatch: got %d, want %d", part.Index, written, part.SizeBytes)
 		}
-		if part.SHA256 != "" && !strings.EqualFold(part.SHA256, hex.EncodeToString(hash.Sum(nil))) {
+		expectedPartSHA := strings.TrimSpace(part.SHA256)
+		if expectedPartSHA == "" {
+			cleanup()
+			return "", fmt.Errorf("backup part %d checksum is missing", part.Index)
+		}
+		if !strings.EqualFold(expectedPartSHA, hex.EncodeToString(hash.Sum(nil))) {
 			cleanup()
 			return "", fmt.Errorf("backup part %d checksum mismatch", part.Index)
+		}
+	}
+	if expectedArchive := strings.TrimSpace(expectedArchiveSHA256); expectedArchive != "" {
+		if !strings.EqualFold(expectedArchive, hex.EncodeToString(totalHash.Sum(nil))) {
+			cleanup()
+			return "", errors.New("backup archive checksum mismatch")
 		}
 	}
 	if err := archive.Close(); err != nil {
@@ -2147,6 +2209,36 @@ func (s *BackupService) loadS3Config(ctx context.Context) (*BackupS3Config, erro
 	return &cfg, nil
 }
 
+func newObjectStoreSafeHTTPClient() *http.Client {
+	policy := urlvalidator.OutboundPolicy{
+		AllowInsecureHTTP: true,
+		AllowPrivate:      adminOutboundAllowPrivateForTest.Load(),
+	}
+	client := urlvalidator.NewSafeHTTPClient(policy, urlvalidator.HTTPClientOptions{
+		// Do not set a short client-level Timeout here: backup uploads/downloads
+		// can stream gigabytes and are bounded by the caller's request context.
+		Timeout:             0,
+		TLSHandshakeTimeout: 10 * time.Second,
+		MaxIdleConns:        16,
+		MaxIdleConnsPerHost: 8,
+	})
+	baseCheckRedirect := client.CheckRedirect
+	client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		if req == nil || req.URL == nil {
+			return urlvalidator.ErrOutboundTargetNotAllowed
+		}
+		scheme := strings.ToLower(req.URL.Scheme)
+		if scheme != "http" && scheme != "https" {
+			return urlvalidator.ErrOutboundTargetNotAllowed
+		}
+		if baseCheckRedirect != nil {
+			return baseCheckRedirect(req, via)
+		}
+		return nil
+	}
+	return client
+}
+
 func (s *BackupService) getOrCreateStore(ctx context.Context, cfg *BackupS3Config) (BackupObjectStore, error) {
 	s.storeMu.Lock()
 	defer s.storeMu.Unlock()
@@ -2159,12 +2251,28 @@ func (s *BackupService) getOrCreateStore(ctx context.Context, cfg *BackupS3Confi
 		return nil, ErrBackupS3NotConfigured
 	}
 
-	store, err := s.storeFactory(ctx, cfg)
+	validated := *cfg
+	if endpoint := strings.TrimSpace(validated.Endpoint); endpoint != "" {
+		normalized, err := validateAdminOutboundTarget(ctx, endpoint)
+		if err != nil {
+			return nil, err
+		}
+		validated.Endpoint = normalized
+	} else {
+		validated.Endpoint = ""
+	}
+
+	storeCtx := ctx
+	if ObjectStoreHTTPClientFromContext(storeCtx) == nil {
+		storeCtx = WithObjectStoreHTTPClient(storeCtx, newObjectStoreSafeHTTPClient())
+	}
+
+	store, err := s.storeFactory(storeCtx, &validated)
 	if err != nil {
 		return nil, err
 	}
 	s.store = store
-	s.s3Cfg = cfg
+	s.s3Cfg = &validated
 	return store, nil
 }
 

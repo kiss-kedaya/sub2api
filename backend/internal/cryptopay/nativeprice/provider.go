@@ -10,6 +10,7 @@ package nativeprice
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -18,8 +19,10 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/util/urlvalidator"
 	"github.com/shopspring/decimal"
 )
 
@@ -86,13 +89,25 @@ func SymbolForChain(chain string) (string, bool) {
 	return "", false
 }
 
+// allowPrivateForTest is toggled only by scoped unit tests exercising Service.Reload
+// against local httptest fixtures; production always stays false.
+var allowPrivateForTest atomic.Bool
+
+// SetAllowPrivateForTest allows local loopback price feeds in unit tests and
+// returns a restore function.
+func SetAllowPrivateForTest(allow bool) func() {
+	previous := allowPrivateForTest.Swap(allow)
+	return func() { allowPrivateForTest.Store(previous) }
+}
+
 // Provider fetches and caches native-coin USD quotes.
 type Provider struct {
-	baseURL   string
-	client    *http.Client
-	now       func() time.Time
-	sleep     func(time.Duration)
-	sleepBase time.Duration
+	baseURL      string
+	client       *http.Client
+	customClient bool
+	now          func() time.Time
+	sleep        func(time.Duration)
+	sleepBase    time.Duration
 
 	mu    sync.Mutex
 	cache map[string]Quote
@@ -107,6 +122,7 @@ func WithHTTPClient(client *http.Client) Option {
 	return func(p *Provider) {
 		if client != nil {
 			p.client = client
+			p.customClient = true
 		}
 	}
 }
@@ -129,6 +145,31 @@ func WithBackoff(base time.Duration) Option {
 	}
 }
 
+func defaultNativePriceHTTPClient() *http.Client {
+	policy := urlvalidator.OutboundPolicy{
+		AllowInsecureHTTP: true,
+		AllowPrivate:      allowPrivateForTest.Load(),
+	}
+	transport := &http.Transport{
+		Proxy:                 nil,
+		DialContext:           urlvalidator.NewSafeDialContext(policy),
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          8,
+		MaxIdleConnsPerHost:   4,
+		IdleConnTimeout:       60 * time.Second,
+		TLSHandshakeTimeout:   5 * time.Second,
+		ResponseHeaderTimeout: requestTimeout,
+		TLSClientConfig:       &tls.Config{MinVersion: tls.VersionTLS12},
+	}
+	return &http.Client{
+		Timeout:   requestTimeout,
+		Transport: transport,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+}
+
 // New builds a provider. An empty baseURL uses DefaultBaseURL.
 func New(baseURL string, opts ...Option) *Provider {
 	baseURL = strings.TrimSpace(baseURL)
@@ -137,7 +178,7 @@ func New(baseURL string, opts ...Option) *Provider {
 	}
 	p := &Provider{
 		baseURL:   baseURL,
-		client:    &http.Client{Timeout: requestTimeout},
+		client:    defaultNativePriceHTTPClient(),
 		now:       time.Now,
 		sleep:     time.Sleep,
 		cache:     make(map[string]Quote),
@@ -173,7 +214,7 @@ func (p *Provider) Quote(ctx context.Context, chain string) (Quote, error) {
 			return quote, nil
 		}
 		lastErr = err
-		if ctx.Err() != nil {
+		if errors.Is(err, urlvalidator.ErrOutboundTargetNotAllowed) || ctx.Err() != nil {
 			break
 		}
 	}
@@ -215,6 +256,14 @@ func (p *Provider) fetch(ctx context.Context, symbol string) (Quote, error) {
 	if err != nil {
 		return Quote{}, err
 	}
+	if !p.customClient {
+		if _, err := urlvalidator.ValidateOutboundURL(ctx, endpoint, urlvalidator.OutboundPolicy{
+			AllowInsecureHTTP: true,
+			AllowPrivate:      allowPrivateForTest.Load(),
+		}); err != nil {
+			return Quote{}, err
+		}
+	}
 	reqCtx, cancel := context.WithTimeout(ctx, requestTimeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, endpoint, nil)
@@ -252,13 +301,21 @@ func (p *Provider) fetch(ctx context.Context, symbol string) (Quote, error) {
 // what mirrors of the public endpoint expect.
 func (p *Provider) endpoint(symbol string) (string, error) {
 	if strings.Contains(p.baseURL, "{symbol}") {
-		return strings.ReplaceAll(p.baseURL, "{symbol}", url.QueryEscape(symbol)), nil
+		expanded := strings.ReplaceAll(p.baseURL, "{symbol}", url.QueryEscape(symbol))
+		parsed, err := url.Parse(expanded)
+		if err != nil {
+			return "", fmt.Errorf("parse price url: %w", err)
+		}
+		if (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
+			return "", fmt.Errorf("price url must be absolute http(s)")
+		}
+		return expanded, nil
 	}
 	parsed, err := url.Parse(p.baseURL)
 	if err != nil {
 		return "", fmt.Errorf("parse price url: %w", err)
 	}
-	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+	if (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
 		return "", fmt.Errorf("price url must be absolute http(s)")
 	}
 	query := parsed.Query()

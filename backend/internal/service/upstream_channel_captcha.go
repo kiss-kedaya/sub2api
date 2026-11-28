@@ -3,14 +3,19 @@ package service
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/netip"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
+
+	"github.com/Wei-Shaw/sub2api/internal/util/urlvalidator"
 )
 
 // Turnstile solving for managed upstream logins. Four providers share the same
@@ -29,10 +34,12 @@ const (
 
 // UpstreamCaptchaConfig is one provider configuration.
 type UpstreamCaptchaConfig struct {
-	Provider string
-	APIKey   string
-	Endpoint string
-	ProxyURL string
+	Provider          string
+	APIKey            string
+	Endpoint          string
+	ProxyURL          string
+	AllowPrivate      bool
+	AllowInsecureHTTP bool
 }
 
 // UpstreamCaptchaSolver solves a Cloudflare Turnstile challenge.
@@ -41,11 +48,14 @@ type UpstreamCaptchaSolver interface {
 }
 
 type upstreamCaptchaTaskSolver struct {
-	provider string
-	apiKey   string
-	endpoint string
-	taskType string
-	client   *http.Client
+	provider          string
+	apiKey            string
+	endpoint          string
+	proxyURL          string
+	allowPrivate      bool
+	allowInsecureHTTP bool
+	taskType          string
+	client            *http.Client
 }
 
 // NewUpstreamCaptchaSolver builds a solver for the configured provider.
@@ -67,24 +77,165 @@ func NewUpstreamCaptchaSolver(cfg UpstreamCaptchaConfig) (UpstreamCaptchaSolver,
 	if strings.TrimSpace(cfg.APIKey) == "" {
 		return nil, errors.New("captcha api key is empty")
 	}
-	if custom := strings.TrimRight(strings.TrimSpace(cfg.Endpoint), "/"); custom != "" {
+	if custom := strings.TrimRight(strings.Trim(cfg.Endpoint, " "), "/"); custom != "" {
 		endpoint = custom
 	}
-	transport := &http.Transport{Proxy: http.ProxyFromEnvironment, TLSHandshakeTimeout: 10 * time.Second}
-	if proxy := strings.TrimSpace(cfg.ProxyURL); proxy != "" {
-		parsed, err := url.Parse(proxy)
-		if err != nil {
-			return nil, fmt.Errorf("invalid captcha proxy url: %w", err)
+	validatedEndpoint, err := validateUpstreamCaptchaEndpointLiteral(endpoint, cfg.AllowInsecureHTTP, cfg.AllowPrivate)
+	if err != nil {
+		return nil, err
+	}
+	endpoint = validatedEndpoint
+
+	transport := &http.Transport{
+		Proxy:                 nil,
+		DialContext:           urlvalidator.NewSafeDialContext(urlvalidator.OutboundPolicy{AllowPrivate: cfg.AllowPrivate}),
+		ForceAttemptHTTP2:     true,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ResponseHeaderTimeout: 20 * time.Second,
+		TLSClientConfig:       &tls.Config{MinVersion: tls.VersionTLS12},
+	}
+	var validatedProxy string
+	if proxy := strings.Trim(cfg.ProxyURL, " "); proxy != "" {
+		checkedProxy, proxyErr := validateUpstreamProxyURLLiteral(proxy, cfg.AllowPrivate)
+		if proxyErr != nil {
+			return nil, proxyErr
 		}
+		parsed, parseErr := url.Parse(checkedProxy)
+		if parseErr != nil {
+			return nil, fmt.Errorf("invalid captcha proxy url: %w", parseErr)
+		}
+		validatedProxy = checkedProxy
 		transport.Proxy = http.ProxyURL(parsed)
 	}
 	return &upstreamCaptchaTaskSolver{
-		provider: provider,
-		apiKey:   strings.TrimSpace(cfg.APIKey),
-		endpoint: endpoint,
-		taskType: taskType,
-		client:   &http.Client{Timeout: 30 * time.Second, Transport: transport},
+		provider:          provider,
+		apiKey:            strings.TrimSpace(cfg.APIKey),
+		endpoint:          endpoint,
+		proxyURL:          validatedProxy,
+		allowPrivate:      cfg.AllowPrivate,
+		allowInsecureHTTP: cfg.AllowInsecureHTTP,
+		taskType:          taskType,
+		client: &http.Client{
+			Timeout:   30 * time.Second,
+			Transport: transport,
+			CheckRedirect: func(*http.Request, []*http.Request) error {
+				// Captcha endpoints carry clientKey in POST payloads and must never follow redirects.
+				return http.ErrUseLastResponse
+			},
+		},
 	}, nil
+}
+
+func containsControlOrBackslash(raw string) bool {
+	for i := 0; i < len(raw); i++ {
+		b := raw[i]
+		if b < 0x20 || b == 0x7f || b == '\\' {
+			return true
+		}
+	}
+	return false
+}
+
+func isBlockedMetadataHostname(host string) bool {
+	normalized := strings.TrimSuffix(strings.ToLower(strings.TrimSpace(host)), ".")
+	switch normalized {
+	case "metadata.google.internal", "metadata.goog", "instance-data":
+		return true
+	default:
+		return false
+	}
+}
+
+func validateUpstreamCaptchaEndpointLiteral(raw string, allowInsecureHTTP, allowPrivate bool) (string, error) {
+	if containsControlOrBackslash(raw) {
+		return "", errors.New("invalid captcha endpoint url")
+	}
+	trimmed := strings.Trim(raw, " ")
+	if trimmed == "" {
+		return "", errors.New("invalid captcha endpoint url")
+	}
+	normalized, err := urlvalidator.ValidateHTTPURL(trimmed, allowInsecureHTTP, urlvalidator.ValidationOptions{
+		AllowPrivate: allowPrivate,
+	})
+	if err != nil {
+		return "", fmt.Errorf("captcha endpoint target rejected by URL security policy: %w", urlvalidator.ErrOutboundTargetNotAllowed)
+	}
+	parsed, err := url.Parse(normalized)
+	if err != nil || parsed.Hostname() == "" || parsed.Opaque != "" || parsed.Fragment != "" {
+		return "", fmt.Errorf("captcha endpoint target rejected by URL security policy: %w", urlvalidator.ErrOutboundTargetNotAllowed)
+	}
+	if !allowPrivate {
+		host := strings.TrimSuffix(strings.ToLower(strings.TrimSpace(parsed.Hostname())), ".")
+		if urlvalidator.IsBlockedHost(host) || isBlockedMetadataHostname(host) {
+			return "", fmt.Errorf("captcha endpoint target rejected by URL security policy: %w", urlvalidator.ErrOutboundTargetNotAllowed)
+		}
+		if ip, parseErr := netip.ParseAddr(host); parseErr == nil && !urlvalidator.IsPublicResolvedIP(ip) {
+			return "", fmt.Errorf("captcha endpoint target rejected by URL security policy: %w", urlvalidator.ErrOutboundTargetNotAllowed)
+		}
+	}
+	return normalized, nil
+}
+
+// validateUpstreamProxyURLLiteral validates proxy URL syntax, scheme, port,
+// and literal private/loopback/metadata hosts without performing DNS lookups.
+func validateUpstreamProxyURLLiteral(raw string, allowPrivate bool) (string, error) {
+	if containsControlOrBackslash(raw) {
+		return "", errors.New("invalid proxy url: contains control characters or backslash")
+	}
+	trimmed := strings.Trim(raw, " ")
+	if trimmed == "" {
+		return "", nil
+	}
+	parsed, err := url.Parse(trimmed)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" || parsed.Opaque != "" || parsed.Fragment != "" {
+		return "", errors.New("invalid proxy url")
+	}
+	scheme := strings.ToLower(parsed.Scheme)
+	switch scheme {
+	case "http", "https", "socks5", "socks5h":
+	default:
+		return "", fmt.Errorf("invalid proxy url scheme %q", parsed.Scheme)
+	}
+	host := strings.TrimSuffix(strings.ToLower(strings.TrimSpace(parsed.Hostname())), ".")
+	if host == "" {
+		return "", errors.New("invalid proxy url: missing host")
+	}
+	if port := parsed.Port(); port != "" {
+		num, portErr := strconv.Atoi(port)
+		if portErr != nil || num <= 0 || num > 65535 {
+			return "", errors.New("invalid proxy url port")
+		}
+	}
+	if !allowPrivate {
+		if urlvalidator.IsBlockedHost(host) || isBlockedMetadataHostname(host) {
+			return "", fmt.Errorf("proxy url target rejected by URL security policy: %w", urlvalidator.ErrOutboundTargetNotAllowed)
+		}
+		if ip, parseErr := netip.ParseAddr(host); parseErr == nil && !urlvalidator.IsPublicResolvedIP(ip) {
+			return "", fmt.Errorf("proxy url target rejected by URL security policy: %w", urlvalidator.ErrOutboundTargetNotAllowed)
+		}
+	}
+	return trimmed, nil
+}
+
+// validateUpstreamProxyURL validates an operator-supplied upstream proxy URL
+// (scheme, host, port, literal IP checks, and DNS resolution via
+// urlvalidator.ValidateOutboundHost when allowPrivate is false).
+func validateUpstreamProxyURL(ctx context.Context, raw string, allowPrivate bool) (string, error) {
+	trimmed, err := validateUpstreamProxyURLLiteral(raw, allowPrivate)
+	if err != nil || trimmed == "" || allowPrivate {
+		return trimmed, err
+	}
+	parsed, err := url.Parse(trimmed)
+	if err != nil {
+		return "", errors.New("invalid proxy url")
+	}
+	host := strings.TrimSuffix(strings.ToLower(strings.TrimSpace(parsed.Hostname())), ".")
+	if _, parseErr := netip.ParseAddr(host); parseErr != nil {
+		if err := urlvalidator.ValidateOutboundHost(ctx, host, false); err != nil {
+			return "", fmt.Errorf("proxy url target rejected by URL security policy: %w", urlvalidator.ErrOutboundTargetNotAllowed)
+		}
+	}
+	return trimmed, nil
 }
 
 type upstreamCaptchaCreateResponse struct {
@@ -183,6 +334,17 @@ func (s *upstreamCaptchaTaskSolver) fetchResult(ctx context.Context, taskID stri
 }
 
 func (s *upstreamCaptchaTaskSolver) post(ctx context.Context, path string, payload any) ([]byte, error) {
+	if _, err := urlvalidator.ValidateOutboundURL(ctx, s.endpoint, urlvalidator.OutboundPolicy{
+		AllowPrivate:      s.allowPrivate,
+		AllowInsecureHTTP: s.allowInsecureHTTP,
+	}); err != nil {
+		return nil, fmt.Errorf("%s outbound target rejected: %w", s.provider, err)
+	}
+	if s.proxyURL != "" {
+		if _, err := validateUpstreamProxyURL(ctx, s.proxyURL, s.allowPrivate); err != nil {
+			return nil, fmt.Errorf("%s proxy rejected: %w", s.provider, err)
+		}
+	}
 	encoded, err := json.Marshal(payload)
 	if err != nil {
 		return nil, fmt.Errorf("%s encode: %w", s.provider, err)
@@ -202,7 +364,7 @@ func (s *upstreamCaptchaTaskSolver) post(ctx context.Context, path string, paylo
 	if readErr != nil {
 		return nil, fmt.Errorf("%s read: %w", s.provider, readErr)
 	}
-	if resp.StatusCode >= http.StatusBadRequest {
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 		return nil, fmt.Errorf("%s HTTP %d", s.provider, resp.StatusCode)
 	}
 	return body, nil

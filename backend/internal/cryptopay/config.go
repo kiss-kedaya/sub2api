@@ -12,16 +12,19 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/Wei-Shaw/sub2api/internal/cryptopay/mode"
-	"github.com/Wei-Shaw/sub2api/internal/cryptopay/nativeprice"
-	"github.com/Wei-Shaw/sub2api/internal/cryptopay/rpc"
 	"maps"
 	"math"
+	"net/netip"
 	"net/url"
 	"slices"
 	"strings"
+	"sync/atomic"
 
+	"github.com/Wei-Shaw/sub2api/internal/cryptopay/mode"
+	"github.com/Wei-Shaw/sub2api/internal/cryptopay/nativeprice"
+	"github.com/Wei-Shaw/sub2api/internal/cryptopay/rpc"
 	"github.com/Wei-Shaw/sub2api/internal/service"
+	"github.com/Wei-Shaw/sub2api/internal/util/urlvalidator"
 )
 
 // Setting keys live under the "crypto." namespace so fork users who never
@@ -347,8 +350,8 @@ func normalizeNativeScan(cfg *CryptoConfig, def CryptoConfig) error {
 		if root == "" {
 			continue // keep the built-in default for this chain
 		}
-		if !validRPCURL(root) {
-			return fmt.Errorf("crypto config: explorer_api_url for chain %q is not an absolute http(s) URL", chain)
+		if !validPublicExplorerURL(root) {
+			return fmt.Errorf("crypto config: explorer_api_url for chain %q must be a public absolute http(s) URL without query string", chain)
 		}
 		urls[key] = strings.TrimSuffix(root, "/")
 	}
@@ -378,12 +381,56 @@ func rpcEndpointKey(endpoint string) string {
 	return strings.TrimSuffix(strings.ToLower(trimmed), "/")
 }
 
-func validRPCURL(endpoint string) bool {
-	parsed, err := url.Parse(endpoint)
+// allowPrivateNativePriceForTest is toggled only by scoped Reload tests using
+// local httptest feeds; production always stays false.
+var allowPrivateNativePriceForTest atomic.Bool
+
+func validPublicOutboundURL(endpoint string, allowPrivate bool) bool {
+	for i := 0; i < len(endpoint); i++ {
+		b := endpoint[i]
+		if b < 0x20 || b == 0x7f || b == '\\' {
+			return false
+		}
+	}
+	trimmed := strings.Trim(endpoint, " ")
+	if trimmed == "" {
+		return false
+	}
+	validated, err := urlvalidator.ValidateHTTPURL(trimmed, true, urlvalidator.ValidationOptions{
+		AllowPrivate: allowPrivate,
+	})
 	if err != nil {
 		return false
 	}
-	return (parsed.Scheme == "http" || parsed.Scheme == "https") && parsed.Host != ""
+	parsed, err := url.Parse(validated)
+	if err != nil || parsed.Hostname() == "" || parsed.Opaque != "" || parsed.Fragment != "" {
+		return false
+	}
+	if !allowPrivate {
+		host := strings.TrimSuffix(strings.ToLower(strings.TrimSpace(parsed.Hostname())), ".")
+		if urlvalidator.IsBlockedHost(host) || host == "metadata.google.internal" || host == "metadata.goog" || host == "instance-data" {
+			return false
+		}
+		if ip, parseErr := netip.ParseAddr(host); parseErr == nil && !urlvalidator.IsPublicResolvedIP(ip) {
+			return false
+		}
+	}
+	return true
+}
+
+func validPublicExplorerURL(endpoint string) bool {
+	if !validPublicOutboundURL(endpoint, false) {
+		return false
+	}
+	parsed, err := url.Parse(strings.TrimSpace(endpoint))
+	if err != nil || parsed.RawQuery != "" || parsed.User != nil {
+		return false
+	}
+	return true
+}
+
+func validRPCURL(endpoint string) bool {
+	return validPublicOutboundURL(endpoint, false)
 }
 
 // NormalizeConfig fills defaults for zero values and validates.
@@ -575,27 +622,16 @@ func isZeroAddress(address string) bool {
 	return strings.Trim(trimmed, "0") == ""
 }
 
-// validateNativePriceURL accepts an absolute http(s) ticker endpoint or a
-// template carrying {symbol}. It runs at config load so a typo is reported to
-// the operator instead of failing each native deposit later.
+// validateNativePriceURL accepts a public absolute http(s) ticker endpoint or a
+// template carrying {symbol}. It runs at config load so a typo or SSRF target
+// fails immediately instead of silently at every native deposit.
 func validateNativePriceURL(raw string) error {
-	if !strings.Contains(raw, "{symbol}") {
-		parsed, err := url.Parse(raw)
-		if err != nil || parsed.Host == "" {
-			return fmt.Errorf("crypto config: native_price_url must be an absolute URL")
-		}
-		if parsed.Scheme != "http" && parsed.Scheme != "https" {
-			return fmt.Errorf("crypto config: native_price_url must use http or https")
-		}
-		return nil
+	candidate := strings.TrimSpace(raw)
+	if strings.Contains(candidate, "{symbol}") {
+		candidate = strings.ReplaceAll(candidate, "{symbol}", "ETHUSDT")
 	}
-	// A template still has to be absolute once the placeholder is filled.
-	parsed, err := url.Parse(strings.ReplaceAll(raw, "{symbol}", "ETHUSDT"))
-	if err != nil || parsed.Host == "" {
-		return fmt.Errorf("crypto config: native_price_url template must be an absolute URL")
-	}
-	if parsed.Scheme != "http" && parsed.Scheme != "https" {
-		return fmt.Errorf("crypto config: native_price_url must use http or https")
+	if !validPublicOutboundURL(candidate, allowPrivateNativePriceForTest.Load()) {
+		return fmt.Errorf("crypto config: native_price_url must be a public absolute http(s) URL")
 	}
 	return nil
 }

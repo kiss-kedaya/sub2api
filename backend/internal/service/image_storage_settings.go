@@ -10,6 +10,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
+	"github.com/Wei-Shaw/sub2api/internal/util/urlvalidator"
 	"go.uber.org/zap"
 )
 
@@ -114,8 +115,20 @@ func (s *ImageStorageSettingService) resolve() (*ImageResultUploader, bool) {
 			zap.Strings("missing_keys", cfg.MissingCredentialKeys()))
 		return nil, false
 	}
+	if endpoint := strings.TrimSpace(cfg.Endpoint); endpoint != "" {
+		normalized, err := validateAdminOutboundTarget(ctx, endpoint)
+		if err != nil {
+			logger.L().Warn("image_storage.endpoint_rejected; async image tasks stay disabled", zap.Error(err))
+			return nil, false
+		}
+		cfg.Endpoint = normalized
+	}
 
-	storage, err := s.factory(ctx, cfg)
+	factoryCtx := ctx
+	if ObjectStoreHTTPClientFromContext(factoryCtx) == nil {
+		factoryCtx = WithObjectStoreHTTPClient(factoryCtx, newObjectStoreSafeHTTPClient())
+	}
+	storage, err := s.factory(factoryCtx, cfg)
 	if err != nil {
 		logger.L().Error("image_storage.client_build_failed; async image tasks stay disabled", zap.Error(err))
 		return nil, false
@@ -167,25 +180,42 @@ func (s *ImageStorageSettingService) SecretConfigured(ctx context.Context) bool 
 func (s *ImageStorageSettingService) Update(ctx context.Context, in ImageStorageSettings) (*ImageStorageSettings, error) {
 	normalizeImageStorageSettings(&in)
 
+	if in.PublicBaseURL != "" {
+		normalized, err := urlvalidator.ValidateURLFormat(in.PublicBaseURL, true)
+		if err != nil {
+			return nil, fmt.Errorf("invalid public_base_url: %w", err)
+		}
+		in.PublicBaseURL = normalized
+	}
+
 	if in.ReuseBackupS3 {
 		// 复用备份凭证时不落自己的密钥，避免同一份密钥在库里存两份。
 		in.Endpoint, in.Region, in.AccessKeyID, in.SecretAccessKey = "", "", "", ""
 		in.ForcePathStyle = false
-	} else if in.SecretAccessKey == "" {
-		if old, err := s.load(ctx); err == nil && old != nil {
-			in.SecretAccessKey = old.SecretAccessKey
-		}
 	} else {
-		// 拒绝用自动生成的临时密钥加密：重启后密文无法解密（#4524）。
-		// 与备份 S3 配置共用同一把密钥，故复用其配置状态判断。
-		if s.backup == nil || !s.backup.EncryptionKeyConfigured() {
-			return nil, ErrSecretEncryptionKeyNotConfigured
+		if in.Endpoint != "" {
+			normalized, err := validateAdminOutboundTarget(ctx, in.Endpoint)
+			if err != nil {
+				return nil, err
+			}
+			in.Endpoint = normalized
 		}
-		encrypted, err := s.encryptor.Encrypt(in.SecretAccessKey)
-		if err != nil {
-			return nil, fmt.Errorf("encrypt secret: %w", err)
+		if in.SecretAccessKey == "" {
+			if old, err := s.load(ctx); err == nil && old != nil {
+				in.SecretAccessKey = old.SecretAccessKey
+			}
+		} else {
+			// 拒绝用自动生成的临时密钥加密：重启后密文无法解密（#4524）。
+			// 与备份 S3 配置共用同一把密钥，故复用其配置状态判断。
+			if s.backup == nil || !s.backup.EncryptionKeyConfigured() {
+				return nil, ErrSecretEncryptionKeyNotConfigured
+			}
+			encrypted, err := s.encryptor.Encrypt(in.SecretAccessKey)
+			if err != nil {
+				return nil, fmt.Errorf("encrypt secret: %w", err)
+			}
+			in.SecretAccessKey = encrypted
 		}
-		in.SecretAccessKey = encrypted
 	}
 
 	data, err := json.Marshal(in)

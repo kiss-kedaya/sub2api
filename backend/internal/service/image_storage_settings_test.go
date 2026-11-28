@@ -252,3 +252,52 @@ func TestImageStorageSettingsFallBackToConfigFile(t *testing.T) {
 	require.Equal(t, "yaml-bucket", fetched.Bucket)
 	require.Empty(t, fetched.SecretAccessKey)
 }
+
+func TestImageStorageSettingsUpdateAndResolveRejectPrivateEndpoints(t *testing.T) {
+	restore := SetAdminOutboundAllowPrivateForTest(false)
+	defer restore()
+
+	svc, repo, built := newImageStorageFixture(t, config.ImageStorageConfig{})
+	ctx := context.Background()
+
+	for name, endpoint := range map[string]string{
+		"loopback":       "http://127.0.0.1:9000",
+		"rfc1918":        "https://10.0.0.5:9000",
+		"link-local":     "http://169.254.169.254",
+		"cgnat-metadata": "http://100.100.100.200/latest/meta-data",
+	} {
+		t.Run("update/"+name, func(t *testing.T) {
+			_, err := svc.Update(ctx, ImageStorageSettings{
+				Enabled: true, Bucket: "images", Endpoint: endpoint,
+				AccessKeyID: "ak", SecretAccessKey: "sk",
+			})
+			require.ErrorIs(t, err, ErrAdminOutboundTargetRejected)
+		})
+	}
+
+	t.Run("update rejects javascript public_base_url", func(t *testing.T) {
+		stubOutboundResolver(t, "93.184.216.34")
+		_, err := svc.Update(ctx, ImageStorageSettings{
+			Enabled: true, Bucket: "images", Endpoint: "https://s3.example.com",
+			PublicBaseURL: "javascript:alert(1)",
+			AccessKeyID:   "ak", SecretAccessKey: "sk",
+		})
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "public_base_url")
+	})
+
+	t.Run("resolve blocks private endpoint even if written directly to settings", func(t *testing.T) {
+		raw, err := json.Marshal(ImageStorageSettings{
+			Enabled: true, Bucket: "images", Endpoint: "http://169.254.169.254",
+			AccessKeyID: "ak", SecretAccessKey: "enc:sk",
+		})
+		require.NoError(t, err)
+		require.NoError(t, repo.Set(ctx, settingKeyImageStorageConfig, string(raw)))
+		svc.Invalidate()
+
+		uploader, enabled := svc.resolve()
+		require.False(t, enabled)
+		require.Nil(t, uploader)
+		require.Empty(t, *built)
+	})
+}

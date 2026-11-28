@@ -150,7 +150,9 @@ type UpstreamChannelService struct {
 	instanceID string
 	// outboundURL vets an administrator-typed address against the operator's
 	// outbound URL policy. Nil means no policy is wired (tests).
-	outboundURL func(subject, raw string) (string, error)
+	outboundURL       func(subject, raw string) (string, error)
+	allowPrivate      bool
+	allowInsecureHTTP bool
 }
 
 // SetOutboundURLPolicy applies the operator's global outbound URL policy to the
@@ -166,7 +168,16 @@ func (s *UpstreamChannelService) SetOutboundURLPolicy(cfg *config.Config) {
 		return ValidateOperatorOutboundURL(cfg, "upstream site", raw)
 	})
 	// 只有管理员显式打开开关时才允许连私网；否则拨号前按解析后的 IP 校验。
-	s.client.SetPrivateTargetsAllowed(outboundPolicyAllowsPrivateTargets(cfg))
+	s.allowPrivate = outboundPolicyAllowsPrivateTargets(cfg)
+	s.allowInsecureHTTP = cfg != nil && cfg.Security.URLAllowlist.AllowInsecureHTTP
+	s.client.SetPrivateTargetsAllowed(s.allowPrivate)
+}
+
+func (s *UpstreamChannelService) checkProxyURL(ctx context.Context, raw string) (string, error) {
+	if strings.Trim(raw, " ") == "" {
+		return "", nil
+	}
+	return validateUpstreamProxyURL(ctx, raw, s.allowPrivate)
 }
 
 // outboundPolicyAllowsPrivateTargets 反映管理员是否显式放行私网出站目标。
@@ -278,7 +289,7 @@ func (s *UpstreamChannelService) Create(ctx context.Context, input UpstreamChann
 	if s == nil || s.repo == nil {
 		return nil, errors.New("upstream channel service unavailable")
 	}
-	channel, err := s.applyInput(nil, input, true)
+	channel, err := s.applyInputWithContext(ctx, nil, input, true)
 	if err != nil {
 		return nil, err
 	}
@@ -300,7 +311,7 @@ func (s *UpstreamChannelService) Update(ctx context.Context, id int64, input Ups
 	if err != nil {
 		return nil, err
 	}
-	channel, err := s.applyInput(existing, input, false)
+	channel, err := s.applyInputWithContext(ctx, existing, input, false)
 	if err != nil {
 		return nil, err
 	}
@@ -323,6 +334,10 @@ func (s *UpstreamChannelService) Delete(ctx context.Context, id int64) error {
 }
 
 func (s *UpstreamChannelService) applyInput(existing *UpstreamChannel, input UpstreamChannelInput, creating bool) (*UpstreamChannel, error) {
+	return s.applyInputWithContext(context.Background(), existing, input, creating)
+}
+
+func (s *UpstreamChannelService) applyInputWithContext(ctx context.Context, existing *UpstreamChannel, input UpstreamChannelInput, creating bool) (*UpstreamChannel, error) {
 	channel := &UpstreamChannel{}
 	if existing != nil {
 		copy := *existing
@@ -388,8 +403,12 @@ func (s *UpstreamChannelService) applyInput(existing *UpstreamChannel, input Ups
 		}
 		channel.CaptchaEndpoint = checked
 	}
-	if proxy := strings.TrimSpace(input.ProxyURL); proxy != "" {
-		channel.ProxyURL = proxy
+	if proxy := strings.Trim(input.ProxyURL, " "); proxy != "" {
+		checked, err := s.checkProxyURL(ctx, proxy)
+		if err != nil {
+			return nil, err
+		}
+		channel.ProxyURL = checked
 	}
 	if input.SyncAnnouncements != nil {
 		channel.SyncAnnouncements = *input.SyncAnnouncements
@@ -457,8 +476,12 @@ func (s *UpstreamChannelService) Login(ctx context.Context, id int64) (*Upstream
 	if strings.TrimSpace(creds.password) == "" {
 		return nil, errors.New("channel has no stored password")
 	}
+	proxyURL, err := s.checkProxyURL(ctx, channel.ProxyURL)
+	if err != nil {
+		return nil, err
+	}
 	turnstileToken := ""
-	needsTurnstile, siteKey, settingsErr := s.client.PublicSettings(ctx, channel.SiteURL, channel.ProxyURL)
+	needsTurnstile, siteKey, settingsErr := s.client.PublicSettings(ctx, channel.SiteURL, proxyURL)
 	if settingsErr == nil && needsTurnstile {
 		if strings.TrimSpace(creds.captchaKey) == "" {
 			return nil, errors.New("upstream requires a turnstile token but the channel has no captcha key")
@@ -474,10 +497,12 @@ func (s *UpstreamChannelService) Login(ctx context.Context, id int64) (*Upstream
 			captchaEndpoint = checked
 		}
 		solver, solverErr := NewUpstreamCaptchaSolver(UpstreamCaptchaConfig{
-			Provider: channel.CaptchaProvider,
-			APIKey:   creds.captchaKey,
-			Endpoint: captchaEndpoint,
-			ProxyURL: channel.ProxyURL,
+			Provider:          channel.CaptchaProvider,
+			APIKey:            creds.captchaKey,
+			Endpoint:          captchaEndpoint,
+			ProxyURL:          proxyURL,
+			AllowPrivate:      s.allowPrivate,
+			AllowInsecureHTTP: s.allowInsecureHTTP,
 		})
 		if solverErr != nil {
 			return nil, solverErr
@@ -489,7 +514,7 @@ func (s *UpstreamChannelService) Login(ctx context.Context, id int64) (*Upstream
 			return nil, err
 		}
 	}
-	session, err := s.client.Login(ctx, channel.SiteURL, channel.Username, creds.password, turnstileToken, channel.ProxyURL)
+	session, err := s.client.Login(ctx, channel.SiteURL, channel.Username, creds.password, turnstileToken, proxyURL)
 	if err != nil {
 		s.recordLoginFailure(ctx, id, err)
 		return nil, err
@@ -541,6 +566,10 @@ func (s *UpstreamChannelService) session(ctx context.Context, channel *UpstreamC
 	if channel == nil {
 		return nil, errors.New("channel is required")
 	}
+	proxyURL, err := s.checkProxyURL(ctx, channel.ProxyURL)
+	if err != nil {
+		return nil, err
+	}
 	creds, err := s.credentials(channel)
 	if err != nil {
 		return nil, err
@@ -568,7 +597,7 @@ func (s *UpstreamChannelService) session(ctx context.Context, channel *UpstreamC
 		*channel = *reloaded
 		return &UpstreamChannelSession{AccessToken: creds.accessToken, RefreshToken: creds.refreshToken, ExpiresAt: creds.expiresAt}, nil
 	}
-	refreshed, err := s.client.RefreshSession(ctx, channel.SiteURL, channel.ProxyURL, current)
+	refreshed, err := s.client.RefreshSession(ctx, channel.SiteURL, proxyURL, current)
 	if err == nil {
 		if storeErr := s.storeSession(ctx, channel, refreshed); storeErr == nil {
 			return refreshed, nil

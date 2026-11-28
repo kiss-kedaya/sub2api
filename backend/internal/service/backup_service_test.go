@@ -804,6 +804,11 @@ func TestBackupService_DownloadBackupPartsRejectsMismatchedMetadata(t *testing.T
 			part: BackupPart{Index: 1, S3Key: "backups/mismatch/checksum", SizeBytes: 3, SHA256: "bad-checksum"},
 			want: "checksum mismatch",
 		},
+		{
+			name: "missing checksum",
+			part: BackupPart{Index: 1, S3Key: "backups/mismatch/empty-checksum", SizeBytes: 3, SHA256: ""},
+			want: "checksum is missing",
+		},
 	}
 
 	for _, tt := range tests {
@@ -1406,4 +1411,195 @@ func TestBackupService_UpdateS3Config_InheritedSecretRejectsEphemeralKey(t *test
 	after, err := repo.GetValue(context.Background(), settingKeyBackupS3Config)
 	require.NoError(t, err)
 	require.Equal(t, before, after, "a rejected update must leave the encrypted configuration unchanged")
+}
+
+func TestBackupService_UpdateS3ConfigAndGetOrCreateStoreRejectSSRFTargets(t *testing.T) {
+	restore := SetAdminOutboundAllowPrivateForTest(false)
+	defer restore()
+
+	repo := newMockSettingRepo()
+	var factoryClients int
+	var capturedTimeout time.Duration
+	cfg := &config.Config{
+		Database: config.DatabaseConfig{Host: "localhost", Port: 5432, User: "test", DBName: "testdb"},
+		Totp:     config.TotpConfig{EncryptionKeyConfigured: true},
+	}
+	store := newMockObjectStore()
+	svc := NewBackupService(repo, cfg, &plainEncryptor{}, func(ctx context.Context, _ *BackupS3Config) (BackupObjectStore, error) {
+		if client := ObjectStoreHTTPClientFromContext(ctx); client != nil {
+			factoryClients++
+			capturedTimeout = client.Timeout
+		}
+		return store, nil
+	}, &mockDumper{})
+
+	for name, endpoint := range map[string]string{
+		"loopback":       "http://127.0.0.1:9000",
+		"rfc1918":        "https://10.1.2.3:8443",
+		"link-local":     "http://169.254.169.254",
+		"cgnat-metadata": "http://100.100.100.200/latest/meta-data",
+		"ipv6-loopback":  "https://[::1]:9000",
+	} {
+		t.Run("UpdateS3Config/"+name, func(t *testing.T) {
+			_, err := svc.UpdateS3Config(context.Background(), BackupS3Config{
+				Endpoint: endpoint, Bucket: "b", AccessKeyID: "ak", SecretAccessKey: "sk",
+			})
+			require.ErrorIs(t, err, ErrAdminOutboundTargetRejected)
+		})
+		t.Run("getOrCreateStore/"+name, func(t *testing.T) {
+			_, err := svc.getOrCreateStore(context.Background(), &BackupS3Config{
+				Endpoint: endpoint, Bucket: "b", AccessKeyID: "ak", SecretAccessKey: "sk",
+			})
+			require.ErrorIs(t, err, ErrAdminOutboundTargetRejected)
+		})
+	}
+
+	t.Run("public endpoint passes UpdateS3Config and injects streaming-safe client", func(t *testing.T) {
+		stubOutboundResolver(t, "93.184.216.34")
+		saved, err := svc.UpdateS3Config(context.Background(), BackupS3Config{
+			Endpoint: "https://s3.example.com/", Bucket: "b", AccessKeyID: "ak", SecretAccessKey: "sk",
+		})
+		require.NoError(t, err)
+		require.Equal(t, "https://s3.example.com", saved.Endpoint)
+
+		loaded, err := svc.loadS3Config(context.Background())
+		require.NoError(t, err)
+		gotStore, err := svc.getOrCreateStore(context.Background(), loaded)
+		require.NoError(t, err)
+		require.NotNil(t, gotStore)
+		require.Equal(t, 1, factoryClients, "getOrCreateStore must inject a safe outbound HTTP client")
+		require.Zero(t, capturedTimeout, "streaming backup S3 client must not enforce a short fixed Timeout")
+	})
+}
+
+func TestBackupService_SingleFileRestoreVerifiesSHA256AndSizeBeforePsql(t *testing.T) {
+	dumpContent := "-- PostgreSQL dump\nCREATE TABLE items (id int);\n"
+	goodArchive := gzipBackupBytes(t, []byte(dumpContent))
+	tamperedArchive := gzipBackupBytes(t, []byte("-- tampered\n\\! id\n"))
+	goodHash := fmt.Sprintf("%x", sha256.Sum256(goodArchive))
+
+	t.Run("RestoreBackup rejects tampered single-file backup before calling dumper", func(t *testing.T) {
+		repo := newMockSettingRepo()
+		seedS3Config(t, repo)
+		store := newMockObjectStore()
+		dumper := &mockDumper{}
+		svc := newTestBackupService(repo, dumper, store)
+
+		key := "backups/single-tampered.sql.gz"
+		store.objects[key] = tamperedArchive
+		require.NoError(t, svc.saveRecord(context.Background(), &BackupRecord{
+			ID:        "single-tampered",
+			Status:    "completed",
+			S3Key:     key,
+			SizeBytes: int64(len(tamperedArchive)),
+			SHA256:    goodHash,
+		}))
+
+		err := svc.RestoreBackup(context.Background(), "single-tampered")
+		require.ErrorContains(t, err, "checksum mismatch")
+		require.Empty(t, dumper.restored, "psql must never be invoked when SHA256 verification fails")
+	})
+
+	t.Run("StartRestore rejects tampered single-file backup before calling dumper", func(t *testing.T) {
+		repo := newMockSettingRepo()
+		seedS3Config(t, repo)
+		store := newMockObjectStore()
+		dumper := &mockDumper{}
+		svc := newTestBackupService(repo, dumper, store)
+
+		key := "backups/async-tampered.sql.gz"
+		store.objects[key] = tamperedArchive
+		require.NoError(t, svc.saveRecord(context.Background(), &BackupRecord{
+			ID:        "async-tampered",
+			Status:    "completed",
+			S3Key:     key,
+			SizeBytes: int64(len(tamperedArchive)),
+			SHA256:    goodHash,
+		}))
+
+		_, err := svc.StartRestore(context.Background(), "async-tampered")
+		require.NoError(t, err)
+		svc.wg.Wait()
+
+		final, err := svc.GetBackupRecord(context.Background(), "async-tampered")
+		require.NoError(t, err)
+		require.Equal(t, "failed", final.RestoreStatus)
+		require.Contains(t, final.RestoreError, "checksum mismatch")
+		require.Empty(t, dumper.restored)
+	})
+
+	t.Run("RestoreBackup rejects size mismatch before calling dumper", func(t *testing.T) {
+		repo := newMockSettingRepo()
+		seedS3Config(t, repo)
+		store := newMockObjectStore()
+		dumper := &mockDumper{}
+		svc := newTestBackupService(repo, dumper, store)
+
+		key := "backups/single-size.sql.gz"
+		store.objects[key] = goodArchive
+		require.NoError(t, svc.saveRecord(context.Background(), &BackupRecord{
+			ID:        "single-size",
+			Status:    "completed",
+			S3Key:     key,
+			SizeBytes: int64(len(goodArchive)) + 10,
+			SHA256:    goodHash,
+		}))
+
+		err := svc.RestoreBackup(context.Background(), "single-size")
+		require.ErrorContains(t, err, "size mismatch")
+		require.Empty(t, dumper.restored)
+	})
+
+	t.Run("RestoreBackup accepts valid SHA256 single-file backup", func(t *testing.T) {
+		repo := newMockSettingRepo()
+		seedS3Config(t, repo)
+		store := newMockObjectStore()
+		dumper := &mockDumper{}
+		svc := newTestBackupService(repo, dumper, store)
+
+		key := "backups/single-valid.sql.gz"
+		store.objects[key] = goodArchive
+		require.NoError(t, svc.saveRecord(context.Background(), &BackupRecord{
+			ID:        "single-valid",
+			Status:    "completed",
+			S3Key:     key,
+			SizeBytes: int64(len(goodArchive)),
+			SHA256:    goodHash,
+		}))
+
+		require.NoError(t, svc.RestoreBackup(context.Background(), "single-valid"))
+		require.Equal(t, dumpContent, string(dumper.restored))
+	})
+
+	t.Run("RestoreBackup rejects split parts when whole-archive SHA256 mismatches", func(t *testing.T) {
+		repo := newMockSettingRepo()
+		seedS3Config(t, repo)
+		store := newMockObjectStore()
+		dumper := &mockDumper{}
+		svc := newTestBackupService(repo, dumper, store)
+
+		parts := splitBackupBytes(goodArchive, 13)
+		recordParts := make([]BackupPart, 0, len(parts))
+		for i, data := range parts {
+			key := fmt.Sprintf("backups/split-bad-total/part-%d", i+1)
+			store.objects[key] = data
+			recordParts = append(recordParts, BackupPart{
+				Index:     i + 1,
+				S3Key:     key,
+				SizeBytes: int64(len(data)),
+				SHA256:    fmt.Sprintf("%x", sha256.Sum256(data)),
+			})
+		}
+		require.NoError(t, svc.saveRecord(context.Background(), &BackupRecord{
+			ID:        "split-bad-total",
+			Status:    "completed",
+			Parts:     recordParts,
+			SizeBytes: int64(len(goodArchive)),
+			SHA256:    strings.Repeat("0", 64),
+		}))
+
+		err := svc.RestoreBackup(context.Background(), "split-bad-total")
+		require.ErrorContains(t, err, "archive checksum mismatch")
+		require.Empty(t, dumper.restored)
+	})
 }

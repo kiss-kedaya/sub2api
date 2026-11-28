@@ -235,7 +235,14 @@ func (d *PgDumper) Restore(ctx context.Context, data io.Reader) error {
 		"--set=ON_ERROR_STOP=1",
 	}
 
-	cmd := exec.CommandContext(ctx, "psql", args...)
+	cmdCtx, cancelCmd := context.WithCancel(ctx)
+	defer cancelCmd()
+
+	commandContext := d.commandContext
+	if commandContext == nil {
+		commandContext = exec.CommandContext
+	}
+	cmd := commandContext(cmdCtx, "psql", args...)
 	if d.cfg.Password != "" {
 		cmd.Env = append(cmd.Environ(), "PGPASSWORD="+d.cfg.Password)
 	}
@@ -243,10 +250,12 @@ func (d *PgDumper) Restore(ctx context.Context, data io.Reader) error {
 		cmd.Env = append(cmd.Environ(), "PGSSLMODE="+d.cfg.SSLMode)
 	}
 
-	safeData, scanDone := safeRestoreSQLReader(data)
+	safeData, scanDone := safeRestoreSQLReaderWithCancel(data, cancelCmd)
 	cmd.Stdin = safeData
 
 	output, err := cmd.CombinedOutput()
+	// Unblock the scanner goroutine if psql exited before draining stdin.
+	_ = safeData.Close()
 	if scanErr := <-scanDone; scanErr != nil {
 		return fmt.Errorf("unsafe backup SQL: %w", scanErr)
 	}
@@ -256,31 +265,44 @@ func (d *PgDumper) Restore(ctx context.Context, data io.Reader) error {
 	return nil
 }
 
-// safeRestoreSQLReader rejects psql client commands that can execute a shell
-// command or access files on the API host. Plain pg_dump output still streams
-// through unchanged, including COPY data and dump control markers.
+// safeRestoreSQLReader rejects psql client meta-commands (fail-closed outside
+// strings, comments, COPY stdin data, and pg_dump's standalone \restrict /
+// \unrestrict markers) as well as server-side COPY FROM/TO PROGRAM or file
+// transfers and standard_conforming_strings downgrades. Plain pg_dump output
+// still streams through unchanged.
 func safeRestoreSQLReader(data io.Reader) (io.Reader, <-chan error) {
+	return safeRestoreSQLReaderWithCancel(data, nil)
+}
+
+func safeRestoreSQLReaderWithCancel(data io.Reader, onReject func()) (*io.PipeReader, <-chan error) {
 	pr, pw := io.Pipe()
 	done := make(chan error, 1)
 	go func() {
 		defer close(done)
 		r := bufio.NewReader(data)
-		inCopyData := false
+		scanner := &restoreSQLScanner{}
+		firstLine := true
 		for {
 			line, err := r.ReadString('\n')
 			if len(line) > 0 {
-				if !inCopyData {
-					if command := unsafeRestorePSQLCommand(line); command != "" {
-						reason := fmt.Errorf("psql meta-command \\%s is not allowed", command)
-						_ = pw.CloseWithError(reason)
-						done <- reason
-						return
+				scanLine := line
+				if firstLine {
+					firstLine = false
+					scanLine = strings.TrimPrefix(scanLine, "\xef\xbb\xbf")
+				}
+				if scanErr := scanner.scanLine(scanLine); scanErr != nil {
+					if onReject != nil {
+						onReject()
 					}
-					inCopyData = isRestoreCopyStart(line)
-				} else if strings.TrimSpace(line) == `\.` {
-					inCopyData = false
+					_ = pw.CloseWithError(scanErr)
+					done <- scanErr
+					return
 				}
 				if _, writeErr := io.WriteString(pw, line); writeErr != nil {
+					if errors.Is(writeErr, io.ErrClosedPipe) {
+						done <- nil
+						return
+					}
 					done <- writeErr
 					return
 				}
@@ -289,6 +311,14 @@ func safeRestoreSQLReader(data io.Reader) (io.Reader, <-chan error) {
 				if err != io.EOF {
 					_ = pw.CloseWithError(err)
 					done <- err
+					return
+				}
+				if finalizeErr := scanner.finalize(); finalizeErr != nil {
+					if onReject != nil {
+						onReject()
+					}
+					_ = pw.CloseWithError(finalizeErr)
+					done <- finalizeErr
 					return
 				}
 				_ = pw.Close()
@@ -300,27 +330,643 @@ func safeRestoreSQLReader(data io.Reader) (io.Reader, <-chan error) {
 	return pr, done
 }
 
-func unsafeRestorePSQLCommand(line string) string {
-	trimmed := strings.TrimSpace(line)
-	if len(trimmed) < 2 || trimmed[0] != '\\' {
-		return ""
+type restoreSQLLexState int
+
+const (
+	restoreLexSQL restoreSQLLexState = iota
+	restoreLexBlockComment
+	restoreLexSingleQuote
+	restoreLexEscapeQuote
+	restoreLexDoubleQuote
+	restoreLexDollarQuote
+	restoreLexCopyData
+)
+
+type restoreCopyPhase int
+
+const (
+	restoreCopyNone restoreCopyPhase = iota
+	restoreCopyInit
+	restoreCopyFrom
+	restoreCopyFromStdin
+	restoreCopyTo
+)
+
+type restoreSetConfigState int
+
+const (
+	restoreSetConfigNone restoreSetConfigState = iota
+	restoreSetConfigExpectOpenParen
+	restoreSetConfigExpectFirstArg
+	restoreSetConfigExpectComma
+)
+
+type restoreSQLScanner struct {
+	state             restoreSQLLexState
+	blockCommentDepth int
+	escapeNext        bool
+	dollarTag         string
+	restrictKey       string
+
+	// Current top-level statement state (reset at each top-level ';').
+	stmtStarted            bool
+	stmtFirstWord          string
+	parenDepth             int
+	copyPhase              restoreCopyPhase
+	pendingCopyIn          bool
+	stmtMentionsStdStrings bool
+	stmtTokens             []string
+
+	// Capturing current quoted literal/identifier when needed for policy checks.
+	captureBuf  strings.Builder
+	capturing   bool
+	captureKind restoreTokenKind
+
+	// Tracks top-level set_config(...) first argument to block obfuscated
+	// set_config('standard_conforming_strings', ...) downgrades.
+	setConfigState restoreSetConfigState
+	setConfigParen int
+}
+
+type restoreTokenKind int
+
+const (
+	restoreTokIdent restoreTokenKind = iota
+	restoreTokQuotedIdent
+	restoreTokPlainString
+	restoreTokString
+	restoreTokOther
+)
+
+func (s *restoreSQLScanner) resetStatement() {
+	s.stmtStarted = false
+	s.stmtFirstWord = ""
+	s.parenDepth = 0
+	s.copyPhase = restoreCopyNone
+	s.stmtMentionsStdStrings = false
+	s.stmtTokens = s.stmtTokens[:0]
+	s.setConfigState = restoreSetConfigNone
+	s.setConfigParen = 0
+}
+
+func (s *restoreSQLScanner) finalize() error {
+	if s.stmtStarted {
+		if err := s.validateStatementEnd(); err != nil {
+			return err
+		}
 	}
-	fields := strings.Fields(trimmed[1:])
-	if len(fields) == 0 {
-		return ""
+	return nil
+}
+
+func (s *restoreSQLScanner) scanLine(line string) error {
+	if strings.IndexByte(line, 0) >= 0 {
+		return errors.New("NUL byte in backup SQL is not allowed")
 	}
-	command := strings.ToLower(fields[0])
-	switch command {
-	case "!", "shell", "include", "ir", "copy", "o", "out", "write", "edit", "g", "gx", "gexec":
-		return command
+
+	if s.state == restoreLexCopyData {
+		trimmedEOL := strings.TrimSuffix(strings.TrimSuffix(line, "\n"), "\r")
+		if trimmedEOL == `\.` {
+			s.state = restoreLexSQL
+			s.resetStatement()
+		}
+		return nil
+	}
+
+	// PostgreSQL 17.6+ / 18 pg_dump wraps plain dumps in standalone
+	// \restrict <alnum-key> ... \unrestrict <same-alnum-key> lines.
+	if s.state == restoreLexSQL && !s.stmtStarted && !s.pendingCopyIn {
+		if cmd, key, ok := parseStandaloneRestrictCommand(line); ok {
+			switch cmd {
+			case "restrict":
+				if s.restrictKey != "" {
+					return errors.New("nested psql meta-command \\restrict is not allowed")
+				}
+				s.restrictKey = key
+				return nil
+			case "unrestrict":
+				if s.restrictKey == "" || s.restrictKey != key {
+					return errors.New("unmatched psql meta-command \\unrestrict is not allowed")
+				}
+				s.restrictKey = ""
+				return nil
+			}
+		}
+	}
+
+	for i := 0; i < len(line); {
+		switch s.state {
+		case restoreLexBlockComment:
+			if i+1 < len(line) && line[i] == '/' && line[i+1] == '*' {
+				s.blockCommentDepth++
+				i += 2
+			} else if i+1 < len(line) && line[i] == '*' && line[i+1] == '/' {
+				s.blockCommentDepth--
+				i += 2
+				if s.blockCommentDepth == 0 {
+					s.state = restoreLexSQL
+				}
+			} else {
+				i++
+			}
+
+		case restoreLexSingleQuote:
+			if line[i] == '\'' {
+				if i+1 < len(line) && line[i+1] == '\'' {
+					if s.capturing && s.captureBuf.Len() < 64 {
+						_ = s.captureBuf.WriteByte('\'')
+					}
+					i += 2
+				} else {
+					s.state = restoreLexSQL
+					i++
+					if err := s.finishCapturedToken(); err != nil {
+						return err
+					}
+				}
+			} else {
+				if s.capturing && s.captureBuf.Len() < 64 {
+					_ = s.captureBuf.WriteByte(line[i])
+				}
+				i++
+			}
+
+		case restoreLexEscapeQuote:
+			if s.escapeNext {
+				s.escapeNext = false
+				if s.capturing && s.captureBuf.Len() < 64 {
+					_ = s.captureBuf.WriteByte(line[i])
+				}
+				i++
+			} else if line[i] == '\\' {
+				s.escapeNext = true
+				i++
+			} else if line[i] == '\'' {
+				if i+1 < len(line) && line[i+1] == '\'' {
+					if s.capturing && s.captureBuf.Len() < 64 {
+						_ = s.captureBuf.WriteByte('\'')
+					}
+					i += 2
+				} else {
+					s.state = restoreLexSQL
+					i++
+					if err := s.finishCapturedToken(); err != nil {
+						return err
+					}
+				}
+			} else {
+				if s.capturing && s.captureBuf.Len() < 64 {
+					_ = s.captureBuf.WriteByte(line[i])
+				}
+				i++
+			}
+
+		case restoreLexDoubleQuote:
+			if line[i] == '"' {
+				if i+1 < len(line) && line[i+1] == '"' {
+					if s.capturing && s.captureBuf.Len() < 64 {
+						_ = s.captureBuf.WriteByte('"')
+					}
+					i += 2
+				} else {
+					s.state = restoreLexSQL
+					i++
+					if err := s.finishCapturedToken(); err != nil {
+						return err
+					}
+				}
+			} else {
+				if s.capturing && s.captureBuf.Len() < 64 {
+					_ = s.captureBuf.WriteByte(line[i])
+				}
+				i++
+			}
+
+		case restoreLexDollarQuote:
+			if strings.HasPrefix(line[i:], s.dollarTag) {
+				i += len(s.dollarTag)
+				s.dollarTag = ""
+				s.state = restoreLexSQL
+				if err := s.finishCapturedToken(); err != nil {
+					return err
+				}
+			} else {
+				if s.capturing && s.captureBuf.Len() < 64 {
+					_ = s.captureBuf.WriteByte(line[i])
+				}
+				i++
+			}
+
+		case restoreLexSQL:
+			b := line[i]
+			if isASCIIWhitespace(b) {
+				i++
+				continue
+			}
+			// Line comment: ignore until end of line.
+			if b == '-' && i+1 < len(line) && line[i+1] == '-' {
+				i = len(line)
+				continue
+			}
+			// Nested block comment.
+			if b == '/' && i+1 < len(line) && line[i+1] == '*' {
+				s.state = restoreLexBlockComment
+				s.blockCommentDepth = 1
+				i += 2
+				continue
+			}
+			// Fail-closed: reject ANY psql backslash meta-command in SQL mode,
+			// whether at line start, without spaces (\!id, \o|cmd), or inline.
+			if b == '\\' {
+				cmd := extractPSQLMetaCommandName(line[i:])
+				if cmd == "" {
+					return errors.New("psql meta-command is not allowed")
+				}
+				return fmt.Errorf("psql meta-command \\%s is not allowed", cmd)
+			}
+			// Nothing except whitespace/comments may follow COPY ... FROM stdin;
+			// on the same line (psql would execute trailing tokens after \.).
+			if s.pendingCopyIn {
+				return errors.New("unexpected token after COPY FROM stdin on the same line is not allowed")
+			}
+
+			// Identifier / keyword (or E'...' escape string literal).
+			if isPGIdentStart(b) {
+				start := i
+				i++
+				for i < len(line) && isPGIdentCont(line[i]) {
+					i++
+				}
+				ident := line[start:i]
+				if (ident == "E" || ident == "e") && i < len(line) && line[i] == '\'' {
+					i++
+					s.state = restoreLexEscapeQuote
+					s.escapeNext = false
+					s.startCapture(restoreTokString)
+					if err := s.onStringStart(); err != nil {
+						return err
+					}
+					continue
+				}
+				if err := s.onSQLToken(restoreTokIdent, strings.ToLower(ident)); err != nil {
+					return err
+				}
+				continue
+			}
+
+			if b == '\'' {
+				i++
+				s.state = restoreLexSingleQuote
+				s.startCapture(restoreTokPlainString)
+				if err := s.onStringStart(); err != nil {
+					return err
+				}
+				continue
+			}
+
+			if b == '"' {
+				i++
+				s.state = restoreLexDoubleQuote
+				s.startCapture(restoreTokQuotedIdent)
+				continue
+			}
+
+			if b == '$' {
+				if tag, ok := parseDollarQuoteTag(line[i:]); ok {
+					s.dollarTag = tag
+					s.state = restoreLexDollarQuote
+					s.startCapture(restoreTokString)
+					i += len(tag)
+					if err := s.onStringStart(); err != nil {
+						return err
+					}
+					continue
+				}
+				i++
+				if err := s.onSQLToken(restoreTokOther, "$"); err != nil {
+					return err
+				}
+				continue
+			}
+
+			if b == '(' {
+				i++
+				s.parenDepth++
+				if err := s.onSQLToken(restoreTokOther, "("); err != nil {
+					return err
+				}
+				continue
+			}
+
+			if b == ')' {
+				i++
+				if s.parenDepth > 0 {
+					s.parenDepth--
+				}
+				if err := s.onSQLToken(restoreTokOther, ")"); err != nil {
+					return err
+				}
+				continue
+			}
+
+			if b == ';' {
+				i++
+				if err := s.validateStatementEnd(); err != nil {
+					return err
+				}
+				isCopyStdin := s.stmtFirstWord == "copy" && s.copyPhase == restoreCopyFromStdin && s.parenDepth == 0
+				s.resetStatement()
+				if isCopyStdin {
+					s.pendingCopyIn = true
+				}
+				continue
+			}
+
+			// Numbers or punctuation/operators.
+			if b >= '0' && b <= '9' {
+				start := i
+				i++
+				for i < len(line) && ((line[i] >= '0' && line[i] <= '9') || line[i] == '.') {
+					i++
+				}
+				if err := s.onSQLToken(restoreTokOther, line[start:i]); err != nil {
+					return err
+				}
+				continue
+			}
+
+			i++
+			if err := s.onSQLToken(restoreTokOther, string(b)); err != nil {
+				return err
+			}
+		}
+	}
+
+	if s.pendingCopyIn {
+		if s.state != restoreLexSQL {
+			return errors.New("unclosed block comment after COPY FROM stdin is not allowed")
+		}
+		s.pendingCopyIn = false
+		s.state = restoreLexCopyData
+	}
+
+	return nil
+}
+
+func (s *restoreSQLScanner) startCapture(kind restoreTokenKind) {
+	s.captureBuf.Reset()
+	s.capturing = true
+	s.captureKind = kind
+}
+
+func (s *restoreSQLScanner) finishCapturedToken() error {
+	if !s.capturing {
+		return nil
+	}
+	text := strings.ToLower(s.captureBuf.String())
+	kind := s.captureKind
+	s.capturing = false
+	s.captureBuf.Reset()
+	return s.onSQLToken(kind, text)
+}
+
+func (s *restoreSQLScanner) onStringStart() error {
+	if s.stmtFirstWord == "copy" {
+		switch s.copyPhase {
+		case restoreCopyFrom:
+			return errors.New("COPY ... FROM file is not allowed")
+		case restoreCopyTo:
+			return errors.New("COPY ... TO file is not allowed")
+		case restoreCopyFromStdin:
+			return errors.New("unexpected token after COPY ... FROM stdin is not allowed")
+		}
+	}
+	return nil
+}
+
+func (s *restoreSQLScanner) onSQLToken(kind restoreTokenKind, value string) error {
+	if !s.stmtStarted {
+		s.stmtStarted = true
+		if kind == restoreTokIdent {
+			s.stmtFirstWord = value
+			if value == "copy" {
+				s.copyPhase = restoreCopyInit
+			}
+		} else {
+			s.stmtFirstWord = "<other>"
+		}
+	}
+
+	if (kind == restoreTokIdent || kind == restoreTokQuotedIdent) && value == "standard_conforming_strings" {
+		s.stmtMentionsStdStrings = true
+	}
+
+	if s.stmtFirstWord == "set" || s.stmtFirstWord == "alter" || s.stmtFirstWord == "reset" {
+		if len(s.stmtTokens) < 16 {
+			s.stmtTokens = append(s.stmtTokens, value)
+		}
+	}
+
+	// Guard top-level set_config(...) calls so standard_conforming_strings
+	// cannot be toggled off to create a lexer differential with psql.
+	switch s.setConfigState {
+	case restoreSetConfigNone:
+		if (kind == restoreTokIdent || kind == restoreTokQuotedIdent) && value == "set_config" {
+			s.setConfigState = restoreSetConfigExpectOpenParen
+		}
+	case restoreSetConfigExpectOpenParen:
+		if kind == restoreTokOther && value == "(" {
+			s.setConfigState = restoreSetConfigExpectFirstArg
+			s.setConfigParen = s.parenDepth
+		} else {
+			s.setConfigState = restoreSetConfigNone
+		}
+	case restoreSetConfigExpectFirstArg:
+		if kind != restoreTokPlainString {
+			return errors.New("dynamic set_config parameter name is not allowed")
+		}
+		if strings.TrimSpace(value) == "standard_conforming_strings" {
+			return errors.New("modifying standard_conforming_strings via set_config is not allowed")
+		}
+		s.setConfigState = restoreSetConfigExpectComma
+	case restoreSetConfigExpectComma:
+		if kind == restoreTokOther && value == "," && s.parenDepth == s.setConfigParen {
+			s.setConfigState = restoreSetConfigNone
+		} else {
+			return errors.New("computed set_config parameter name is not allowed")
+		}
+	}
+
+	if s.stmtFirstWord == "copy" {
+		switch s.copyPhase {
+		case restoreCopyInit:
+			if s.parenDepth == 0 && kind == restoreTokIdent {
+				switch value {
+				case "from":
+					s.copyPhase = restoreCopyFrom
+				case "to":
+					s.copyPhase = restoreCopyTo
+				}
+			}
+		case restoreCopyFrom:
+			if kind == restoreTokIdent && value == "program" {
+				return errors.New("COPY ... FROM PROGRAM is not allowed")
+			}
+			if kind == restoreTokIdent && value == "stdin" {
+				s.copyPhase = restoreCopyFromStdin
+			} else {
+				return errors.New("COPY ... FROM source other than stdin is not allowed")
+			}
+		case restoreCopyTo:
+			if kind == restoreTokIdent && value == "program" {
+				return errors.New("COPY ... TO PROGRAM is not allowed")
+			}
+			return errors.New("COPY ... TO is not allowed")
+		case restoreCopyFromStdin:
+			return errors.New("unexpected clause after COPY ... FROM stdin is not allowed")
+		}
+	}
+
+	return nil
+}
+
+func (s *restoreSQLScanner) validateStatementEnd() error {
+	if s.stmtFirstWord == "copy" {
+		if s.copyPhase != restoreCopyFromStdin || s.parenDepth != 0 {
+			return errors.New("unsupported COPY statement is not allowed")
+		}
+	}
+	if s.stmtFirstWord == "reset" && len(s.stmtTokens) >= 2 {
+		if s.stmtTokens[1] == "all" || s.stmtTokens[1] == "standard_conforming_strings" {
+			return errors.New("RESET of standard_conforming_strings is not allowed")
+		}
+	}
+	if s.stmtMentionsStdStrings && (s.stmtFirstWord == "set" || s.stmtFirstWord == "alter") {
+		if !isSafeSetStandardConformingStringsOn(s.stmtTokens) {
+			return errors.New("disabling standard_conforming_strings is not allowed")
+		}
+	}
+	return nil
+}
+
+// isSafeSetStandardConformingStringsOn permits only the canonical pg_dump
+// setting `SET [SESSION|LOCAL] standard_conforming_strings (=|TO) on`.
+func isSafeSetStandardConformingStringsOn(tokens []string) bool {
+	if len(tokens) < 4 || tokens[0] != "set" {
+		return false
+	}
+	idx := 1
+	if tokens[idx] == "session" || tokens[idx] == "local" {
+		idx++
+	}
+	if len(tokens) != idx+3 {
+		return false
+	}
+	if tokens[idx] != "standard_conforming_strings" {
+		return false
+	}
+	if tokens[idx+1] != "=" && tokens[idx+1] != "to" {
+		return false
+	}
+	switch tokens[idx+2] {
+	case "on", "true", "1":
+		return true
 	default:
-		return ""
+		return false
 	}
 }
 
-func isRestoreCopyStart(line string) bool {
-	normalized := strings.ToLower(strings.TrimSpace(line))
-	return strings.HasPrefix(normalized, "copy ") && strings.HasSuffix(normalized, " from stdin;")
+func parseStandaloneRestrictCommand(line string) (cmd, key string, ok bool) {
+	trimmed := strings.Trim(strings.TrimSuffix(strings.TrimSuffix(line, "\n"), "\r"), " \t")
+	if !strings.HasPrefix(trimmed, `\`) {
+		return "", "", false
+	}
+	rest := trimmed[1:]
+	switch {
+	case strings.HasPrefix(rest, "restrict"):
+		cmd = "restrict"
+		rest = rest[len("restrict"):]
+	case strings.HasPrefix(rest, "unrestrict"):
+		cmd = "unrestrict"
+		rest = rest[len("unrestrict"):]
+	default:
+		return "", "", false
+	}
+	if len(rest) == 0 || (rest[0] != ' ' && rest[0] != '\t') {
+		return "", "", false
+	}
+	key = strings.TrimLeft(rest, " \t")
+	if len(key) == 0 || len(key) > 128 {
+		return "", "", false
+	}
+	for i := 0; i < len(key); i++ {
+		if !isRestrictKeyChar(key[i]) {
+			return "", "", false
+		}
+	}
+	return cmd, key, true
+}
+
+func isRestrictKeyChar(b byte) bool {
+	return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || (b >= '0' && b <= '9') || b == '_' || b == '-'
+}
+
+func extractPSQLMetaCommandName(s string) string {
+	if len(s) < 2 || s[0] != '\\' {
+		return ""
+	}
+	if s[1] == '!' || s[1] == '?' || s[1] == '\\' {
+		return s[1:2]
+	}
+	end := 1
+	for end < len(s) {
+		b := s[end]
+		if (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || (b >= '0' && b <= '9') || b == '_' {
+			end++
+		} else {
+			break
+		}
+	}
+	if end > 1 {
+		return strings.ToLower(s[1:end])
+	}
+	return s[1:2]
+}
+
+func parseDollarQuoteTag(s string) (string, bool) {
+	if len(s) < 2 || s[0] != '$' {
+		return "", false
+	}
+	if s[1] == '$' {
+		return "$$", true
+	}
+	if !isPGIdentStart(s[1]) {
+		return "", false
+	}
+	for i := 2; i < len(s); i++ {
+		if s[i] == '$' {
+			return s[:i+1], true
+		}
+		if !isPGDollarTagCont(s[i]) {
+			return "", false
+		}
+	}
+	return "", false
+}
+
+func isASCIIWhitespace(b byte) bool {
+	return b == ' ' || b == '\t' || b == '\r' || b == '\n' || b == '\f' || b == '\v'
+}
+
+func isPGIdentStart(b byte) bool {
+	return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || b == '_' || b >= 0x80
+}
+
+func isPGIdentCont(b byte) bool {
+	return isPGIdentStart(b) || (b >= '0' && b <= '9') || b == '$'
+}
+
+func isPGDollarTagCont(b byte) bool {
+	return isPGIdentStart(b) || (b >= '0' && b <= '9')
 }
 
 // pgDumpStderrTailBytes bounds how much of pg_dump's stderr is kept.
