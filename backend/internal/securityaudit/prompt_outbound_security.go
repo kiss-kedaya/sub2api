@@ -85,7 +85,35 @@ func NewSecureHTTPClient(endpoint ActiveEndpoint) (*http.Client, error) {
 	if client.Timeout <= 0 {
 		client.Timeout = DefaultTimeoutMS * time.Millisecond
 	}
+	// Apply HTTPS->HTTP downgrade protection uniformly to both Probe (/v1/models)
+	// and OpenAICompatibleScanner (/v1/chat/completions) so bearer tokens are
+	// never forwarded over plaintext after an HTTPS redirect.
+	client.CheckRedirect = promptProbeRedirectGuard(client.CheckRedirect)
 	return client, nil
+}
+
+// promptProbeRedirectGuard wraps the base SSRF redirect guard to also forbid
+// HTTPS->HTTP scheme downgrades and non-HTTP(S) schemes on guard redirects.
+func promptProbeRedirectGuard(base func(req *http.Request, via []*http.Request) error) func(req *http.Request, via []*http.Request) error {
+	return func(req *http.Request, via []*http.Request) error {
+		if base != nil {
+			if err := base(req, via); err != nil {
+				return err
+			}
+		}
+		if req == nil || req.URL == nil {
+			return urlvalidator.ErrOutboundTargetNotAllowed
+		}
+		scheme := strings.ToLower(strings.TrimSpace(req.URL.Scheme))
+		if scheme != "http" && scheme != "https" {
+			return urlvalidator.ErrOutboundTargetNotAllowed
+		}
+		if len(via) > 0 && via[0] != nil && via[0].URL != nil &&
+			strings.EqualFold(via[0].URL.Scheme, "https") && scheme != "https" {
+			return urlvalidator.ErrOutboundTargetNotAllowed
+		}
+		return nil
+	}
 }
 
 // validateEndpointHostsAllowed 在保存配置时拒绝私网/环回字面量地址。

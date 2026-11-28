@@ -72,9 +72,11 @@ func provisionalRevokeSourceRef(depositID int64, chain, txHash string, logIndex 
 // zero rows and is a successful no-op.
 //
 // The deduction uses balance - amount (no floor): when the user already spent
-// the money the balance goes negative and the reason is recorded. The
-// users.balance change trigger enqueues the durable live-balance outbox, so the
-// Redis projection converges without a second write from this path.
+// the money the balance goes negative and the reason is recorded. After the
+// transaction commits, this path also synchronizes the legacy short-lived
+// balance cache (which the PG outbox skips for negative deltas under merge
+// settlement), evicts the user's API key auth cache, and claws back any
+// affiliate invite rebate accrued for the revoked order.
 func (s *PaymentService) RevokeProvisionalDepositCredit(ctx context.Context, in ProvisionalDepositRevocation) (*ProvisionalRevocationResult, error) {
 	if s == nil || s.entClient == nil {
 		return nil, errors.New("provisional revocation: payment service is unavailable")
@@ -263,5 +265,82 @@ func (s *PaymentService) RevokeProvisionalDepositCredit(ctx context.Context, in 
 		return nil, fmt.Errorf("provisional revocation: commit: %w", err)
 	}
 	committed = true
+
+	// Post-commit synchronization (best-effort; DB state is authoritative):
+	//  1. Sync the legacy short-lived balance cache (billing:balance:{uid}): under
+	//     merge settlement the PG outbox skips invalidating legacy cache for
+	//     DeltaUnits <= 0, so negative external deductions must adjust it here.
+	//  2. Evict API key auth cache so exhausted/negative balances take effect
+	//     immediately rather than serving cached balance snapshots.
+	//  3. Reverse any affiliate invite rebate accrued when the provisional credit
+	//     completed (even if the invitee row was later soft-deleted).
+	if deducted > 0 && amount.Float64 > 0 {
+		syncCommittedLiveBalanceAdjustment(
+			s.provisionalRevokeBillingCache(),
+			userID.Int64,
+			newLiveBalanceAdjustmentEventID("crypto-provisional-revoke"),
+			-amount.Float64,
+		)
+	}
+	if deducted > 0 {
+		if invalidator := s.provisionalRevokeAuthCacheInvalidator(); invalidator != nil {
+			cacheCtx, cancel := detachPaymentMoneyContext(ctx, liveBalanceAdjustmentTimeout)
+			invalidator.InvalidateAuthCacheByUserID(cacheCtx, userID.Int64)
+			cancel()
+		}
+	}
+	if s.affiliateService != nil && orderID.Valid && orderID.Int64 > 0 {
+		s.reverseAffiliateRebateForProvisionalRevoke(ctx, orderID.Int64, chain, txHash, in.LogIndex)
+	}
+
 	return result, nil
+}
+
+func (s *PaymentService) provisionalRevokeBillingCache() *BillingCacheService {
+	if cache := s.liveBalanceBillingCache(); cache != nil {
+		return cache
+	}
+	if s != nil && s.affiliateService != nil {
+		return s.affiliateService.billingCacheService
+	}
+	return nil
+}
+
+func (s *PaymentService) provisionalRevokeAuthCacheInvalidator() APIKeyAuthCacheInvalidator {
+	if s == nil {
+		return nil
+	}
+	if s.redeemService != nil && s.redeemService.authCacheInvalidator != nil {
+		return s.redeemService.authCacheInvalidator
+	}
+	if s.affiliateService != nil && s.affiliateService.authCacheInvalidator != nil {
+		return s.affiliateService.authCacheInvalidator
+	}
+	return nil
+}
+
+func (s *PaymentService) reverseAffiliateRebateForProvisionalRevoke(ctx context.Context, orderID int64, chain, txHash string, logIndex int) {
+	if s == nil || s.affiliateService == nil || orderID <= 0 {
+		return
+	}
+	rebateCtx, cancel := detachPaymentMoneyContext(ctx, paymentMoneyContextTimeout)
+	defer cancel()
+	reversed, err := s.affiliateService.ReverseInviteRebateForOrder(rebateCtx, orderID, 1.0)
+	if err != nil {
+		slog.Warn("[cryptopay] provisional revocation: affiliate rebate reversal failed",
+			"order_id", orderID, "chain", chain, "tx", txHash, "log_index", logIndex, "error", err)
+		s.writeAuditLog(rebateCtx, orderID, "AFFILIATE_REBATE_REVERSAL_FAILED", "system", map[string]any{
+			"source": "crypto_provisional_revoke",
+			"error":  psErrMsg(err),
+			"ratio":  1.0,
+		})
+		return
+	}
+	if reversed > 0 {
+		s.writeAuditLog(rebateCtx, orderID, "AFFILIATE_REBATE_REVERSED", "system", map[string]any{
+			"source": "crypto_provisional_revoke",
+			"amount": reversed,
+			"ratio":  1.0,
+		})
+	}
 }

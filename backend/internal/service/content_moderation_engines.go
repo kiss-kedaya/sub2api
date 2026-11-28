@@ -104,10 +104,26 @@ func (s *ContentModerationService) updateEngineProfile(ctx context.Context, cfg 
 	}
 	p := cfg.engineProfile(engine)
 	defaults := moderationEngineDefaults(engine)
+	oldBaseURL := strings.TrimSpace(p.BaseURL)
+	if oldBaseURL == "" {
+		oldBaseURL = defaults.BaseURL
+	}
+	hadStoredKeys := len(p.APIKeys) > 0
 	if input.BaseURL != nil {
 		p.BaseURL = strings.TrimSpace(*input.BaseURL)
 		if p.BaseURL == "" {
 			p.BaseURL = defaults.BaseURL
+		}
+	}
+	baseURLOriginChanged := input.BaseURL != nil && !sameURLOrigin(oldBaseURL, p.BaseURL)
+	if baseURLOriginChanged && hadStoredKeys {
+		mode := normalizeContentModerationAPIKeysMode(input.APIKeysMode)
+		replacesAllKeys := input.ClearAPIKey || (input.APIKeys != nil && mode == contentModerationAPIKeysModeReplace)
+		if !replacesAllKeys {
+			return infraerrors.BadRequest(
+				"CONTENT_MODERATION_API_KEY_REQUIRED_ON_BASE_URL_CHANGE",
+				"修改审计 Base URL 主机时不能复用已保存的 API Key，请清空或以替换模式重新填写 API Key",
+			)
 		}
 	}
 	if input.Model != nil {

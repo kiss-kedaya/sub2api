@@ -23,7 +23,11 @@ type channelMonitorV2GroupAuthorizer interface {
 }
 
 func NewChannelMonitorV2Handler(svc *service.ChannelMonitorV2Service, apiKeyService *service.APIKeyService) *ChannelMonitorV2Handler {
-	return &ChannelMonitorV2Handler{service: svc, apiKeyService: apiKeyService}
+	var authorizer channelMonitorV2GroupAuthorizer
+	if apiKeyService != nil {
+		authorizer = apiKeyService
+	}
+	return &ChannelMonitorV2Handler{service: svc, apiKeyService: authorizer}
 }
 
 // channelMonitorV2IsAdmin is true when the request already passed admin auth
@@ -187,7 +191,17 @@ func (h *ChannelMonitorV2Handler) QualityEvents(c *gin.Context) {
 		response.ErrorFrom(c, err)
 		return
 	}
-	response.Success(c, gin.H{"group_id": groupID, "events": events})
+	sanitized := make([]*service.GroupQualityEvent, 0, len(events))
+	for _, ev := range events {
+		if ev == nil {
+			continue
+		}
+		cp := *ev
+		cp.AccountID = 0
+		cp.ErrorMessage = service.SanitizePublicQualityErrorMessage(cp.Status, cp.ErrorMessage)
+		sanitized = append(sanitized, &cp)
+	}
+	response.Success(c, gin.H{"group_id": groupID, "events": sanitized})
 }
 
 // QualityArtwork GET /channel-monitor-v2/quality-events/:id/artwork?group_id=
@@ -226,13 +240,13 @@ func (h *ChannelMonitorV2Handler) authorizedQualityGroup(c *gin.Context) (int64,
 	if channelMonitorV2IsAdmin(c) {
 		return groupID, true
 	}
-	if h.apiKeyService == nil {
-		response.Error(c, http.StatusInternalServerError, "channel monitor group authorization unavailable")
-		return 0, false
-	}
 	subject, ok := middleware.GetAuthSubjectFromContext(c)
 	if !ok || subject.UserID <= 0 {
 		response.Unauthorized(c, "user not found in context")
+		return 0, false
+	}
+	if h.apiKeyService == nil {
+		response.Error(c, http.StatusInternalServerError, "channel monitor group authorization unavailable")
 		return 0, false
 	}
 	groups, err := h.apiKeyService.GetAvailableGroups(c.Request.Context(), subject.UserID)
@@ -277,13 +291,13 @@ func (h *ChannelMonitorV2Handler) scopeFilter(c *gin.Context, filter *service.Ch
 	if admin {
 		return true
 	}
-	if h.apiKeyService == nil {
-		response.Error(c, http.StatusInternalServerError, "channel monitor group authorization unavailable")
-		return false
-	}
 	subject, ok := middleware.GetAuthSubjectFromContext(c)
 	if !ok || subject.UserID <= 0 {
 		response.Unauthorized(c, "user not found in context")
+		return false
+	}
+	if h.apiKeyService == nil {
+		response.Error(c, http.StatusInternalServerError, "channel monitor group authorization unavailable")
 		return false
 	}
 	groups, err := h.apiKeyService.GetAvailableGroups(c.Request.Context(), subject.UserID)

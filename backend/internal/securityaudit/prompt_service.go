@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/Wei-Shaw/sub2api/internal/util/urlvalidator"
 )
 
 type PromptService struct {
@@ -254,6 +256,9 @@ func (s *PromptService) Probe(ctx context.Context, request ProbeRequest) ProbeRe
 	}
 	resp, err := client.Do(req)
 	if err != nil {
+		if errors.Is(err, urlvalidator.ErrOutboundTargetNotAllowed) {
+			return s.finishProbe(endpoint.ID, started, ProbeResult{Status: "failed", ErrorCode: "endpoint_unsafe", Message: "审计节点地址不在允许范围", Retryable: false, TokenApplied: tokenApplied})
+		}
 		code := "connection_failed"
 		var netErr net.Error
 		if errors.Is(err, context.DeadlineExceeded) || (errors.As(err, &netErr) && netErr.Timeout()) {
@@ -316,15 +321,22 @@ func modelsResponseReady(body []byte, model string) bool {
 }
 
 // probeAllowPrivateEndpoints 解析探测请求的私网放行开关：
-// 请求显式传值优先，否则沿用已保存配置的全局开关（默认 false）。
+// 必须以已保存配置中的 AllowPrivateEndpoints 为上限。请求参数只能进一步收紧
+// （false），绝不允许在已保存配置未放行私网时通过单次请求参数提权放行私网。
 func (s *PromptService) probeAllowPrivateEndpoints(requested *bool) bool {
+	saved := false
+	if s != nil && s.config != nil {
+		if cfg, ok := s.config.Active(); ok {
+			saved = cfg.AllowPrivateEndpoints
+		}
+	}
+	if !saved {
+		return false
+	}
 	if requested != nil {
 		return *requested
 	}
-	if cfg, ok := s.config.Active(); ok {
-		return cfg.AllowPrivateEndpoints
-	}
-	return false
+	return true
 }
 
 func (s *PromptService) resolveProbeEndpoint(input UpdateEndpoint, allowPrivate bool) (ActiveEndpoint, bool, error) {

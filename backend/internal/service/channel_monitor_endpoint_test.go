@@ -99,3 +99,94 @@ func TestCallProvider_BasePath(t *testing.T) {
 		})
 	}
 }
+
+type updateChannelMonitorRepoStub struct {
+	ChannelMonitorRepository
+	stored  *ChannelMonitor
+	updated []*ChannelMonitor
+}
+
+func (r *updateChannelMonitorRepoStub) GetByID(_ context.Context, id int64) (*ChannelMonitor, error) {
+	if r.stored == nil || r.stored.ID != id {
+		return nil, ErrChannelMonitorNotFound
+	}
+	cp := *r.stored
+	return &cp, nil
+}
+
+func (r *updateChannelMonitorRepoStub) Update(_ context.Context, m *ChannelMonitor) error {
+	cp := *m
+	r.stored = &cp
+	r.updated = append(r.updated, &cp)
+	return nil
+}
+
+func TestChannelMonitorServiceUpdateRefusesStoredAPIKeyReuseOnOriginChange(t *testing.T) {
+	baseMonitor := func(endpoint, encKey string) *ChannelMonitor {
+		return &ChannelMonitor{
+			ID:              7,
+			Name:            "prod-relay",
+			Provider:        MonitorProviderOpenAI,
+			APIMode:         MonitorAPIModeChatCompletions,
+			CheckMode:       MonitorCheckModeProbe,
+			Endpoint:        endpoint,
+			APIKey:          encKey,
+			PrimaryModel:    "gpt-5",
+			IntervalSeconds: 60,
+			Enabled:         true,
+		}
+	}
+
+	t.Run("same origin path change preserves stored encrypted key", func(t *testing.T) {
+		repo := &updateChannelMonitorRepoStub{stored: baseMonitor("https://8.8.8.8/v1", "OLD:stored-secret")}
+		svc := NewChannelMonitorService(repo, &duplicateChannelMonitorEncryptor{})
+		nextEndpoint := "https://8.8.8.8:443/v2"
+		updated, err := svc.Update(context.Background(), 7, ChannelMonitorUpdateParams{Endpoint: &nextEndpoint})
+		require.NoError(t, err)
+		require.Equal(t, "stored-secret", updated.APIKey)
+		require.Len(t, repo.updated, 1)
+		require.Equal(t, "OLD:stored-secret", repo.updated[0].APIKey)
+	})
+
+	t.Run("different host without new key is rejected", func(t *testing.T) {
+		repo := &updateChannelMonitorRepoStub{stored: baseMonitor("https://8.8.8.8/v1", "OLD:stored-secret")}
+		svc := NewChannelMonitorService(repo, &duplicateChannelMonitorEncryptor{})
+		nextEndpoint := "https://1.1.1.1/v1"
+		_, err := svc.Update(context.Background(), 7, ChannelMonitorUpdateParams{Endpoint: &nextEndpoint})
+		require.ErrorIs(t, err, ErrChannelMonitorAPIKeyRequiredOnEndpointChange)
+		require.Empty(t, repo.updated)
+	})
+
+	t.Run("different port without new key is rejected", func(t *testing.T) {
+		repo := &updateChannelMonitorRepoStub{stored: baseMonitor("https://8.8.8.8/v1", "OLD:stored-secret")}
+		svc := NewChannelMonitorService(repo, &duplicateChannelMonitorEncryptor{})
+		nextEndpoint := "https://8.8.8.8:8443/v1"
+		_, err := svc.Update(context.Background(), 7, ChannelMonitorUpdateParams{Endpoint: &nextEndpoint})
+		require.ErrorIs(t, err, ErrChannelMonitorAPIKeyRequiredOnEndpointChange)
+		require.Empty(t, repo.updated)
+	})
+
+	t.Run("two-step empty endpoint to attacker host without new key is rejected", func(t *testing.T) {
+		repo := &updateChannelMonitorRepoStub{stored: baseMonitor("", "OLD:stored-secret")}
+		svc := NewChannelMonitorService(repo, &duplicateChannelMonitorEncryptor{})
+		nextEndpoint := "https://1.1.1.1/v1"
+		_, err := svc.Update(context.Background(), 7, ChannelMonitorUpdateParams{Endpoint: &nextEndpoint})
+		require.ErrorIs(t, err, ErrChannelMonitorAPIKeyRequiredOnEndpointChange)
+		require.Empty(t, repo.updated)
+	})
+
+	t.Run("different host with explicit new key succeeds and replaces secret", func(t *testing.T) {
+		repo := &updateChannelMonitorRepoStub{stored: baseMonitor("https://8.8.8.8/v1", "OLD:stored-secret")}
+		svc := NewChannelMonitorService(repo, &duplicateChannelMonitorEncryptor{})
+		nextEndpoint := "https://1.1.1.1/v1"
+		newKey := "fresh-monitor-key"
+		updated, err := svc.Update(context.Background(), 7, ChannelMonitorUpdateParams{
+			Endpoint: &nextEndpoint,
+			APIKey:   &newKey,
+		})
+		require.NoError(t, err)
+		require.Equal(t, "fresh-monitor-key", updated.APIKey)
+		require.Len(t, repo.updated, 1)
+		require.Equal(t, "NEW:fresh-monitor-key", repo.updated[0].APIKey)
+	})
+}

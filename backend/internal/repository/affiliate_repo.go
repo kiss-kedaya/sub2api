@@ -14,6 +14,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/ent/user"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/lib/pq"
+	"github.com/shopspring/decimal"
 )
 
 const (
@@ -39,14 +40,61 @@ JOIN users u ON u.id = ua.user_id
 LEFT JOIN (
     SELECT user_id, COUNT(DISTINCT source_user_id)::integer AS rebated_invitee_count
     FROM user_affiliate_ledger
-    WHERE action = 'accrue' AND source_user_id IS NOT NULL
+    WHERE user_id = $1 AND action = 'accrue' AND source_user_id IS NOT NULL
     GROUP BY user_id
 ) rebated ON rebated.user_id = ua.user_id
 LEFT JOIN (
-    SELECT user_id, COALESCE(SUM(amount), 0)::double precision AS matured_frozen_quota
-    FROM user_affiliate_ledger
-    WHERE action = 'accrue' AND frozen_until IS NOT NULL AND frozen_until <= NOW()
-    GROUP BY user_id
+    SELECT ua_cap.user_id,
+           LEAST(
+               GREATEST(ua_cap.aff_frozen_quota - COALESCE(locked.still_locked_net, 0), 0),
+               COALESCE(m.matured_net, 0)
+           )::double precision AS matured_frozen_quota
+    FROM user_affiliates ua_cap
+    LEFT JOIN (
+        SELECT a.user_id,
+               COALESCE(SUM(
+                   CASE
+                       WHEN a.source_order_id IS NULL THEN a.matured_amount
+                       ELSE GREATEST(a.matured_amount - COALESCE(rev.reversed_amount, 0), 0)
+                   END
+               ), 0) AS matured_net
+        FROM (
+            SELECT user_id, source_order_id, SUM(amount) AS matured_amount
+            FROM user_affiliate_ledger
+            WHERE user_id = $1 AND action = 'accrue' AND frozen_until IS NOT NULL AND frozen_until <= NOW()
+            GROUP BY user_id, source_order_id
+        ) a
+        LEFT JOIN (
+            SELECT user_id, source_order_id, SUM(ABS(amount)) AS reversed_amount
+            FROM user_affiliate_ledger
+            WHERE user_id = $1 AND action = 'refund_reversal' AND source_order_id IS NOT NULL
+            GROUP BY user_id, source_order_id
+        ) rev ON rev.user_id = a.user_id AND rev.source_order_id = a.source_order_id
+        GROUP BY a.user_id
+    ) m ON m.user_id = ua_cap.user_id
+    LEFT JOIN (
+        SELECT l.user_id,
+               COALESCE(SUM(
+                   CASE
+                       WHEN l.source_order_id IS NULL THEN l.locked_amount
+                       ELSE GREATEST(l.locked_amount - COALESCE(rev.reversed_amount, 0), 0)
+                   END
+               ), 0) AS still_locked_net
+        FROM (
+            SELECT user_id, source_order_id, SUM(amount) AS locked_amount
+            FROM user_affiliate_ledger
+            WHERE user_id = $1 AND action = 'accrue' AND frozen_until IS NOT NULL AND frozen_until > NOW()
+            GROUP BY user_id, source_order_id
+        ) l
+        LEFT JOIN (
+            SELECT user_id, source_order_id, SUM(ABS(amount)) AS reversed_amount
+            FROM user_affiliate_ledger
+            WHERE user_id = $1 AND action = 'refund_reversal' AND source_order_id IS NOT NULL
+            GROUP BY user_id, source_order_id
+        ) rev ON rev.user_id = l.user_id AND rev.source_order_id = l.source_order_id
+        GROUP BY l.user_id
+    ) locked ON locked.user_id = ua_cap.user_id
+    WHERE ua_cap.user_id = $1
 ) matured ON matured.user_id = ua.user_id
 WHERE ua.user_id = $1
 LIMIT 1`
@@ -115,13 +163,102 @@ func (r *affiliateRepository) BindInviter(ctx context.Context, userID, inviterID
 	return bound, nil
 }
 
+func roundAffiliateQuota(v float64) float64 {
+	const scale = 1e8
+	return math.Round(v*scale) / scale
+}
+
+// floorAffiliateQuotaRemaining returns floor((capVal - existing), 8 decimals)
+// using exact decimal arithmetic so rounding can never push accrued quota above
+// the configured per-invitee cap.
+func floorAffiliateQuotaRemaining(capVal, existing float64) float64 {
+	if capVal <= 0 || math.IsNaN(capVal) || math.IsInf(capVal, 0) || math.IsNaN(existing) || math.IsInf(existing, 0) {
+		return 0
+	}
+	rem := decimal.NewFromFloat(capVal).Sub(decimal.NewFromFloat(existing))
+	if !rem.IsPositive() {
+		return 0
+	}
+	v, _ := rem.Truncate(8).Float64()
+	if v <= 0 {
+		return 0
+	}
+	return v
+}
+
 func (r *affiliateRepository) AccrueQuota(ctx context.Context, inviterID, inviteeUserID int64, amount float64, freezeHours int, sourceOrderID *int64) (bool, error) {
-	if amount <= 0 {
-		return false, nil
+	applied, err := r.AccrueQuotaWithCap(ctx, inviterID, inviteeUserID, amount, freezeHours, sourceOrderID, 0)
+	if err != nil {
+		return false, err
+	}
+	return applied > 0, nil
+}
+
+// AccrueQuotaWithCap accrues rebate quota inside a single transaction under the
+// inviter's row lock, enforcing perInviteeCap atomically so concurrent orders
+// from the same invitee cannot overshoot the configured cap.
+func (r *affiliateRepository) AccrueQuotaWithCap(ctx context.Context, inviterID, inviteeUserID int64, amount float64, freezeHours int, sourceOrderID *int64, perInviteeCap float64) (float64, error) {
+	if amount <= 0 || math.IsNaN(amount) || math.IsInf(amount, 0) {
+		return 0, nil
 	}
 
-	var applied bool
+	var applied float64
 	err := r.withTx(ctx, func(txCtx context.Context, txClient *dbent.Client) error {
+		lockRows, err := txClient.QueryContext(txCtx,
+			`SELECT user_id FROM user_affiliates WHERE user_id = $1 FOR UPDATE`,
+			inviterID)
+		if err != nil {
+			return fmt.Errorf("lock affiliate inviter: %w", err)
+		}
+		hasInviter := lockRows.Next()
+		if err := lockRows.Err(); err != nil {
+			_ = lockRows.Close()
+			return fmt.Errorf("lock affiliate inviter: %w", err)
+		}
+		if err := lockRows.Close(); err != nil {
+			return fmt.Errorf("close affiliate inviter lock: %w", err)
+		}
+		if !hasInviter {
+			return nil
+		}
+
+		accrueAmount := roundAffiliateQuota(amount)
+		if perInviteeCap > 0 && !math.IsNaN(perInviteeCap) && !math.IsInf(perInviteeCap, 0) {
+			capRows, err := txClient.QueryContext(txCtx,
+				`SELECT COALESCE(SUM(amount), 0)::double precision FROM user_affiliate_ledger WHERE user_id = $1 AND source_user_id = $2 AND action = 'accrue'`,
+				inviterID, inviteeUserID)
+			if err != nil {
+				return fmt.Errorf("query accrued rebate under lock: %w", err)
+			}
+			var existing float64
+			if capRows.Next() {
+				if err := capRows.Scan(&existing); err != nil {
+					_ = capRows.Close()
+					return fmt.Errorf("scan accrued rebate under lock: %w", err)
+				}
+			}
+			if err := capRows.Err(); err != nil {
+				_ = capRows.Close()
+				return fmt.Errorf("query accrued rebate under lock: %w", err)
+			}
+			if err := capRows.Close(); err != nil {
+				return fmt.Errorf("close accrued rebate lock rows: %w", err)
+			}
+			if existing >= perInviteeCap {
+				return nil
+			}
+			remaining := floorAffiliateQuotaRemaining(perInviteeCap, existing)
+			if remaining <= 0 {
+				return nil
+			}
+			if accrueAmount > remaining {
+				accrueAmount = remaining
+			}
+		}
+		if accrueAmount <= 0 {
+			return nil
+		}
+
 		// freezeHours > 0: add to frozen quota; == 0: add to available quota directly
 		var updateSQL string
 		if freezeHours > 0 {
@@ -129,13 +266,12 @@ func (r *affiliateRepository) AccrueQuota(ctx context.Context, inviterID, invite
 		} else {
 			updateSQL = "UPDATE user_affiliates SET aff_quota = aff_quota + $1, aff_history_quota = aff_history_quota + $1, updated_at = NOW() WHERE user_id = $2"
 		}
-		res, err := txClient.ExecContext(txCtx, updateSQL, amount, inviterID)
+		res, err := txClient.ExecContext(txCtx, updateSQL, accrueAmount, inviterID)
 		if err != nil {
 			return err
 		}
 		affected, _ := res.RowsAffected()
 		if affected == 0 {
-			applied = false
 			return nil
 		}
 
@@ -143,31 +279,32 @@ func (r *affiliateRepository) AccrueQuota(ctx context.Context, inviterID, invite
 			if _, err = txClient.ExecContext(txCtx, `
 INSERT INTO user_affiliate_ledger (user_id, action, amount, source_user_id, source_order_id, frozen_until, created_at, updated_at)
 VALUES ($1, 'accrue', $2, $3, $4, NOW() + make_interval(hours => $5), NOW(), NOW())`,
-				inviterID, amount, inviteeUserID, nullableInt64Arg(sourceOrderID), freezeHours); err != nil {
+				inviterID, accrueAmount, inviteeUserID, nullableInt64Arg(sourceOrderID), freezeHours); err != nil {
 				return fmt.Errorf("insert affiliate accrue ledger: %w", err)
 			}
 		} else {
 			if _, err = txClient.ExecContext(txCtx, `
 INSERT INTO user_affiliate_ledger (user_id, action, amount, source_user_id, source_order_id, created_at, updated_at)
-VALUES ($1, 'accrue', $2, $3, $4, NOW(), NOW())`, inviterID, amount, inviteeUserID, nullableInt64Arg(sourceOrderID)); err != nil {
+VALUES ($1, 'accrue', $2, $3, $4, NOW(), NOW())`, inviterID, accrueAmount, inviteeUserID, nullableInt64Arg(sourceOrderID)); err != nil {
 				return fmt.Errorf("insert affiliate accrue ledger: %w", err)
 			}
 		}
 
-		applied = true
+		applied = accrueAmount
 		return nil
 	})
 	if err != nil {
-		return false, err
+		return 0, err
 	}
 	return applied, nil
 }
 
 // ReverseQuotaForOrder claws back the rebate accrued for one payment order.
-// ratio is the refunded share of the order (1 for a full refund). It is
-// idempotent: a second call for the same order returns 0.
+// ratio is the cumulative refunded share of the order (1 for a full refund).
+// Multiple partial refunds deduct only the incremental delta beyond prior
+// reversals, and repeating the same cumulative ratio is idempotent (returns 0).
 func (r *affiliateRepository) ReverseQuotaForOrder(ctx context.Context, sourceOrderID int64, ratio float64) (float64, error) {
-	if sourceOrderID <= 0 || ratio <= 0 {
+	if sourceOrderID <= 0 || ratio <= 0 || math.IsNaN(ratio) || math.IsInf(ratio, 0) {
 		return 0, nil
 	}
 	if ratio > 1 {
@@ -175,92 +312,184 @@ func (r *affiliateRepository) ReverseQuotaForOrder(ctx context.Context, sourceOr
 	}
 	var reversed float64
 	err := r.withTx(ctx, func(txCtx context.Context, txClient *dbent.Client) error {
-		var existing int
-		rows, err := txClient.QueryContext(txCtx,
-			`SELECT COUNT(*) FROM user_affiliate_ledger WHERE source_order_id = $1 AND action = 'refund_reversal'`,
-			sourceOrderID)
-		if err != nil {
-			return fmt.Errorf("check affiliate reversal: %w", err)
-		}
-		if rows.Next() {
-			if err := rows.Scan(&existing); err != nil {
-				_ = rows.Close()
-				return fmt.Errorf("scan affiliate reversal count: %w", err)
-			}
-		}
-		_ = rows.Close()
-		if existing > 0 {
-			return nil
-		}
-
 		var inviterID, inviteeID int64
-		var accrued, frozen float64
-		rows, err = txClient.QueryContext(txCtx, `
-SELECT user_id, source_user_id, COALESCE(SUM(amount), 0)::double precision,
-       COALESCE(SUM(CASE WHEN frozen_until IS NOT NULL AND frozen_until > NOW() THEN amount ELSE 0 END), 0)::double precision
+		rows, err := txClient.QueryContext(txCtx, `
+SELECT user_id, COALESCE(source_user_id, 0)
 FROM user_affiliate_ledger
 WHERE source_order_id = $1 AND action = 'accrue'
-GROUP BY user_id, source_user_id
+ORDER BY id ASC
 LIMIT 1`, sourceOrderID)
 		if err != nil {
-			return fmt.Errorf("load affiliate accrual: %w", err)
+			return fmt.Errorf("load affiliate accrual owner: %w", err)
 		}
-		hasAccrual := rows.Next()
-		if hasAccrual {
-			if err := rows.Scan(&inviterID, &inviteeID, &accrued, &frozen); err != nil {
+		hasOwner := rows.Next()
+		if hasOwner {
+			if err := rows.Scan(&inviterID, &inviteeID); err != nil {
 				_ = rows.Close()
-				return fmt.Errorf("scan affiliate accrual: %w", err)
+				return fmt.Errorf("scan affiliate accrual owner: %w", err)
 			}
 		}
-		_ = rows.Close()
-		if !hasAccrual || accrued <= 0 {
+		if err := rows.Err(); err != nil {
+			_ = rows.Close()
+			return fmt.Errorf("load affiliate accrual owner: %w", err)
+		}
+		if err := rows.Close(); err != nil {
+			return fmt.Errorf("close affiliate accrual owner rows: %w", err)
+		}
+		if !hasOwner || inviterID <= 0 {
 			return nil
 		}
 
-		var available, frozenQuota float64
-		rows, err = txClient.QueryContext(txCtx,
-			`SELECT aff_quota, aff_frozen_quota FROM user_affiliates WHERE user_id = $1 FOR UPDATE`,
+		// Lock the inviter row first to serialize with accruals, transfers, and thaws.
+		lockRows, err := txClient.QueryContext(txCtx,
+			`SELECT aff_quota::double precision, aff_frozen_quota::double precision FROM user_affiliates WHERE user_id = $1 FOR UPDATE`,
 			inviterID)
 		if err != nil {
 			return fmt.Errorf("lock affiliate quota: %w", err)
 		}
-		hasAffiliate := rows.Next()
+		var available, frozenQuota float64
+		hasAffiliate := lockRows.Next()
 		if hasAffiliate {
-			if err := rows.Scan(&available, &frozenQuota); err != nil {
-				_ = rows.Close()
+			if err := lockRows.Scan(&available, &frozenQuota); err != nil {
+				_ = lockRows.Close()
 				return fmt.Errorf("scan affiliate quota: %w", err)
 			}
 		}
-		_ = rows.Close()
+		if err := lockRows.Err(); err != nil {
+			_ = lockRows.Close()
+			return fmt.Errorf("lock affiliate quota: %w", err)
+		}
+		if err := lockRows.Close(); err != nil {
+			return fmt.Errorf("close affiliate quota rows: %w", err)
+		}
 		if !hasAffiliate {
 			return nil
 		}
 
-		target := accrued * ratio
-		if target <= 0 {
+		// Settle any already-matured frozen accruals before reversing so every
+		// remaining row with frozen_until IS NOT NULL is strictly still frozen.
+		if thawed, err := thawFrozenQuotaTxLocked(txCtx, txClient, inviterID, frozenQuota); err != nil {
+			return fmt.Errorf("thaw matured quota before reversal: %w", err)
+		} else if thawed > 0 {
+			available = roundAffiliateQuota(available + thawed)
+			frozenQuota = roundAffiliateQuota(math.Max(frozenQuota-thawed, 0))
+		}
+
+		// Lock this order's accrual ledger rows and compute total accrued + still-frozen totals.
+		accrueRows, err := txClient.QueryContext(txCtx, `
+SELECT amount::double precision, (frozen_until IS NOT NULL)
+FROM user_affiliate_ledger
+WHERE source_order_id = $1 AND user_id = $2 AND action = 'accrue'
+ORDER BY id ASC
+FOR UPDATE`, sourceOrderID, inviterID)
+		if err != nil {
+			return fmt.Errorf("load affiliate accrual rows: %w", err)
+		}
+		var accrued, frozenAccrued float64
+		for accrueRows.Next() {
+			var amt float64
+			var isFrozen bool
+			if err := accrueRows.Scan(&amt, &isFrozen); err != nil {
+				_ = accrueRows.Close()
+				return fmt.Errorf("scan affiliate accrual row: %w", err)
+			}
+			accrued += amt
+			if isFrozen {
+				frozenAccrued += amt
+			}
+		}
+		if err := accrueRows.Err(); err != nil {
+			_ = accrueRows.Close()
+			return fmt.Errorf("iterate affiliate accrual rows: %w", err)
+		}
+		if err := accrueRows.Close(); err != nil {
+			return fmt.Errorf("close affiliate accrual rows: %w", err)
+		}
+		accrued = roundAffiliateQuota(accrued)
+		frozenAccrued = roundAffiliateQuota(frozenAccrued)
+		if accrued <= 0 {
 			return nil
 		}
-		availableTake := math.Min(target, math.Max(available, 0))
-		frozenTake := math.Min(target-availableTake, math.Max(frozenQuota, 0))
-		reversed = availableTake + frozenTake
+
+		var alreadyReversed float64
+		revRows, err := txClient.QueryContext(txCtx, `
+SELECT COALESCE(SUM(ABS(amount)), 0)::double precision
+FROM user_affiliate_ledger
+WHERE source_order_id = $1 AND user_id = $2 AND action = 'refund_reversal'`,
+			sourceOrderID, inviterID)
+		if err != nil {
+			return fmt.Errorf("query prior affiliate reversals: %w", err)
+		}
+		if revRows.Next() {
+			if err := revRows.Scan(&alreadyReversed); err != nil {
+				_ = revRows.Close()
+				return fmt.Errorf("scan prior affiliate reversals: %w", err)
+			}
+		}
+		if err := revRows.Err(); err != nil {
+			_ = revRows.Close()
+			return fmt.Errorf("query prior affiliate reversals: %w", err)
+		}
+		if err := revRows.Close(); err != nil {
+			return fmt.Errorf("close prior affiliate reversal rows: %w", err)
+		}
+		alreadyReversed = roundAffiliateQuota(alreadyReversed)
+
+		targetTotal := math.Min(accrued, roundAffiliateQuota(accrued*ratio))
+		delta := roundAffiliateQuota(targetTotal - alreadyReversed)
+		if delta <= 0 {
+			return nil
+		}
+
+		// Deduct from this order's still-frozen portion first so other orders'
+		// available quota is preserved and frozen quota stays aligned with ledger.
+		orderRemainingFrozen := roundAffiliateQuota(math.Max(frozenAccrued-alreadyReversed, 0))
+		orderFrozenTake := roundAffiliateQuota(math.Min(delta, math.Min(orderRemainingFrozen, math.Max(frozenQuota, 0))))
+		remaining := roundAffiliateQuota(delta - orderFrozenTake)
+
+		availableTake := roundAffiliateQuota(math.Min(remaining, math.Max(available, 0)))
+		remaining = roundAffiliateQuota(remaining - availableTake)
+
+		otherFrozenTake := roundAffiliateQuota(math.Min(remaining, math.Max(roundAffiliateQuota(frozenQuota-orderFrozenTake), 0)))
+		frozenTake := roundAffiliateQuota(orderFrozenTake + otherFrozenTake)
+
+		reversed = roundAffiliateQuota(availableTake + frozenTake)
 		if reversed <= 0 {
 			return nil
 		}
-		_ = frozen
 
+		nextAvailable := roundAffiliateQuota(math.Max(available-availableTake, 0))
+		nextFrozen := roundAffiliateQuota(math.Max(frozenQuota-frozenTake, 0))
 		if _, err := txClient.ExecContext(txCtx, `
 UPDATE user_affiliates
 SET aff_quota = $2, aff_frozen_quota = $3,
     aff_history_quota = GREATEST(aff_history_quota - $4, 0), updated_at = NOW()
 WHERE user_id = $1`,
-			inviterID, available-availableTake, frozenQuota-frozenTake, reversed); err != nil {
+			inviterID, nextAvailable, nextFrozen, reversed); err != nil {
 			return fmt.Errorf("deduct affiliate quota: %w", err)
+		}
+
+		var sourceUserArg any
+		if inviteeID > 0 {
+			sourceUserArg = inviteeID
 		}
 		if _, err := txClient.ExecContext(txCtx, `
 INSERT INTO user_affiliate_ledger (user_id, action, amount, source_user_id, source_order_id, created_at, updated_at)
 VALUES ($1, 'refund_reversal', $2, $3, $4, NOW(), NOW())`,
-			inviterID, -reversed, inviteeID, sourceOrderID); err != nil {
+			inviterID, -reversed, sourceUserArg, sourceOrderID); err != nil {
 			return fmt.Errorf("insert affiliate reversal ledger: %w", err)
+		}
+
+		// Once this order's entire frozen accrual has been clawed back, clear
+		// frozen_until immediately so the row can never be thawed again.
+		if frozenAccrued > 0 && roundAffiliateQuota(alreadyReversed+reversed) >= roundAffiliateQuota(frozenAccrued)-1e-9 {
+			if _, err := txClient.ExecContext(txCtx, `
+UPDATE user_affiliate_ledger
+SET frozen_until = NULL, updated_at = NOW()
+WHERE source_order_id = $1 AND user_id = $2 AND action = 'accrue' AND frozen_until IS NOT NULL`,
+				sourceOrderID, inviterID); err != nil {
+				return fmt.Errorf("clear reversed frozen accrual: %w", err)
+			}
 		}
 		return nil
 	})
@@ -300,30 +529,138 @@ func (r *affiliateRepository) ThawFrozenQuota(ctx context.Context, userID int64)
 
 // thawFrozenQuotaTx moves matured frozen quota to available quota within an existing tx.
 func thawFrozenQuotaTx(txCtx context.Context, txClient *dbent.Client, userID int64) (float64, error) {
+	lockRows, err := txClient.QueryContext(txCtx,
+		`SELECT aff_frozen_quota::double precision FROM user_affiliates WHERE user_id = $1 FOR UPDATE`,
+		userID)
+	if err != nil {
+		return 0, fmt.Errorf("lock affiliate frozen quota: %w", err)
+	}
+	var currentFrozenQuota float64
+	hasAffiliate := lockRows.Next()
+	if hasAffiliate {
+		if err := lockRows.Scan(&currentFrozenQuota); err != nil {
+			_ = lockRows.Close()
+			return 0, fmt.Errorf("scan affiliate frozen quota: %w", err)
+		}
+	}
+	if err := lockRows.Err(); err != nil {
+		_ = lockRows.Close()
+		return 0, fmt.Errorf("lock affiliate frozen quota: %w", err)
+	}
+	if err := lockRows.Close(); err != nil {
+		return 0, fmt.Errorf("close affiliate frozen quota rows: %w", err)
+	}
+	if !hasAffiliate {
+		return 0, nil
+	}
+	return thawFrozenQuotaTxLocked(txCtx, txClient, userID, currentFrozenQuota)
+}
+
+// thawFrozenQuotaTxLocked assumes the caller holds FOR UPDATE on user_affiliates
+// for userID. It subtracts prior refund_reversals per source_order_id and caps
+// the thawed amount against the inviter's remaining unencumbered aff_frozen_quota
+// so refunded rebates can never resurrect into withdrawable quota.
+func thawFrozenQuotaTxLocked(txCtx context.Context, txClient *dbent.Client, userID int64, currentFrozenQuota float64) (float64, error) {
 	rows, err := txClient.QueryContext(txCtx, `
-WITH matured AS (
+WITH matured_rows AS (
     UPDATE user_affiliate_ledger
     SET frozen_until = NULL, updated_at = NOW()
     WHERE user_id = $1
+      AND action = 'accrue'
       AND frozen_until IS NOT NULL
       AND frozen_until <= NOW()
-    RETURNING amount
+    RETURNING source_order_id, amount
+),
+matured_by_order AS (
+    SELECT source_order_id, SUM(amount) AS matured_amount
+    FROM matured_rows
+    GROUP BY source_order_id
+),
+order_reversals AS (
+    SELECT source_order_id, COALESCE(SUM(ABS(amount)), 0) AS reversed_amount
+    FROM user_affiliate_ledger
+    WHERE user_id = $1
+      AND action = 'refund_reversal'
+      AND source_order_id IS NOT NULL
+    GROUP BY source_order_id
 )
-SELECT COALESCE(SUM(amount), 0) FROM matured`, userID)
+SELECT COALESCE(SUM(
+    CASE
+        WHEN m.source_order_id IS NULL THEN m.matured_amount
+        ELSE GREATEST(m.matured_amount - COALESCE(r.reversed_amount, 0), 0)
+    END
+), 0)::double precision
+FROM matured_by_order m
+LEFT JOIN order_reversals r ON r.source_order_id = m.source_order_id`, userID)
 	if err != nil {
 		return 0, fmt.Errorf("thaw frozen quota: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
 
-	var thawed float64
+	var netMatured float64
 	if rows.Next() {
-		if err := rows.Scan(&thawed); err != nil {
+		if err := rows.Scan(&netMatured); err != nil {
+			_ = rows.Close()
 			return 0, err
 		}
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return 0, err
 	}
 	if err := rows.Close(); err != nil {
 		return 0, err
 	}
+	netMatured = roundAffiliateQuota(netMatured)
+	if netMatured <= 0 || currentFrozenQuota <= 0 {
+		return 0, nil
+	}
+
+	lockedRows, err := txClient.QueryContext(txCtx, `
+WITH locked_by_order AS (
+    SELECT source_order_id, SUM(amount) AS locked_amount
+    FROM user_affiliate_ledger
+    WHERE user_id = $1
+      AND action = 'accrue'
+      AND frozen_until IS NOT NULL
+      AND frozen_until > NOW()
+    GROUP BY source_order_id
+),
+order_reversals AS (
+    SELECT source_order_id, COALESCE(SUM(ABS(amount)), 0) AS reversed_amount
+    FROM user_affiliate_ledger
+    WHERE user_id = $1
+      AND action = 'refund_reversal'
+      AND source_order_id IS NOT NULL
+    GROUP BY source_order_id
+)
+SELECT COALESCE(SUM(
+    CASE
+        WHEN l.source_order_id IS NULL THEN l.locked_amount
+        ELSE GREATEST(l.locked_amount - COALESCE(r.reversed_amount, 0), 0)
+    END
+), 0)::double precision
+FROM locked_by_order l
+LEFT JOIN order_reversals r ON r.source_order_id = l.source_order_id`, userID)
+	if err != nil {
+		return 0, fmt.Errorf("query remaining locked frozen quota: %w", err)
+	}
+	var stillLockedNet float64
+	if lockedRows.Next() {
+		if err := lockedRows.Scan(&stillLockedNet); err != nil {
+			_ = lockedRows.Close()
+			return 0, err
+		}
+	}
+	if err := lockedRows.Err(); err != nil {
+		_ = lockedRows.Close()
+		return 0, err
+	}
+	if err := lockedRows.Close(); err != nil {
+		return 0, err
+	}
+
+	releasableCap := roundAffiliateQuota(math.Max(currentFrozenQuota-roundAffiliateQuota(stillLockedNet), 0))
+	thawed := roundAffiliateQuota(math.Min(netMatured, releasableCap))
 	if thawed <= 0 {
 		return 0, nil
 	}

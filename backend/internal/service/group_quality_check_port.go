@@ -52,11 +52,13 @@ type GroupQualityEvent struct {
 	AuditSummary    *ChanshuiPublicSummary `json:"audit_summary,omitempty"`
 	ID              int64                  `json:"id"`
 	GroupID         int64                  `json:"group_id"`
-	AccountID       int64                  `json:"account_id"`
-	ModelID         string                 `json:"model_id"`
-	Status          string                 `json:"status"` // success | degraded
-	ErrorMessage    string                 `json:"error_message"`
-	CreatedAt       time.Time              `json:"created_at"`
+	// AccountID is kept for internal repository/test diagnostics only and must
+	// never be serialized into end-user JSON responses.
+	AccountID    int64     `json:"-"`
+	ModelID      string    `json:"model_id"`
+	Status       string    `json:"status"` // success | degraded
+	ErrorMessage string    `json:"error_message"`
+	CreatedAt    time.Time `json:"created_at"`
 }
 
 // GroupQualityCheckRepository persists the per-group toggle and reads the

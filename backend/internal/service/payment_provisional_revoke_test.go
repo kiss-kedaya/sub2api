@@ -15,6 +15,7 @@ import (
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/ent/enttest"
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/stretchr/testify/require"
 )
 
@@ -248,4 +249,118 @@ func TestRevokeProvisionalDepositCreditWithoutFrozenOrderIsManual(t *testing.T) 
 	require.NoError(t, env.db.QueryRow(`SELECT status, revoked_at FROM deposit_transactions`).Scan(&status, &revokedAt))
 	require.Equal(t, "credited", status)
 	require.False(t, revokedAt.Valid, "a declined claw-back must not leave a revoked marker")
+}
+
+type provisionalRevokeAuthCacheStub struct {
+	userIDs []int64
+}
+
+func (s *provisionalRevokeAuthCacheStub) InvalidateAuthCacheByKey(context.Context, string)      {}
+func (s *provisionalRevokeAuthCacheStub) InvalidateAuthCacheByHash(context.Context, string)     {}
+func (s *provisionalRevokeAuthCacheStub) InvalidateAuthCacheForAPIKey(context.Context, *APIKey) {}
+func (s *provisionalRevokeAuthCacheStub) InvalidateAuthCacheByUserID(_ context.Context, userID int64) {
+	s.userIDs = append(s.userIDs, userID)
+}
+func (s *provisionalRevokeAuthCacheStub) InvalidateAuthCacheByGroupID(context.Context, int64) {}
+
+func TestRevokeProvisionalDepositCreditPostCommitSyncMergeSettlementAuthAndAffiliate(t *testing.T) {
+	env := newProvisionalRevokeEnv(t, 10, 6.7)
+	cacheStub := &liveBalanceAdjustmentCacheStub{}
+	billingCache := &BillingCacheService{
+		cache: cacheStub,
+		cfg: &config.Config{
+			Billing: config.BillingConfig{BalanceMergeSettlementEnabled: true},
+		},
+	}
+	authInvalidator := &provisionalRevokeAuthCacheStub{}
+	affRepo := &cappedAccrualRecordingAffiliateRepo{
+		paymentFulfillmentAffiliateRepoStub: &paymentFulfillmentAffiliateRepoStub{},
+		reverseReturnAmount:                 1.34,
+	}
+	env.service.redeemService = &RedeemService{
+		billingCacheService:  billingCache,
+		authCacheInvalidator: authInvalidator,
+	}
+	env.service.affiliateService = NewAffiliateService(affRepo, nil, authInvalidator, billingCache)
+
+	res, err := env.revoke()
+	require.NoError(t, err)
+	require.True(t, res.Revoked)
+
+	// 1. Under merge settlement, negative external adjustment deducts legacy balance cache relatively.
+	require.Equal(t, 1, cacheStub.deductCalls)
+	require.Equal(t, env.userID, cacheStub.deductUserID)
+	require.InDelta(t, 6.7, cacheStub.deductAmount, 1e-9)
+	require.Zero(t, cacheStub.invalidateCalls)
+
+	// 2. User API key auth cache is evicted immediately.
+	require.Equal(t, []int64{env.userID}, authInvalidator.userIDs)
+
+	// 3. Affiliate invite rebate accrued for the revoked order is reversed with ratio=1.0 and audited.
+	require.Equal(t, 1, affRepo.reverseCalls)
+	require.Equal(t, env.orderID, affRepo.lastReverseOrderID)
+	require.InDelta(t, 1.0, affRepo.lastReverseRatio, 1e-9)
+	var rebateAudits int
+	require.NoError(t, env.db.QueryRow(`SELECT COUNT(*) FROM payment_audit_logs WHERE action = 'AFFILIATE_REBATE_REVERSED'`).Scan(&rebateAudits))
+	require.Equal(t, 1, rebateAudits)
+
+	// Second idempotent call must NOT fire any post-commit side effect again.
+	second, err := env.revoke()
+	require.NoError(t, err)
+	require.False(t, second.Revoked)
+	require.Equal(t, 1, cacheStub.deductCalls)
+	require.Len(t, authInvalidator.userIDs, 1)
+	require.Equal(t, 1, affRepo.reverseCalls)
+}
+
+func TestRevokeProvisionalDepositCreditInvalidatesLegacyBalanceCacheWhenMergeDisabled(t *testing.T) {
+	env := newProvisionalRevokeEnv(t, 10, 6.7)
+	cacheStub := &liveBalanceAdjustmentCacheStub{}
+	billingCache := &BillingCacheService{
+		cache: cacheStub,
+		cfg: &config.Config{
+			Billing: config.BillingConfig{BalanceMergeSettlementEnabled: false},
+		},
+	}
+	authInvalidator := &provisionalRevokeAuthCacheStub{}
+	env.service.redeemService = &RedeemService{
+		billingCacheService:  billingCache,
+		authCacheInvalidator: authInvalidator,
+	}
+
+	res, err := env.revoke()
+	require.NoError(t, err)
+	require.True(t, res.Revoked)
+	require.Equal(t, 1, cacheStub.invalidateCalls)
+	require.Zero(t, cacheStub.deductCalls)
+	require.Equal(t, []int64{env.userID}, authInvalidator.userIDs)
+}
+
+func TestRevokeProvisionalDepositCreditDeletedUserStillReversesAffiliateRebate(t *testing.T) {
+	env := newProvisionalRevokeEnv(t, 10, 6.7)
+	_, err := env.db.Exec(`UPDATE users SET deleted_at = CURRENT_TIMESTAMP WHERE id = $1`, env.userID)
+	require.NoError(t, err)
+
+	cacheStub := &liveBalanceAdjustmentCacheStub{}
+	billingCache := &BillingCacheService{cache: cacheStub}
+	authInvalidator := &provisionalRevokeAuthCacheStub{}
+	affRepo := &cappedAccrualRecordingAffiliateRepo{
+		paymentFulfillmentAffiliateRepoStub: &paymentFulfillmentAffiliateRepoStub{},
+		reverseReturnAmount:                 1.34,
+	}
+	env.service.redeemService = &RedeemService{
+		billingCacheService:  billingCache,
+		authCacheInvalidator: authInvalidator,
+	}
+	env.service.affiliateService = NewAffiliateService(affRepo, nil, authInvalidator, billingCache)
+
+	res, err := env.revoke()
+	require.NoError(t, err)
+	require.True(t, res.Revoked)
+	require.False(t, res.BalanceAfterKnown)
+	require.Zero(t, cacheStub.invalidateCalls)
+	require.Zero(t, cacheStub.deductCalls)
+	require.Empty(t, authInvalidator.userIDs)
+	require.Equal(t, 1, affRepo.reverseCalls)
+	require.Equal(t, env.orderID, affRepo.lastReverseOrderID)
 }

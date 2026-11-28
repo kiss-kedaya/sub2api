@@ -54,6 +54,9 @@ func TestGroupQualityRepository_ListGroupEvents(t *testing.T) {
 	require.Equal(t, "degraded", events[0].Status)
 	require.Equal(t, "claude-sonnet-5", events[0].ModelID)
 	require.Contains(t, events[0].ErrorMessage, "crank pedals")
+	raw, err := json.Marshal(events[0])
+	require.NoError(t, err)
+	require.NotContains(t, string(raw), "account_id")
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 

@@ -86,8 +86,7 @@ func TestPromptAuditProbeUsesSingleVersionSegment(t *testing.T) {
 	}))
 	defer server.Close()
 
-	allowPrivate := true
-	result := newProbeTestService().Probe(context.Background(), ProbeRequest{Endpoint: probeEndpoint(server.URL+"/claude/v1", "temporary-token"), AllowPrivateEndpoints: &allowPrivate})
+	result := newProbeTestServiceWithAllowPrivate(true).Probe(context.Background(), ProbeRequest{Endpoint: probeEndpoint(server.URL+"/claude/v1", "temporary-token")})
 	require.True(t, result.OK)
 	require.Zero(t, modelPathHits.Load())
 }
@@ -199,8 +198,7 @@ func TestPromptAuditProbeModelsFallbackAndResponseSafety(t *testing.T) {
 			chatCalls.Add(1)
 		}))
 		defer server.Close()
-		allowPrivate := true
-		result := newProbeTestService().Probe(context.Background(), ProbeRequest{Endpoint: probeEndpoint(server.URL, "temporary-token"), AllowPrivateEndpoints: &allowPrivate})
+		result := newProbeTestServiceWithAllowPrivate(true).Probe(context.Background(), ProbeRequest{Endpoint: probeEndpoint(server.URL, "temporary-token")})
 		require.True(t, result.OK)
 		require.True(t, result.TokenApplied)
 		require.Equal(t, http.StatusOK, result.HTTPStatus)
@@ -218,8 +216,7 @@ func TestPromptAuditProbeModelsFallbackAndResponseSafety(t *testing.T) {
 			_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"Safety: Safe\nCategories: None"}}]}`))
 		}))
 		defer server.Close()
-		allowPrivate := true
-		result := newProbeTestService().Probe(context.Background(), ProbeRequest{Endpoint: probeEndpoint(server.URL, "temporary-token"), AllowPrivateEndpoints: &allowPrivate})
+		result := newProbeTestServiceWithAllowPrivate(true).Probe(context.Background(), ProbeRequest{Endpoint: probeEndpoint(server.URL, "temporary-token")})
 		require.True(t, result.OK)
 		require.Equal(t, int64(1), chatCalls.Load())
 	})
@@ -233,8 +230,7 @@ func TestPromptAuditProbeModelsFallbackAndResponseSafety(t *testing.T) {
 			w.WriteHeader(http.StatusUnauthorized)
 		}))
 		defer server.Close()
-		allowPrivate := true
-		result := newProbeTestService().Probe(context.Background(), ProbeRequest{Endpoint: probeEndpoint(server.URL, "temporary-token"), AllowPrivateEndpoints: &allowPrivate})
+		result := newProbeTestServiceWithAllowPrivate(true).Probe(context.Background(), ProbeRequest{Endpoint: probeEndpoint(server.URL, "temporary-token")})
 		require.False(t, result.OK)
 		require.Equal(t, ErrorCodeUnavailable, result.ErrorCode)
 		require.Equal(t, http.StatusUnauthorized, result.HTTPStatus)
@@ -250,8 +246,7 @@ func TestPromptAuditProbeModelsFallbackAndResponseSafety(t *testing.T) {
 			_, _ = w.Write([]byte(strings.Repeat("x", int(maxGuardResponseBytes)+1)))
 		}))
 		defer server.Close()
-		allowPrivate := true
-		result := newProbeTestService().Probe(context.Background(), ProbeRequest{Endpoint: probeEndpoint(server.URL, "temporary-token"), AllowPrivateEndpoints: &allowPrivate})
+		result := newProbeTestServiceWithAllowPrivate(true).Probe(context.Background(), ProbeRequest{Endpoint: probeEndpoint(server.URL, "temporary-token")})
 		require.False(t, result.OK)
 		require.Equal(t, "response_too_large", result.ErrorCode)
 		require.Zero(t, chatCalls.Load())
@@ -281,8 +276,18 @@ func TestResolveProbeEndpointReusesTokenOnlyForMatchingBaseURL(t *testing.T) {
 }
 
 func newProbeTestService() *PromptService {
+	return newProbeTestServiceWithAllowPrivate(false)
+}
+
+func newProbeTestServiceWithAllowPrivate(allowPrivate bool) *PromptService {
+	manager := &ConfigManager{}
+	if allowPrivate {
+		manager.snapshot.Store(&activeConfigSnapshot{
+			active: ActiveConfig{AllowPrivateEndpoints: true},
+		})
+	}
 	return &PromptService{
-		config: &ConfigManager{}, scanner: NewOpenAICompatibleScanner(), clock: realClock{},
+		config: manager, scanner: NewOpenAICompatibleScanner(), clock: realClock{},
 		probes: map[string]ProbeResult{},
 	}
 }

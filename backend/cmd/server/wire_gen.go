@@ -205,7 +205,7 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	ticketHandler := handler.NewTicketHandler(ticketService)
 	channelMonitorRepository := repository.NewChannelMonitorRepository(client, db)
 	channelMonitorService := service.ProvideChannelMonitorService(channelMonitorRepository, secretEncryptor, settingService)
-	channelMonitorUserHandler := handler.NewChannelMonitorUserHandler(channelMonitorService, settingService)
+	channelMonitorUserHandler := handler.NewChannelMonitorUserHandler(channelMonitorService, settingService, apiKeyService)
 	channelMonitorV2Repository := repository.NewChannelMonitorV2Repository(db)
 	groupQualityCheckRepository := repository.NewGroupQualityCheckRepository(db)
 	groupQualityCheckService := service.NewGroupQualityCheckService(groupQualityCheckRepository, accountRepository)
