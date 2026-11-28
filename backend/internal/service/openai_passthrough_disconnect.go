@@ -100,5 +100,6 @@ func applyIncompletePassthroughStreamUsageWithEstimate(account *Account, result 
 		clientDisconnect:         result.clientDisconnect,
 		incompleteStream:         result.incompleteStream,
 		incompleteOutputTokens:   result.incompleteOutputTokens,
+		hasFinalOutput:           result.hasFinalOutput,
 	}, requestBody, precomputedInputTokens, hasPrecomputed, model, streamErr)
 }

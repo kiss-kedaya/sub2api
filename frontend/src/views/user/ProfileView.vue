@@ -52,6 +52,8 @@
           :wechat-mp-enabled="wechatOAuthMPEnabled"
         />
 
+        <ProfilePersonalApiKeyCard />
+
         <UAlert
           v-if="contactInfo"
           color="neutral"
@@ -131,6 +133,7 @@ import ProfileTotpCard from '@/components/user/profile/ProfileTotpCard.vue'
 import TwoFactorSuggestionBanner from '@/components/user/TwoFactorSuggestionBanner.vue'
 import ProfilePasskeyCard from '@/components/user/profile/ProfilePasskeyCard.vue'
 import ProfileKeyVerificationCard from '@/components/user/profile/ProfileKeyVerificationCard.vue'
+import ProfilePersonalApiKeyCard from '@/components/user/profile/ProfilePersonalApiKeyCard.vue'
 import ProfileBarkCard from '@/components/user/profile/ProfileBarkCard.vue'
 import { isWeChatWebOAuthEnabled } from '@/api/auth'
 import { useAppStore } from '@/stores/app'

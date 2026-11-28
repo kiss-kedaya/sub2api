@@ -225,9 +225,24 @@ func WebSearchPricePerCall(v float64) predicate.Group {
 	return predicate.Group(sql.FieldEQ(FieldWebSearchPricePerCall, v))
 }
 
+// ToolRateIndependent applies equality check predicate on the "tool_rate_independent" field. It's identical to ToolRateIndependentEQ.
+func ToolRateIndependent(v bool) predicate.Group {
+	return predicate.Group(sql.FieldEQ(FieldToolRateIndependent, v))
+}
+
+// ToolRateMultiplier applies equality check predicate on the "tool_rate_multiplier" field. It's identical to ToolRateMultiplierEQ.
+func ToolRateMultiplier(v float64) predicate.Group {
+	return predicate.Group(sql.FieldEQ(FieldToolRateMultiplier, v))
+}
+
 // SearchPricePer1k applies equality check predicate on the "search_price_per_1k" field. It's identical to SearchPricePer1kEQ.
 func SearchPricePer1k(v float64) predicate.Group {
 	return predicate.Group(sql.FieldEQ(FieldSearchPricePer1k, v))
+}
+
+// FetchPricePer1k applies equality check predicate on the "fetch_price_per_1k" field. It's identical to FetchPricePer1kEQ.
+func FetchPricePer1k(v float64) predicate.Group {
+	return predicate.Group(sql.FieldEQ(FieldFetchPricePer1k, v))
 }
 
 // OcrPricePer1kPages applies equality check predicate on the "ocr_price_per_1k_pages" field. It's identical to OcrPricePer1kPagesEQ.
@@ -313,6 +328,11 @@ func CrossProtocolConversionEnabled(v bool) predicate.Group {
 // ReturnRequestedModel applies equality check predicate on the "return_requested_model" field. It's identical to ReturnRequestedModelEQ.
 func ReturnRequestedModel(v bool) predicate.Group {
 	return predicate.Group(sql.FieldEQ(FieldReturnRequestedModel, v))
+}
+
+// SaveResponseMsgID applies equality check predicate on the "save_response_msg_id" field. It's identical to SaveResponseMsgIDEQ.
+func SaveResponseMsgID(v bool) predicate.Group {
+	return predicate.Group(sql.FieldEQ(FieldSaveResponseMsgID, v))
 }
 
 // AllowLive applies equality check predicate on the "allow_live" field. It's identical to AllowLiveEQ.
@@ -1905,6 +1925,56 @@ func WebSearchPricePerCallNotNil() predicate.Group {
 	return predicate.Group(sql.FieldNotNull(FieldWebSearchPricePerCall))
 }
 
+// ToolRateIndependentEQ applies the EQ predicate on the "tool_rate_independent" field.
+func ToolRateIndependentEQ(v bool) predicate.Group {
+	return predicate.Group(sql.FieldEQ(FieldToolRateIndependent, v))
+}
+
+// ToolRateIndependentNEQ applies the NEQ predicate on the "tool_rate_independent" field.
+func ToolRateIndependentNEQ(v bool) predicate.Group {
+	return predicate.Group(sql.FieldNEQ(FieldToolRateIndependent, v))
+}
+
+// ToolRateMultiplierEQ applies the EQ predicate on the "tool_rate_multiplier" field.
+func ToolRateMultiplierEQ(v float64) predicate.Group {
+	return predicate.Group(sql.FieldEQ(FieldToolRateMultiplier, v))
+}
+
+// ToolRateMultiplierNEQ applies the NEQ predicate on the "tool_rate_multiplier" field.
+func ToolRateMultiplierNEQ(v float64) predicate.Group {
+	return predicate.Group(sql.FieldNEQ(FieldToolRateMultiplier, v))
+}
+
+// ToolRateMultiplierIn applies the In predicate on the "tool_rate_multiplier" field.
+func ToolRateMultiplierIn(vs ...float64) predicate.Group {
+	return predicate.Group(sql.FieldIn(FieldToolRateMultiplier, vs...))
+}
+
+// ToolRateMultiplierNotIn applies the NotIn predicate on the "tool_rate_multiplier" field.
+func ToolRateMultiplierNotIn(vs ...float64) predicate.Group {
+	return predicate.Group(sql.FieldNotIn(FieldToolRateMultiplier, vs...))
+}
+
+// ToolRateMultiplierGT applies the GT predicate on the "tool_rate_multiplier" field.
+func ToolRateMultiplierGT(v float64) predicate.Group {
+	return predicate.Group(sql.FieldGT(FieldToolRateMultiplier, v))
+}
+
+// ToolRateMultiplierGTE applies the GTE predicate on the "tool_rate_multiplier" field.
+func ToolRateMultiplierGTE(v float64) predicate.Group {
+	return predicate.Group(sql.FieldGTE(FieldToolRateMultiplier, v))
+}
+
+// ToolRateMultiplierLT applies the LT predicate on the "tool_rate_multiplier" field.
+func ToolRateMultiplierLT(v float64) predicate.Group {
+	return predicate.Group(sql.FieldLT(FieldToolRateMultiplier, v))
+}
+
+// ToolRateMultiplierLTE applies the LTE predicate on the "tool_rate_multiplier" field.
+func ToolRateMultiplierLTE(v float64) predicate.Group {
+	return predicate.Group(sql.FieldLTE(FieldToolRateMultiplier, v))
+}
+
 // SearchPricePer1kEQ applies the EQ predicate on the "search_price_per_1k" field.
 func SearchPricePer1kEQ(v float64) predicate.Group {
 	return predicate.Group(sql.FieldEQ(FieldSearchPricePer1k, v))
@@ -1953,6 +2023,56 @@ func SearchPricePer1kIsNil() predicate.Group {
 // SearchPricePer1kNotNil applies the NotNil predicate on the "search_price_per_1k" field.
 func SearchPricePer1kNotNil() predicate.Group {
 	return predicate.Group(sql.FieldNotNull(FieldSearchPricePer1k))
+}
+
+// FetchPricePer1kEQ applies the EQ predicate on the "fetch_price_per_1k" field.
+func FetchPricePer1kEQ(v float64) predicate.Group {
+	return predicate.Group(sql.FieldEQ(FieldFetchPricePer1k, v))
+}
+
+// FetchPricePer1kNEQ applies the NEQ predicate on the "fetch_price_per_1k" field.
+func FetchPricePer1kNEQ(v float64) predicate.Group {
+	return predicate.Group(sql.FieldNEQ(FieldFetchPricePer1k, v))
+}
+
+// FetchPricePer1kIn applies the In predicate on the "fetch_price_per_1k" field.
+func FetchPricePer1kIn(vs ...float64) predicate.Group {
+	return predicate.Group(sql.FieldIn(FieldFetchPricePer1k, vs...))
+}
+
+// FetchPricePer1kNotIn applies the NotIn predicate on the "fetch_price_per_1k" field.
+func FetchPricePer1kNotIn(vs ...float64) predicate.Group {
+	return predicate.Group(sql.FieldNotIn(FieldFetchPricePer1k, vs...))
+}
+
+// FetchPricePer1kGT applies the GT predicate on the "fetch_price_per_1k" field.
+func FetchPricePer1kGT(v float64) predicate.Group {
+	return predicate.Group(sql.FieldGT(FieldFetchPricePer1k, v))
+}
+
+// FetchPricePer1kGTE applies the GTE predicate on the "fetch_price_per_1k" field.
+func FetchPricePer1kGTE(v float64) predicate.Group {
+	return predicate.Group(sql.FieldGTE(FieldFetchPricePer1k, v))
+}
+
+// FetchPricePer1kLT applies the LT predicate on the "fetch_price_per_1k" field.
+func FetchPricePer1kLT(v float64) predicate.Group {
+	return predicate.Group(sql.FieldLT(FieldFetchPricePer1k, v))
+}
+
+// FetchPricePer1kLTE applies the LTE predicate on the "fetch_price_per_1k" field.
+func FetchPricePer1kLTE(v float64) predicate.Group {
+	return predicate.Group(sql.FieldLTE(FieldFetchPricePer1k, v))
+}
+
+// FetchPricePer1kIsNil applies the IsNil predicate on the "fetch_price_per_1k" field.
+func FetchPricePer1kIsNil() predicate.Group {
+	return predicate.Group(sql.FieldIsNull(FieldFetchPricePer1k))
+}
+
+// FetchPricePer1kNotNil applies the NotNil predicate on the "fetch_price_per_1k" field.
+func FetchPricePer1kNotNil() predicate.Group {
+	return predicate.Group(sql.FieldNotNull(FieldFetchPricePer1k))
 }
 
 // OcrPricePer1kPagesEQ applies the EQ predicate on the "ocr_price_per_1k_pages" field.
@@ -2583,6 +2703,16 @@ func ReturnRequestedModelEQ(v bool) predicate.Group {
 // ReturnRequestedModelNEQ applies the NEQ predicate on the "return_requested_model" field.
 func ReturnRequestedModelNEQ(v bool) predicate.Group {
 	return predicate.Group(sql.FieldNEQ(FieldReturnRequestedModel, v))
+}
+
+// SaveResponseMsgIDEQ applies the EQ predicate on the "save_response_msg_id" field.
+func SaveResponseMsgIDEQ(v bool) predicate.Group {
+	return predicate.Group(sql.FieldEQ(FieldSaveResponseMsgID, v))
+}
+
+// SaveResponseMsgIDNEQ applies the NEQ predicate on the "save_response_msg_id" field.
+func SaveResponseMsgIDNEQ(v bool) predicate.Group {
+	return predicate.Group(sql.FieldNEQ(FieldSaveResponseMsgID, v))
 }
 
 // AllowLiveEQ applies the EQ predicate on the "allow_live" field.

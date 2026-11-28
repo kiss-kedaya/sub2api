@@ -16,6 +16,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/payment"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/ip"
 )
 
 const paymentResultReturnPath = "/payment/result"
@@ -39,7 +40,7 @@ const (
 	paymentResumeNotConfiguredCode    = "PAYMENT_RESUME_NOT_CONFIGURED"
 	paymentResumeNotConfiguredMessage = "payment resume tokens require a configured signing key"
 
-	paymentResumeTokenTTL       = 24 * time.Hour
+	paymentResumeTokenTTL       = 2 * time.Hour
 	wechatPaymentResumeTokenTTL = 15 * time.Minute
 )
 
@@ -232,16 +233,39 @@ func visibleMethodSourceSettingKey(method string) string {
 	}
 }
 
-func CanonicalizeReturnURL(raw string, srcHost string, srcURL string) (string, error) {
+// CanonicalizeReturnURL validates and canonicalizes a client-supplied payment
+// return URL against the request host/origin. The third argument (historically
+// the client Referer header) is intentionally ignored and never trusted.
+func CanonicalizeReturnURL(raw string, srcHost string, _ string) (string, error) {
+	return CanonicalizeReturnURLWithOrigin(raw, srcHost, "")
+}
+
+// CanonicalizeReturnURLWithOrigin validates a client-supplied payment return
+// URL and resolves its canonical internal destination.
+//
+// When authoritativeOrigin is configured (from server settings / provider
+// config), a structurally valid /payment/result URL is canonicalized directly
+// to "<authoritativeOrigin>/payment/result" so proxy host/port quirks (e.g.
+// stripped non-default ports) cannot break checkout and forged Host/Referer
+// headers can never redirect externally or downgrade HTTPS.
+//
+// When no authoritative server origin is configured, the URL must match the
+// trusted-proxy-verified requestOrigin with exact scheme and host[:port]
+// parity (HTTPS->HTTP downgrade is rejected).
+func CanonicalizeReturnURLWithOrigin(raw string, requestOrigin string, authoritativeOrigin string) (string, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return "", nil
+	}
+	if strings.ContainsAny(raw, "\\\r\n\t") {
+		return "", infraerrors.BadRequest("INVALID_RETURN_URL", "return_url contains invalid characters")
 	}
 	parsed, err := url.Parse(raw)
 	if err != nil || !parsed.IsAbs() || parsed.Host == "" {
 		return "", infraerrors.BadRequest("INVALID_RETURN_URL", "return_url must be an absolute http/https URL")
 	}
-	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+	scheme := strings.ToLower(strings.TrimSpace(parsed.Scheme))
+	if scheme != "http" && scheme != "https" {
 		return "", infraerrors.BadRequest("INVALID_RETURN_URL", "return_url must use http or https")
 	}
 	// The browser supplies only the destination. All result parameters are
@@ -250,6 +274,10 @@ func CanonicalizeReturnURL(raw string, srcHost string, srcURL string) (string, e
 	if parsed.RawQuery != "" || parsed.ForceQuery || parsed.User != nil {
 		return "", infraerrors.BadRequest("INVALID_RETURN_URL", "return_url must not contain query parameters or credentials")
 	}
+	validHost, ok := ip.ValidateRequestHost(parsed.Host)
+	if !ok {
+		return "", infraerrors.BadRequest("INVALID_RETURN_URL", "return_url has an invalid host")
+	}
 	parsed.Fragment = ""
 	if parsed.Path == "" {
 		parsed.Path = "/"
@@ -257,32 +285,50 @@ func CanonicalizeReturnURL(raw string, srcHost string, srcURL string) (string, e
 	if parsed.Path != paymentResultReturnPath || parsed.EscapedPath() != paymentResultReturnPath || parsed.Opaque != "" {
 		return "", infraerrors.BadRequest("INVALID_RETURN_URL", "return_url must target the canonical internal payment result page")
 	}
-	if !allowedReturnURLHost(parsed.Host, srcHost, srcURL) {
-		return "", infraerrors.BadRequest("INVALID_RETURN_URL", "return_url must use the same host as the current site or browser origin")
+
+	if authOrigin, ok := ip.ExtractHTTPOrigin(authoritativeOrigin); ok {
+		return authOrigin + paymentResultReturnPath, nil
 	}
-	return parsed.String(), nil
+
+	if !matchesRequestOrigin(scheme, validHost, requestOrigin) {
+		return "", infraerrors.BadRequest("INVALID_RETURN_URL", "return_url must match the current site origin")
+	}
+	return scheme + "://" + validHost + paymentResultReturnPath, nil
 }
 
-func allowedReturnURLHost(returnURLHost string, requestHost string, refererURL string) bool {
-	if sameOriginHost(returnURLHost, requestHost) {
-		return true
-	}
-
-	refererURL = strings.TrimSpace(refererURL)
-	if refererURL == "" {
+func matchesRequestOrigin(returnScheme string, returnHost string, requestOrigin string) bool {
+	trimmed := strings.TrimSpace(requestOrigin)
+	if trimmed == "" {
 		return false
 	}
-	parsedReferer, err := url.Parse(refererURL)
-	if err != nil || parsedReferer.Host == "" {
+	if strings.Contains(trimmed, "://") {
+		normalizedOrigin, ok := ip.ExtractHTTPOrigin(trimmed)
+		if !ok {
+			return false
+		}
+		parsedReq, err := url.Parse(normalizedOrigin)
+		if err != nil || parsedReq.Host == "" {
+			return false
+		}
+		if !strings.EqualFold(returnScheme, parsedReq.Scheme) {
+			return false
+		}
+		return sameOriginHostForScheme(returnHost, parsedReq.Host, returnScheme)
+	}
+	validReqHost, ok := ip.ValidateRequestHost(trimmed)
+	if !ok {
 		return false
 	}
-	return sameOriginHost(returnURLHost, parsedReferer.Host)
+	return sameOriginHostForScheme(returnHost, validReqHost, returnScheme)
 }
 
 func buildPaymentReturnURL(base string, orderID int64, outTradeNo string, resumeToken string) (string, error) {
 	canonical := strings.TrimSpace(base)
 	if canonical == "" {
 		return "", nil
+	}
+	if strings.ContainsAny(canonical, "\\\r\n\t") {
+		return "", infraerrors.BadRequest("INVALID_RETURN_URL", "return_url contains invalid characters")
 	}
 
 	parsed, err := url.Parse(canonical)
@@ -317,22 +363,30 @@ func buildPaymentReturnURL(base string, orderID int64, outTradeNo string, resume
 	return parsed.String(), nil
 }
 
-func sameOriginHost(returnURLHost string, requestHost string) bool {
+func sameOriginHostForScheme(returnURLHost string, requestHost string, scheme string) bool {
 	returnHost := strings.TrimSpace(returnURLHost)
 	reqHost := strings.TrimSpace(requestHost)
 	if returnHost == "" || reqHost == "" {
 		return false
 	}
-	if strings.EqualFold(returnHost, reqHost) {
-		return true
-	}
 
-	returnName, returnPort := splitHostPortDefault(returnHost)
-	reqName, reqPort := splitHostPortDefault(reqHost)
+	returnName, returnPort := splitHostPortNormalized(returnHost, scheme)
+	reqName, reqPort := splitHostPortNormalized(reqHost, scheme)
 	if returnName == "" || reqName == "" {
 		return false
 	}
 	return strings.EqualFold(returnName, reqName) && returnPort == reqPort
+}
+
+func splitHostPortNormalized(raw string, scheme string) (string, string) {
+	host, port := splitHostPortDefault(raw)
+	host = strings.TrimPrefix(host, "[")
+	host = strings.TrimSuffix(host, "]")
+	if (strings.EqualFold(scheme, "https") && port == "443") ||
+		(strings.EqualFold(scheme, "http") && port == "80") {
+		port = ""
+	}
+	return host, port
 }
 
 func splitHostPortDefault(raw string) (string, string) {
@@ -470,7 +524,7 @@ func (s *PaymentResumeService) verifySignature(payload string, signature string)
 
 func validatePaymentResumeExpiry(expiresAt int64, code, message string) error {
 	if expiresAt <= 0 {
-		return nil
+		return infraerrors.BadRequest(code, message)
 	}
 	if time.Now().Unix() > expiresAt {
 		return infraerrors.BadRequest(code, message)

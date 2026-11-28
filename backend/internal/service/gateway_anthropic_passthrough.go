@@ -316,6 +316,7 @@ func (s *GatewayService) forwardAnthropicAPIKeyPassthroughWithInput(
 
 	return &ForwardResult{
 		RequestID:                     resp.Header.Get("x-request-id"),
+		ResponseMsgID:                 observedUpstreamResponseMessageID(c),
 		UpstreamHeaders:               resp.Header,
 		Usage:                         *usage,
 		Model:                         input.OriginalModel,
@@ -477,6 +478,7 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthrough(
 	clientDisconnected := false
 	sawTerminalEvent := false
 	progress := &anthropicStreamProgress{}
+	guardCtx, streamBalanceGuard := balancePreauthorizationGuardForRequest(ctx, c)
 	clientWatch := newAnthropicClientWatch(ctx, c, resp.Body)
 	defer clientWatch.stop()
 	defer func() {
@@ -719,6 +721,7 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthrough(
 			if payload, ok := anthropicStreamErrorPayload(line); ok {
 				return finishStreamError(payload, line+"\n\n")
 			}
+			observedBytes := 0
 			if data, ok := extractAnthropicSSEDataLine(line); ok {
 				trimmed := strings.TrimSpace(data)
 				observer.ObserveAnthropic([]byte(trimmed))
@@ -730,7 +733,7 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthrough(
 					firstTokenMs = &ms
 				}
 				parseSSEUsagePassthrough(data, usage)
-				progress.observeData(trimmed)
+				observedBytes = progress.observeData(trimmed)
 			} else {
 				trimmed := strings.TrimSpace(line)
 				if strings.HasPrefix(trimmed, "event:") && anthropicStreamEventIsTerminal(strings.TrimSpace(strings.TrimPrefix(trimmed, "event:")), "") {
@@ -753,6 +756,23 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthrough(
 					inPartialEvent = false
 				} else {
 					inPartialEvent = true
+					if observedBytes > 0 {
+						if topUpErr := streamBalanceGuard.ObserveStreamingOutput(guardCtx, observedBytes); topUpErr != nil {
+							if inPartialEvent {
+								_, _ = io.WriteString(w, "\n")
+							}
+							flusher.Flush()
+							_ = resp.Body.Close()
+							logger.LegacyPrintf("service.gateway", "[Anthropic passthrough] Stream output hold top-up failed, aborting upstream: account=%d error=%v", account.ID, topUpErr)
+							return &streamingResult{
+								usage:            usage,
+								firstTokenMs:     firstTokenMs,
+								clientDisconnect: clientDisconnected,
+								incompleteStream: !sawTerminalEvent,
+								progress:         progress,
+							}, wrapStreamOutputHoldTopUpFailure(topUpErr)
+						}
+					}
 				}
 			}
 

@@ -3,7 +3,10 @@ package service
 import (
 	"context"
 	"fmt"
+	"net/http/httptrace"
 	"strings"
+	"sync/atomic"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/gin-gonic/gin"
@@ -62,62 +65,110 @@ func (m *geminiOutputMeter) addText(s string) {
 }
 
 // observe adds the content of one raw Gemini response chunk (already unwrapped from
-// the Code Assist envelope). Use it only for upstreams that stream deltas; a path that
-// has to cope with cumulative text feeds addText with its computed delta instead.
-func (m *geminiOutputMeter) observe(chunk []byte) {
+// the Code Assist envelope) and returns the number of billable output bytes added.
+// Use it only for upstreams that stream deltas; a path that has to cope with
+// cumulative text feeds addText with its computed delta instead.
+func (m *geminiOutputMeter) observe(chunk []byte) int {
 	if m == nil || len(chunk) == 0 {
-		return
+		return 0
 	}
+	added := 0
 	gjson.GetBytes(chunk, "candidates").ForEach(func(_, candidate gjson.Result) bool {
 		candidate.Get("content.parts").ForEach(func(_, part gjson.Result) bool {
-			m.addText(part.Get("text").String())
+			if s := part.Get("text").String(); s != "" {
+				m.addText(s)
+				added += len(s)
+			}
+			if thought := part.Get("thought"); thought.Type == gjson.String && thought.String() != "" {
+				s := thought.String()
+				m.addText(s)
+				added += len(s)
+			}
 			if call := part.Get("functionCall"); call.Exists() {
-				m.addText(call.Get("name").String())
-				if args := call.Get("args"); args.Exists() {
+				if s := call.Get("name").String(); s != "" {
+					m.addText(s)
+					added += len(s)
+				}
+				if args := call.Get("args"); args.Exists() && args.Raw != "" {
 					m.addText(args.Raw)
+					added += len(args.Raw)
 				}
 			}
-			m.addText(part.Get("executableCode.code").String())
-			m.addText(part.Get("codeExecutionResult.output").String())
+			if s := part.Get("executableCode.code").String(); s != "" {
+				m.addText(s)
+				added += len(s)
+			}
+			if s := part.Get("codeExecutionResult.output").String(); s != "" {
+				m.addText(s)
+				added += len(s)
+			}
 			return true
 		})
 		return true
 	})
+	return added
 }
 
 // observeSSELine adds the content of one raw upstream SSE line ("data: {...}"), reading
-// through the Code Assist {"response": ...} envelope when there is one.
-func (m *geminiOutputMeter) observeSSELine(line string) {
+// through the Code Assist {"response": ...} envelope when there is one, and returns the
+// number of billable output bytes added.
+func (m *geminiOutputMeter) observeSSELine(line string) int {
 	payload, ok := strings.CutPrefix(strings.TrimSpace(line), "data:")
 	if !ok {
-		return
+		return 0
 	}
 	payload = strings.TrimSpace(payload)
 	if inner := gjson.Get(payload, "response"); inner.Type == gjson.JSON {
 		payload = inner.Raw
 	}
-	m.observe([]byte(payload))
+	return m.observe([]byte(payload))
 }
 
 // observeAnthropicSSELine adds the content of one raw Anthropic SSE line (the Antigravity
 // upstream passthrough relays an Anthropic compatible /v1/messages stream): text and
-// thinking deltas, tool input deltas and the tool name.
-func (m *geminiOutputMeter) observeAnthropicSSELine(line string) {
+// thinking deltas, tool input deltas and the tool name, returning billable output bytes added.
+func (m *geminiOutputMeter) observeAnthropicSSELine(line string) int {
 	payload, ok := strings.CutPrefix(strings.TrimSpace(line), "data:")
 	if !ok {
-		return
+		return 0
 	}
 	event := gjson.Parse(strings.TrimSpace(payload))
+	added := 0
 	switch event.Get("type").String() {
 	case "content_block_start":
-		if event.Get("content_block.type").String() == "tool_use" {
-			m.addText(event.Get("content_block.name").String())
+		block := event.Get("content_block")
+		switch block.Get("type").String() {
+		case "text":
+			if s := block.Get("text").String(); s != "" {
+				m.addText(s)
+				added += len(s)
+			}
+		case "thinking":
+			if s := block.Get("thinking").String(); s != "" {
+				m.addText(s)
+				added += len(s)
+			}
+		case "tool_use", "server_tool_use":
+			if s := block.Get("name").String(); s != "" {
+				m.addText(s)
+				added += len(s)
+			}
 		}
 	case "content_block_delta":
-		m.addText(event.Get("delta.text").String())
-		m.addText(event.Get("delta.thinking").String())
-		m.addText(event.Get("delta.partial_json").String())
+		if s := event.Get("delta.text").String(); s != "" {
+			m.addText(s)
+			added += len(s)
+		}
+		if s := event.Get("delta.thinking").String(); s != "" {
+			m.addText(s)
+			added += len(s)
+		}
+		if s := event.Get("delta.partial_json").String(); s != "" {
+			m.addText(s)
+			added += len(s)
+		}
 	}
+	return added
 }
 
 func (m *geminiOutputMeter) tokens() int {
@@ -130,23 +181,87 @@ func (m *geminiOutputMeter) tokens() int {
 	return m.runes
 }
 
+// geminiChunkHasFinishReason reports whether a raw (unwrapped) Gemini chunk
+// carries a non-empty finishReason, indicating that accompanying or subsequent
+// usageMetadata is authoritative final usage rather than a provisional count.
+func geminiChunkHasFinishReason(chunk []byte) bool {
+	if len(chunk) == 0 {
+		return false
+	}
+	found := false
+	gjson.GetBytes(chunk, "candidates").ForEach(func(_, candidate gjson.Result) bool {
+		if fr := strings.TrimSpace(candidate.Get("finishReason").String()); fr != "" {
+			found = true
+			return false
+		}
+		return true
+	})
+	return found
+}
+
+// geminiSSELineHasFinishReason reports whether one raw Gemini SSE data line
+// (with or without a Code Assist {"response":...} envelope) carries a non-empty
+// finishReason.
+func geminiSSELineHasFinishReason(line string) bool {
+	payload, ok := strings.CutPrefix(strings.TrimSpace(line), "data:")
+	if !ok {
+		return false
+	}
+	payload = strings.TrimSpace(payload)
+	if payload == "" || payload == "[DONE]" {
+		return false
+	}
+	if inner := gjson.Get(payload, "response"); inner.Type == gjson.JSON {
+		payload = inner.Raw
+	}
+	return geminiChunkHasFinishReason([]byte(payload))
+}
+
+// anthropicSSELineHasFinalOutput reports whether an Anthropic SSE data line is
+// a message_delta event carrying a numeric usage.output_tokens count (as opposed
+// to message_start's provisional placeholder).
+func anthropicSSELineHasFinalOutput(line string) bool {
+	payload, ok := strings.CutPrefix(strings.TrimSpace(line), "data:")
+	if !ok {
+		return false
+	}
+	event := gjson.Parse(strings.TrimSpace(payload))
+	if event.Get("type").String() != "message_delta" {
+		return false
+	}
+	out := event.Get("usage.output_tokens")
+	return out.Exists() && out.Type == gjson.Number && out.Int() > 0
+}
+
 // geminiUsageReported reports whether the upstream gave any usage figure at all.
 func geminiUsageReported(usage *ClaudeUsage) bool {
 	return usage != nil && (usage.InputTokens > 0 || usage.OutputTokens > 0 ||
 		usage.CacheReadInputTokens > 0 || usage.CacheCreationInputTokens > 0 || usage.ImageOutputTokens > 0)
 }
 
-// fillIncompleteGeminiUsageWithEstimate applies the estimates field by field and returns
-// what it filled in (0 when untouched). Output is filled only when the upstream reported
-// no output at all. Input is filled from the request (or a precomputed token estimate)
-// only when the upstream reported no input side at all: InputTokens takes the normal
-// share and CacheReadInputTokens the cache share, flagged as an estimate so a model
-// without a cache price bills it at the input price.
-func fillIncompleteGeminiUsageWithEstimate(usage *ClaudeUsage, outputTokens int, requestBody []byte, precomputedInputTokens int, hasPrecomputed bool) (filledOutput, filledInput int) {
+// fillIncompleteGeminiUsage applies the estimates field by field and returns what it
+// filled in (0 when untouched). When hasFinalOutput is true, a positive upstream
+// OutputTokens is authoritative and preserved verbatim (even if the client leaves
+// afterward); when hasFinalOutput is false (no output reported yet, or only
+// provisional counts like message_start output_tokens=1 or interim
+// candidatesTokenCount before finishReason), OutputTokens is raised to outputTokens
+// whenever outputTokens is larger. Input is filled from the request only when the
+// upstream reported no input side at all: InputTokens takes the normal share and
+// CacheReadInputTokens the cache share, flagged as an estimate so a model without a
+// cache price bills it at the input price.
+func fillIncompleteGeminiUsage(usage *ClaudeUsage, outputTokens int, requestBody []byte, hasFinalOutput bool) (filledOutput, filledInput int) {
+	return fillIncompleteGeminiUsageWithEstimate(usage, outputTokens, requestBody, 0, false, hasFinalOutput)
+}
+
+// fillIncompleteGeminiUsageWithEstimate behaves like fillIncompleteGeminiUsage while
+// allowing callers that released requestBody mid-stream to pass a precomputed input
+// token estimate.
+func fillIncompleteGeminiUsageWithEstimate(usage *ClaudeUsage, outputTokens int, requestBody []byte, precomputedInputTokens int, hasPrecomputed bool, hasFinalOutput bool) (filledOutput, filledInput int) {
 	if usage == nil {
 		return 0, 0
 	}
-	if outputTokens > 0 && usage.OutputTokens == 0 && usage.ImageOutputTokens == 0 {
+	if outputTokens > 0 && usage.ImageOutputTokens == 0 &&
+		(usage.OutputTokens == 0 || (!hasFinalOutput && outputTokens > usage.OutputTokens)) {
 		usage.OutputTokens = outputTokens
 		filledOutput = outputTokens
 	}
@@ -156,7 +271,7 @@ func fillIncompleteGeminiUsageWithEstimate(usage *ClaudeUsage, outputTokens int,
 			total = estimateRequestInputTokens(requestBody)
 		}
 		if total > 0 {
-			split := splitIncompleteInput(total)
+			split := splitGeminiIncompleteInput(total)
 			usage.InputTokens = split.Fresh
 			usage.CacheReadInputTokens = split.CacheRead
 			usage.CacheReadEstimated = true
@@ -166,10 +281,24 @@ func fillIncompleteGeminiUsageWithEstimate(usage *ClaudeUsage, outputTokens int,
 	return filledOutput, filledInput
 }
 
+// applyIncompleteGeminiUsage fills the missing usage of a request whose client left
+// or whose balance hold aborted after the upstream accepted it, and logs the estimate.
+// event names the log line.
+func applyIncompleteGeminiUsage(event string, account *Account, model string, usage *ClaudeUsage, outputTokens int, requestBody []byte, hasFinalOutput bool) {
+	filledOutput, filledInput := fillIncompleteGeminiUsage(usage, outputTokens, requestBody, hasFinalOutput)
+	logIncompleteGeminiUsage(event, account, model, filledOutput, filledInput)
+}
+
 // applyIncompleteGeminiUsageWithEstimate fills the missing usage of a request whose
-// client left after the upstream accepted it, and logs the estimate. event names the log line.
-func applyIncompleteGeminiUsageWithEstimate(event string, account *Account, model string, usage *ClaudeUsage, outputTokens int, requestBody []byte, precomputedInputTokens int, hasPrecomputed bool) {
-	filledOutput, filledInput := fillIncompleteGeminiUsageWithEstimate(usage, outputTokens, requestBody, precomputedInputTokens, hasPrecomputed)
+// client left or whose balance hold aborted after the upstream accepted it (using a
+// precomputed input token estimate when requestBody was released mid-stream), and logs
+// the estimate. event names the log line.
+func applyIncompleteGeminiUsageWithEstimate(event string, account *Account, model string, usage *ClaudeUsage, outputTokens int, requestBody []byte, precomputedInputTokens int, hasPrecomputed bool, hasFinalOutput bool) {
+	filledOutput, filledInput := fillIncompleteGeminiUsageWithEstimate(usage, outputTokens, requestBody, precomputedInputTokens, hasPrecomputed, hasFinalOutput)
+	logIncompleteGeminiUsage(event, account, model, filledOutput, filledInput)
+}
+
+func logIncompleteGeminiUsage(event string, account *Account, model string, filledOutput, filledInput int) {
 	if filledOutput == 0 && filledInput == 0 {
 		return
 	}
@@ -184,6 +313,84 @@ func applyIncompleteGeminiUsageWithEstimate(event string, account *Account, mode
 		zap.Bool("client_disconnect", true),
 		zap.Int("estimated_output_tokens", filledOutput),
 		zap.Int("estimated_input_tokens", filledInput),
-		zap.Int("estimated_cache_read_tokens", incompleteCacheReadTokens(filledInput)),
+		zap.Int("estimated_cache_read_tokens", geminiIncompleteCacheReadTokens(filledInput)),
 	).Warn(event)
+}
+
+// geminiUpstreamAttempt tracks whether a single Gemini/Antigravity upstream try
+// was actually written onto the wire before the client disconnected.
+type geminiUpstreamAttempt struct {
+	sawTransport atomic.Bool
+	written      atomic.Bool
+}
+
+func trackGeminiAttempt(ctx context.Context) (context.Context, *geminiUpstreamAttempt) {
+	attempt := &geminiUpstreamAttempt{}
+	traced := httptrace.WithClientTrace(ctx, &httptrace.ClientTrace{
+		GetConn: func(string) {
+			attempt.sawTransport.Store(true)
+		},
+		WroteRequest: func(info httptrace.WroteRequestInfo) {
+			if info.Err == nil {
+				attempt.written.Store(true)
+			}
+		},
+	})
+	return traced, attempt
+}
+
+// dispatched reports whether this attempt was sent to the upstream and is still
+// awaiting a response. When a real net/http.Transport ran (GetConn fired), only
+// requests that completed WroteRequest count as dispatched; custom test doubles
+// that bypass net/http.Transport count as dispatched once invoked.
+func (a *geminiUpstreamAttempt) dispatched() bool {
+	if a == nil {
+		return false
+	}
+	if a.sawTransport.Load() {
+		return a.written.Load()
+	}
+	return true
+}
+
+// geminiClientErr resolves a non-nil cancellation error when geminiClientGoneCtx
+// reported the client is gone (handling cases where ctx is detached/alive while
+// c.Request.Context() was canceled).
+func geminiClientErr(ctx context.Context, c *gin.Context, fallback error) error {
+	if ctx != nil && ctx.Err() != nil {
+		return ctx.Err()
+	}
+	if c != nil && c.Request != nil && c.Request.Context().Err() != nil {
+		return c.Request.Context().Err()
+	}
+	if fallback != nil {
+		return fallback
+	}
+	return context.Canceled
+}
+
+// geminiClientGoneForwardResult builds a billable ForwardResult for a Gemini/Antigravity
+// request whose client disconnected after the request was dispatched to the upstream.
+// Returns nil when the request body cannot be estimated so nothing is invented.
+func geminiClientGoneForwardResult(
+	event string,
+	account *Account,
+	requestBody []byte,
+	originalModel, upstreamModel string,
+	stream bool,
+	startTime time.Time,
+) *ForwardResult {
+	var usage ClaudeUsage
+	applyIncompleteGeminiUsage(event, account, upstreamModel, &usage, 0, requestBody, false)
+	if usage.InputTokens == 0 && usage.CacheReadInputTokens == 0 {
+		return nil
+	}
+	return &ForwardResult{
+		Usage:            usage,
+		Model:            originalModel,
+		UpstreamModel:    upstreamModel,
+		Stream:           stream,
+		Duration:         time.Since(startTime),
+		ClientDisconnect: true,
+	}
 }

@@ -1540,8 +1540,15 @@ func TestGetServerAddressFromConfigFile(t *testing.T) {
 }
 
 func TestValidateAbsoluteHTTPURL(t *testing.T) {
-	if err := ValidateAbsoluteHTTPURL("https://example.com/path"); err != nil {
-		t.Fatalf("ValidateAbsoluteHTTPURL valid url error: %v", err)
+	for _, good := range []string{
+		"https://example.com/path",
+		"https://example.com:8443/path",
+		"http://127.0.0.1:17777/path",
+		"http://[::1]:8080/path",
+	} {
+		if err := ValidateAbsoluteHTTPURL(good); err != nil {
+			t.Fatalf("ValidateAbsoluteHTTPURL(%q) valid url error: %v", good, err)
+		}
 	}
 	if err := ValidateAbsoluteHTTPURL(""); err == nil {
 		t.Fatalf("ValidateAbsoluteHTTPURL should reject empty url")
@@ -1732,20 +1739,41 @@ func TestDatabaseDSNWithTimezone_WithPassword(t *testing.T) {
 }
 
 func TestValidateAbsoluteHTTPURLMissingHost(t *testing.T) {
-	if err := ValidateAbsoluteHTTPURL("https://"); err == nil {
-		t.Fatalf("ValidateAbsoluteHTTPURL should reject missing host")
+	for _, bad := range []string{
+		"https://",
+		`https://example.com\@evil.com`,
+		"https://user:pass@example.com/v1",
+		"https://evil.example,example.com/v1",
+		"https://example.com\t/v1",
+		"https://example.com:0443/v1",
+		"https://example.com:0/v1",
+		"https://example.com:99999/v1",
+		"https://example.com:/v1",
+		"https://bad..example/v1",
+		"https://-bad.example/v1",
+		"https://[fe80::1%25eth0]:443/v1",
+		"https:opaque.example.com",
+	} {
+		if err := ValidateAbsoluteHTTPURL(bad); err == nil {
+			t.Fatalf("ValidateAbsoluteHTTPURL(%q) should fail", bad)
+		}
 	}
 }
 
 func TestValidateFrontendRedirectURLInvalidChars(t *testing.T) {
-	if err := ValidateFrontendRedirectURL("/auth/\ncallback"); err == nil {
-		t.Fatalf("ValidateFrontendRedirectURL should reject invalid chars")
-	}
-	if err := ValidateFrontendRedirectURL("http://"); err == nil {
-		t.Fatalf("ValidateFrontendRedirectURL should reject missing host")
-	}
-	if err := ValidateFrontendRedirectURL("mailto:user@example.com"); err == nil {
-		t.Fatalf("ValidateFrontendRedirectURL should reject mailto")
+	for _, bad := range []string{
+		"/auth/\ncallback",
+		"/\t/evil.com",
+		"/\x00/evil.com",
+		`/\evil.com`,
+		"http://",
+		"mailto:user@example.com",
+		"https://user:pass@example.com/auth/callback",
+		"https://evil.example,example.com/auth/callback",
+	} {
+		if err := ValidateFrontendRedirectURL(bad); err == nil {
+			t.Fatalf("ValidateFrontendRedirectURL(%q) should fail", bad)
+		}
 	}
 }
 
@@ -2929,4 +2957,58 @@ func TestValidateUsageStatsCacheGateIsNonNegative(t *testing.T) {
 	require.EqualError(t, cfg.Validate(), "usage_stats_cache.load_queue_timeout must be non-negative")
 	cfg.UsageStatsCache.LoadQueueTimeout = 0
 	require.NoError(t, cfg.Validate(), "a zero queue timeout (turn surplus away at once) is valid")
+}
+
+func TestBillingIncompleteInputCacheReadPercentDefaultsAndValidation(t *testing.T) {
+	resetViperWithJWTSecret(t)
+	cfg, err := Load()
+	require.NoError(t, err)
+	require.Equal(t, 0, cfg.Billing.OpenAIIncompleteInputCacheReadPercent)
+	require.Equal(t, 0, cfg.Billing.AnthropicIncompleteInputCacheReadPercent)
+	require.Equal(t, 0, cfg.Billing.GeminiIncompleteInputCacheReadPercent)
+
+	resetViperWithJWTSecret(t)
+	t.Setenv("BILLING_OPENAI_INCOMPLETE_INPUT_CACHE_READ_PERCENT", "25")
+	t.Setenv("BILLING_ANTHROPIC_INCOMPLETE_INPUT_CACHE_READ_PERCENT", "50")
+	t.Setenv("BILLING_GEMINI_INCOMPLETE_INPUT_CACHE_READ_PERCENT", "95")
+	cfg, err = Load()
+	require.NoError(t, err)
+	require.Equal(t, 25, cfg.Billing.OpenAIIncompleteInputCacheReadPercent)
+	require.Equal(t, 50, cfg.Billing.AnthropicIncompleteInputCacheReadPercent)
+	require.Equal(t, 95, cfg.Billing.GeminiIncompleteInputCacheReadPercent)
+
+	for _, tc := range []struct {
+		name   string
+		mutate func(*Config)
+		substr string
+	}{
+		{
+			name:   "anthropic negative",
+			mutate: func(c *Config) { c.Billing.AnthropicIncompleteInputCacheReadPercent = -1 },
+			substr: "billing.anthropic_incomplete_input_cache_read_percent",
+		},
+		{
+			name:   "anthropic over 100",
+			mutate: func(c *Config) { c.Billing.AnthropicIncompleteInputCacheReadPercent = 101 },
+			substr: "billing.anthropic_incomplete_input_cache_read_percent",
+		},
+		{
+			name:   "gemini negative",
+			mutate: func(c *Config) { c.Billing.GeminiIncompleteInputCacheReadPercent = -1 },
+			substr: "billing.gemini_incomplete_input_cache_read_percent",
+		},
+		{
+			name:   "gemini over 100",
+			mutate: func(c *Config) { c.Billing.GeminiIncompleteInputCacheReadPercent = 101 },
+			substr: "billing.gemini_incomplete_input_cache_read_percent",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resetViperWithJWTSecret(t)
+			c, err := Load()
+			require.NoError(t, err)
+			tc.mutate(c)
+			require.ErrorContains(t, c.Validate(), tc.substr)
+		})
+	}
 }

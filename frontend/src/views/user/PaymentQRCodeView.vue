@@ -45,6 +45,7 @@ import { paymentAPI } from '@/api/payment'
 import { extractI18nErrorMessage } from '@/utils/apiError'
 import { useAppStore } from '@/stores'
 import { isBuiltInAlipayMethod, isBuiltInWxpayMethod } from '@/components/payment/providerConfig'
+import { PAYMENT_RECOVERY_STORAGE_KEY, readPaymentRecoverySnapshot } from '@/components/payment/paymentFlow'
 import QRCode from 'qrcode'
 import alipayIcon from '@/assets/icons/alipay.svg'
 import wxpayIcon from '@/assets/icons/wxpay.svg'
@@ -194,14 +195,138 @@ function cleanup() {
 
 watch(qrUrl, () => renderQR())
 
+function readRouteQueryString(key: string): string {
+  const value = route.query[key]
+  if (Array.isArray(value)) {
+    return typeof value[0] === 'string' ? value[0] : ''
+  }
+  return typeof value === 'string' ? value : ''
+}
+
+function hasUnsafeUrlChar(value: string): boolean {
+  for (let i = 0; i < value.length; i += 1) {
+    const code = value.charCodeAt(i)
+    if (code <= 0x1f || code === 0x7f || code === 0x5c) {
+      return true
+    }
+  }
+  return false
+}
+
+function parseSafeExternalOrSameOriginPayUrl(raw: string): URL | null {
+  const trimmed = raw.trim()
+  if (!trimmed || hasUnsafeUrlChar(trimmed)) {
+    return null
+  }
+  if (typeof window === 'undefined') {
+    return null
+  }
+  try {
+    if (trimmed.startsWith('/')) {
+      if (trimmed.startsWith('//')) {
+        return null
+      }
+      const resolved = new URL(trimmed, window.location.origin)
+      if (resolved.origin !== window.location.origin || resolved.username || resolved.password) {
+        return null
+      }
+      return resolved
+    }
+    if (!/^https?:\/\//i.test(trimmed)) {
+      return null
+    }
+    const parsed = new URL(trimmed)
+    if ((parsed.protocol !== 'https:' && parsed.protocol !== 'http:') || parsed.username || parsed.password) {
+      return null
+    }
+    return parsed
+  } catch {
+    return null
+  }
+}
+
+function readTrustedRecoverySnapshotForOrder(currentOrderId: number) {
+  if (typeof window === 'undefined' || currentOrderId <= 0) {
+    return null
+  }
+  let rawSnapshot: string | null = null
+  try {
+    rawSnapshot = window.localStorage.getItem(PAYMENT_RECOVERY_STORAGE_KEY)
+  } catch {
+    return null
+  }
+  const snapshot = readPaymentRecoverySnapshot(rawSnapshot)
+  if (!snapshot || snapshot.orderId !== currentOrderId) {
+    return null
+  }
+  return snapshot
+}
+
+function resolveSafeQrUrl(rawQr: string, currentOrderId: number): string {
+  const trimmed = rawQr.trim()
+  if (!trimmed || hasUnsafeUrlChar(trimmed)) {
+    return ''
+  }
+  // Bind QR payloads strictly to the active local checkout recovery snapshot
+  // for this order so attacker-crafted query parameters cannot render phishing
+  // payment QR codes under our UI.
+  const snapshot = readTrustedRecoverySnapshotForOrder(currentOrderId)
+  if (!snapshot) {
+    return ''
+  }
+  const expectedQr = snapshot.qrCode.trim()
+  const expectedPayUrl = snapshot.payUrl.trim()
+  if ((expectedQr && expectedQr === trimmed) || (expectedPayUrl && expectedPayUrl === trimmed)) {
+    return trimmed
+  }
+  return ''
+}
+
+function resolveSafePayUrl(rawPayUrl: string, currentOrderId: number): string {
+  const parsed = parseSafeExternalOrSameOriginPayUrl(rawPayUrl)
+  if (!parsed || typeof window === 'undefined') {
+    return ''
+  }
+
+  // Same-origin internal payment pages (e.g. /payment/stripe, /payment/airwallex) are safe.
+  if (parsed.origin === window.location.origin && parsed.pathname.startsWith('/payment/')) {
+    return parsed.toString()
+  }
+
+  // External payment gateway URLs must use HTTPS and match the active local
+  // checkout recovery snapshot for this order so crafted query strings cannot
+  // turn /payment/qrcode into an open redirect or phishing launcher.
+  if (parsed.protocol !== 'https:' || currentOrderId <= 0) {
+    return ''
+  }
+  const snapshot = readTrustedRecoverySnapshotForOrder(currentOrderId)
+  if (!snapshot || !snapshot.payUrl) {
+    return ''
+  }
+  const snapshotUrl = parseSafeExternalOrSameOriginPayUrl(snapshot.payUrl)
+  if (!snapshotUrl || snapshotUrl.protocol !== 'https:') {
+    return ''
+  }
+  return snapshotUrl.toString() === parsed.toString() ? parsed.toString() : ''
+}
+
+function parsePositiveOrderId(raw: string): number {
+  const trimmed = raw.trim()
+  if (!trimmed) {
+    return 0
+  }
+  const parsed = Number(trimmed)
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : 0
+}
+
 onMounted(() => {
-  orderId.value = Number(route.query.order_id) || 0
-  qrUrl.value = String(route.query.qr || '')
-  payUrl.value = String(route.query.pay_url || '')
-  paymentType.value = String(route.query.payment_type || '')
+  orderId.value = parsePositiveOrderId(readRouteQueryString('order_id'))
+  qrUrl.value = resolveSafeQrUrl(readRouteQueryString('qr'), orderId.value)
+  payUrl.value = resolveSafePayUrl(readRouteQueryString('pay_url'), orderId.value)
+  paymentType.value = readRouteQueryString('payment_type')
 
   // Calculate countdown from expiresAt
-  const expiresAtStr = String(route.query.expires_at || '')
+  const expiresAtStr = readRouteQueryString('expires_at')
   let seconds = 30 * 60 // fallback: 30 minutes
   if (expiresAtStr) {
     const expiresAt = new Date(expiresAtStr)

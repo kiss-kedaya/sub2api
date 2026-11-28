@@ -23,14 +23,14 @@ import (
 //   - the upstream connection is closed the moment the client disconnects;
 //   - output is billed for what was really produced, estimated from the content;
 //   - input is billed for what was really sent, estimated from the request body;
-//   - an OpenAI-family estimate never invents a cache discount by default: its
-//     share priced as cache read is configured by
-//     BILLING_OPENAI_INCOMPLETE_INPUT_CACHE_READ_PERCENT (0 = plain input price,
-//     which is what the upstream new-api abnormal-end fallback charges);
-//   - the Anthropic/Gemini families keep the historical 95% cache read heuristic,
-//     because their upstreams price a real cache read at about a tenth of input;
-//   - a model without a cache read price bills that share at the plain input price
-//     (UsageTokens.CacheReadEstimated, handled in computeTokenBreakdown);
+//   - an estimate never invents a cache discount by default: each family's share
+//     priced as cache read is independently configured by
+//     BILLING_OPENAI_INCOMPLETE_INPUT_CACHE_READ_PERCENT,
+//     BILLING_ANTHROPIC_INCOMPLETE_INPUT_CACHE_READ_PERCENT, and
+//     BILLING_GEMINI_INCOMPLETE_INPUT_CACHE_READ_PERCENT (0 = plain input price,
+//     matching the upstream new-api abnormal-end fallback);
+//   - a model without a cache read price bills any configured share at the plain
+//     input price (UsageTokens.CacheReadEstimated, handled in computeTokenBreakdown);
 //   - usage the upstream really reported is never overwritten or re-split.
 //
 // The helpers here are protocol neutral. Each protocol family maps the split onto
@@ -38,43 +38,74 @@ import (
 // style reports InputTokens as the total including cache, Anthropic style reports
 // InputTokens as the fresh input only.
 
-// legacyIncompleteInputCacheReadPercent is the share of the estimated input priced
-// as cache read for the Anthropic and Gemini families. It applies only to estimated
-// input, never to reported usage.
-const legacyIncompleteInputCacheReadPercent = 95
-
-// openAIIncompleteInputCacheReadPercentDefault is the shipped OpenAI-family share.
+// Default cache-read shares for estimated inputs across all protocol families.
 // 0 means the whole estimated input is billed at the plain input price, matching
 // new-api's ResponseText2Usage fallback on an abnormal stream end (it bills the
 // merged prompt including cache hits at the normal input price). Operators whose
-// upstream really does discount cache reads on an abnormal end can raise it.
-const openAIIncompleteInputCacheReadPercentDefault = 0
+// upstream really does discount cache reads on an abnormal end can raise each
+// family independently via config.
+const (
+	openAIIncompleteInputCacheReadPercentDefault    = 0
+	anthropicIncompleteInputCacheReadPercentDefault = 0
+	geminiIncompleteInputCacheReadPercentDefault    = 0
+)
 
-// openAIIncompleteInputCacheReadPercent holds the configured OpenAI-family share.
-// It is written once at startup (SetOpenAIIncompleteInputCacheReadPercent) and read
-// on the billing path, so it stays lock-free.
-var openAIIncompleteInputCacheReadPercent atomic.Int64
+// Configured cache-read shares for estimated inputs when no upstream usage arrived.
+// Written once at startup and read lock-free on the billing path.
+var (
+	openAIIncompleteInputCacheReadPercent    atomic.Int64
+	anthropicIncompleteInputCacheReadPercent atomic.Int64
+	geminiIncompleteInputCacheReadPercent    atomic.Int64
+)
 
 func init() {
 	openAIIncompleteInputCacheReadPercent.Store(openAIIncompleteInputCacheReadPercentDefault)
+	anthropicIncompleteInputCacheReadPercent.Store(anthropicIncompleteInputCacheReadPercentDefault)
+	geminiIncompleteInputCacheReadPercent.Store(geminiIncompleteInputCacheReadPercentDefault)
+}
+
+func clampIncompleteInputCacheReadPercent(percent int) int {
+	if percent < 0 {
+		return 0
+	}
+	if percent > 100 {
+		return 100
+	}
+	return percent
 }
 
 // SetOpenAIIncompleteInputCacheReadPercent publishes the configured OpenAI-family
 // cache-read share of an estimated input. Values outside 0..100 are clamped; the
 // config loader rejects them first, so this is only a runtime backstop.
 func SetOpenAIIncompleteInputCacheReadPercent(percent int) {
-	if percent < 0 {
-		percent = 0
-	}
-	if percent > 100 {
-		percent = 100
-	}
-	openAIIncompleteInputCacheReadPercent.Store(int64(percent))
+	openAIIncompleteInputCacheReadPercent.Store(int64(clampIncompleteInputCacheReadPercent(percent)))
 }
 
 // OpenAIIncompleteInputCacheReadPercent reports the effective OpenAI-family share.
 func OpenAIIncompleteInputCacheReadPercent() int {
 	return int(openAIIncompleteInputCacheReadPercent.Load())
+}
+
+// SetAnthropicIncompleteInputCacheReadPercent publishes the configured Anthropic-family
+// cache-read share of an estimated input (default 0 = plain input price).
+func SetAnthropicIncompleteInputCacheReadPercent(percent int) {
+	anthropicIncompleteInputCacheReadPercent.Store(int64(clampIncompleteInputCacheReadPercent(percent)))
+}
+
+// AnthropicIncompleteInputCacheReadPercent reports the effective Anthropic-family share.
+func AnthropicIncompleteInputCacheReadPercent() int {
+	return int(anthropicIncompleteInputCacheReadPercent.Load())
+}
+
+// SetGeminiIncompleteInputCacheReadPercent publishes the configured Gemini/Antigravity-family
+// cache-read share of an estimated input (default 0 = plain input price).
+func SetGeminiIncompleteInputCacheReadPercent(percent int) {
+	geminiIncompleteInputCacheReadPercent.Store(int64(clampIncompleteInputCacheReadPercent(percent)))
+}
+
+// GeminiIncompleteInputCacheReadPercent reports the effective Gemini/Antigravity-family share.
+func GeminiIncompleteInputCacheReadPercent() int {
+	return int(geminiIncompleteInputCacheReadPercent.Load())
 }
 
 // incompleteInputEstimate is an estimated request input split into its cache read
@@ -105,9 +136,14 @@ func splitIncompleteInputWithPercent(total, percent int) incompleteInputEstimate
 	return incompleteInputEstimate{Total: total, CacheRead: cacheRead, Fresh: total - cacheRead}
 }
 
-// splitIncompleteInput applies the legacy Anthropic/Gemini policy (95% cache read).
-func splitIncompleteInput(total int) incompleteInputEstimate {
-	return splitIncompleteInputWithPercent(total, legacyIncompleteInputCacheReadPercent)
+// splitAnthropicIncompleteInput applies the configured Anthropic-family policy (default 0%).
+func splitAnthropicIncompleteInput(total int) incompleteInputEstimate {
+	return splitIncompleteInputWithPercent(total, AnthropicIncompleteInputCacheReadPercent())
+}
+
+// splitGeminiIncompleteInput applies the configured Gemini/Antigravity-family policy (default 0%).
+func splitGeminiIncompleteInput(total int) incompleteInputEstimate {
+	return splitIncompleteInputWithPercent(total, GeminiIncompleteInputCacheReadPercent())
 }
 
 // splitOpenAIIncompleteInput applies the configured OpenAI-family policy.
@@ -115,10 +151,14 @@ func splitOpenAIIncompleteInput(total int) incompleteInputEstimate {
 	return splitIncompleteInputWithPercent(total, OpenAIIncompleteInputCacheReadPercent())
 }
 
-// incompleteCacheReadTokens is the legacy Anthropic/Gemini cache read share of an
-// estimated input total (for the estimate log lines).
-func incompleteCacheReadTokens(total int) int {
-	return splitIncompleteInput(total).CacheRead
+// anthropicIncompleteCacheReadTokens is the configured Anthropic-family cache read share.
+func anthropicIncompleteCacheReadTokens(total int) int {
+	return splitAnthropicIncompleteInput(total).CacheRead
+}
+
+// geminiIncompleteCacheReadTokens is the configured Gemini/Antigravity-family cache read share.
+func geminiIncompleteCacheReadTokens(total int) int {
+	return splitGeminiIncompleteInput(total).CacheRead
 }
 
 // openAIIncompleteCacheReadTokens is the configured OpenAI-family cache read share
@@ -164,20 +204,29 @@ func estimateRequestInputTokens(body []byte) int {
 		return 0
 	}
 	hasGemini, hasInput, hasMessages := detectRequestInputShape(stripped)
-	var estimated int
-	var err error
-	switch {
-	case hasGemini:
-		estimated = estimateGeminiCountTokens(stripped)
-	case hasInput:
-		estimated, err = estimateOpenAIResponsesInputTokensBounded(stripped)
-	case hasMessages:
-		estimated, err = estimateAnthropicInputTokensBounded(stripped)
+	// Evaluate every present protocol shape and keep the largest estimate so a
+	// smuggled empty/tiny foreign field (e.g. "contents":[] on an Anthropic or
+	// OpenAI messages payload) can never hijack the dispatcher and return 0.
+	best := 0
+	if hasGemini {
+		if estimated := estimateGeminiCountTokens(stripped); estimated > best {
+			best = estimated
+		}
 	}
-	if err != nil || estimated <= 0 {
+	if hasInput {
+		if estimated, err := estimateOpenAIResponsesInputTokensBounded(stripped); err == nil && estimated > best {
+			best = estimated
+		}
+	}
+	if hasMessages {
+		if estimated, err := estimateAnthropicInputTokensBounded(stripped); err == nil && estimated > best {
+			best = estimated
+		}
+	}
+	if best <= 0 {
 		return 0
 	}
-	return clampIncompleteInputTokens(estimated)
+	return clampIncompleteInputTokens(best)
 }
 
 // estimateResponsesInputTokensForBilling is the same for a body known to be an
@@ -212,20 +261,26 @@ func estimateRequestInputTokensRaw(body []byte) int {
 		return 0
 	}
 	hasGemini, hasInput, hasMessages := detectRequestInputShape(body)
-	var estimated int
-	var err error
-	switch {
-	case hasGemini:
-		estimated = estimateGeminiCountTokens(body)
-	case hasInput:
-		estimated, err = EstimateOpenAIResponsesInputTokens(body)
-	case hasMessages:
-		estimated, err = EstimateAnthropicCountTokens(body)
+	// Evaluate every present protocol shape and keep the largest estimate so a
+	// smuggled empty/tiny foreign field (e.g. "contents":[] on an Anthropic or
+	// OpenAI messages payload) can never hijack the dispatcher and return 0.
+	best := 0
+	if hasGemini {
+		if estimated := estimateGeminiCountTokens(body); estimated > best {
+			best = estimated
+		}
 	}
-	if err != nil || estimated <= 0 {
-		return 0
+	if hasInput {
+		if estimated, err := EstimateOpenAIResponsesInputTokens(body); err == nil && estimated > best {
+			best = estimated
+		}
 	}
-	return estimated
+	if hasMessages {
+		if estimated, err := EstimateAnthropicCountTokens(body); err == nil && estimated > best {
+			best = estimated
+		}
+	}
+	return best
 }
 
 var utf8BOM = []byte{0xEF, 0xBB, 0xBF}
@@ -253,22 +308,21 @@ func detectRequestInputShape(body []byte) (hasGemini, hasInput, hasMessages bool
 	if start, end, ok := trimJSONObjectBounds(body); ok {
 		walkOK := jsonForEachMemberSpan(body, start, end, func(key string, _, _, _, _ int) bool {
 			switch key {
-			case "contents", "systemInstruction":
+			case "contents", "systemInstruction", "system_instruction":
 				hasGemini = true
-				return false
 			case "input":
 				hasInput = true
 			case "messages":
 				hasMessages = true
 			}
-			return true
+			return !(hasGemini && hasInput && hasMessages)
 		})
 		if walkOK {
 			return hasGemini, hasInput, hasMessages
 		}
 	}
 	root := parseRawJSONView(bytes.TrimPrefix(body, utf8BOM))
-	return root.Get("contents").Exists() || root.Get("systemInstruction").Exists(),
+	return root.Get("contents").Exists() || root.Get("systemInstruction").Exists() || root.Get("system_instruction").Exists(),
 		root.Get("input").Exists(),
 		root.Get("messages").Exists()
 }

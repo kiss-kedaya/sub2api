@@ -59,7 +59,7 @@ func isCacheStorageOnlyResult(result *ForwardResult) bool {
 	u := result.Usage
 	return result.CacheStorageTokenHours > 0 && u.InputTokens == 0 && u.OutputTokens == 0 &&
 		u.CacheCreationInputTokens == 0 && u.CacheReadInputTokens == 0 && u.ImageOutputTokens == 0 &&
-		result.ImageCount == 0 && result.AudioUsage == nil && result.SearchCount == 0 && result.OCRPages == 0
+		result.ImageCount == 0 && result.AudioUsage == nil && result.SearchCount == 0 && result.FetchCount == 0 && result.OCRPages == 0
 }
 
 // CacheStoragePriced 判断 RecordUsage 对 input.Result 采用的计费模型（含回退候选）是否配置了显式缓存存储单价。

@@ -714,6 +714,23 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 				})
 			}
 			if err != nil {
+				if service.IsBalanceHoldTopUpError(err) {
+					if !service.IsResponseCommitted(c) && !gatewayForwardErrorAlreadyCommunicated(c, writerSizeBeforeForward, err) && !failoverClientGone(c) {
+						status, code, message, retryAfter := billingErrorDetails(err)
+						if retryAfter > 0 {
+							c.Header("Retry-After", strconv.Itoa(retryAfter))
+						}
+						h.handleStreamingAwareError(c, status, code, message, streamStarted || c.Writer.Written())
+					}
+					reqLog.Warn("gateway.balance_hold_topup_aborted",
+						zap.Int64("account_id", account.ID),
+						zap.String("account_name", account.Name),
+						zap.String("account_platform", account.Platform),
+						zap.Error(err),
+					)
+					submitGeminiUsage(result)
+					return
+				}
 				h.gatewayService.InvalidateUpstreamAffinity(c.Request.Context(), apiKey.GroupID, sessionKey, account, err)
 				var failoverErr *service.UpstreamFailoverError
 				if errors.As(err, &failoverErr) {
@@ -1169,6 +1186,26 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 			}
 
 			if err != nil {
+				if service.IsBalanceHoldTopUpError(err) {
+					if !service.IsResponseCommitted(c) && !gatewayForwardErrorAlreadyCommunicated(c, writerSizeBeforeForward, err) && !failoverClientGone(c) {
+						status, code, message, retryAfter := billingErrorDetails(err)
+						if retryAfter > 0 {
+							c.Header("Retry-After", strconv.Itoa(retryAfter))
+						}
+						h.handleStreamingAwareError(c, status, code, message, streamStarted || c.Writer.Written())
+					}
+					reqLog.Warn("gateway.balance_hold_topup_aborted",
+						zap.Int64("account_id", account.ID),
+						zap.String("account_name", account.Name),
+						zap.String("account_platform", account.Platform),
+						zap.Error(err),
+					)
+					if result != nil {
+						submitForwardUsage(result)
+						upstreamServedSession = true
+					}
+					return
+				}
 				h.gatewayService.InvalidateUpstreamAffinity(c.Request.Context(), currentAPIKey.GroupID, sessionKey, account, err)
 				// Beta policy block: return 400 immediately, no failover
 				var betaBlockedErr *service.BetaBlockedError

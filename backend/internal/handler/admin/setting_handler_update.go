@@ -1334,6 +1334,15 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		}
 	}
 
+	// API Base URL 验证
+	req.APIBaseURL = strings.TrimSpace(req.APIBaseURL)
+	if req.APIBaseURL != "" {
+		if err := config.ValidateAbsoluteHTTPURL(req.APIBaseURL); err != nil {
+			response.BadRequest(c, "API Base URL must be an absolute http(s) URL")
+			return
+		}
+	}
+
 	// 自定义菜单项验证
 	const (
 		maxCustomMenuItems    = 20

@@ -86,8 +86,14 @@ const (
 	FieldVideoModelPrices = "video_model_prices"
 	// FieldWebSearchPricePerCall holds the string denoting the web_search_price_per_call field in the database.
 	FieldWebSearchPricePerCall = "web_search_price_per_call"
+	// FieldToolRateIndependent holds the string denoting the tool_rate_independent field in the database.
+	FieldToolRateIndependent = "tool_rate_independent"
+	// FieldToolRateMultiplier holds the string denoting the tool_rate_multiplier field in the database.
+	FieldToolRateMultiplier = "tool_rate_multiplier"
 	// FieldSearchPricePer1k holds the string denoting the search_price_per_1k field in the database.
 	FieldSearchPricePer1k = "search_price_per_1k"
+	// FieldFetchPricePer1k holds the string denoting the fetch_price_per_1k field in the database.
+	FieldFetchPricePer1k = "fetch_price_per_1k"
 	// FieldOcrPricePer1kPages holds the string denoting the ocr_price_per_1k_pages field in the database.
 	FieldOcrPricePer1kPages = "ocr_price_per_1k_pages"
 	// FieldSearchProviderBaseURL holds the string denoting the search_provider_base_url field in the database.
@@ -128,6 +134,8 @@ const (
 	FieldCrossProtocolConversionEnabled = "cross_protocol_conversion_enabled"
 	// FieldReturnRequestedModel holds the string denoting the return_requested_model field in the database.
 	FieldReturnRequestedModel = "return_requested_model"
+	// FieldSaveResponseMsgID holds the string denoting the save_response_msg_id field in the database.
+	FieldSaveResponseMsgID = "save_response_msg_id"
 	// FieldAllowLive holds the string denoting the allow_live field in the database.
 	FieldAllowLive = "allow_live"
 	// FieldForceOpenaiFast holds the string denoting the force_openai_fast field in the database.
@@ -274,7 +282,10 @@ var Columns = []string{
 	FieldVideoPrice1080p,
 	FieldVideoModelPrices,
 	FieldWebSearchPricePerCall,
+	FieldToolRateIndependent,
+	FieldToolRateMultiplier,
 	FieldSearchPricePer1k,
+	FieldFetchPricePer1k,
 	FieldOcrPricePer1kPages,
 	FieldSearchProviderBaseURL,
 	FieldSearchProviderAPIKey,
@@ -295,6 +306,7 @@ var Columns = []string{
 	FieldAllowMessagesDispatch,
 	FieldCrossProtocolConversionEnabled,
 	FieldReturnRequestedModel,
+	FieldSaveResponseMsgID,
 	FieldAllowLive,
 	FieldForceOpenaiFast,
 	FieldFreeOpenaiFast,
@@ -398,8 +410,14 @@ var (
 	DefaultVideoRateIndependent bool
 	// DefaultVideoRateMultiplier holds the default value on creation for the "video_rate_multiplier" field.
 	DefaultVideoRateMultiplier float64
+	// DefaultToolRateIndependent holds the default value on creation for the "tool_rate_independent" field.
+	DefaultToolRateIndependent bool
+	// DefaultToolRateMultiplier holds the default value on creation for the "tool_rate_multiplier" field.
+	DefaultToolRateMultiplier float64
 	// SearchPricePer1kValidator is a validator for the "search_price_per_1k" field. It is called by the builders before save.
 	SearchPricePer1kValidator func(float64) error
+	// FetchPricePer1kValidator is a validator for the "fetch_price_per_1k" field. It is called by the builders before save.
+	FetchPricePer1kValidator func(float64) error
 	// OcrPricePer1kPagesValidator is a validator for the "ocr_price_per_1k_pages" field. It is called by the builders before save.
 	OcrPricePer1kPagesValidator func(float64) error
 	// GrokModerationRefusalPriceValidator is a validator for the "grok_moderation_refusal_price" field. It is called by the builders before save.
@@ -428,6 +446,8 @@ var (
 	DefaultCrossProtocolConversionEnabled bool
 	// DefaultReturnRequestedModel holds the default value on creation for the "return_requested_model" field.
 	DefaultReturnRequestedModel bool
+	// DefaultSaveResponseMsgID holds the default value on creation for the "save_response_msg_id" field.
+	DefaultSaveResponseMsgID bool
 	// DefaultAllowLive holds the default value on creation for the "allow_live" field.
 	DefaultAllowLive bool
 	// DefaultForceOpenaiFast holds the default value on creation for the "force_openai_fast" field.
@@ -646,9 +666,24 @@ func ByWebSearchPricePerCall(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldWebSearchPricePerCall, opts...).ToFunc()
 }
 
+// ByToolRateIndependent orders the results by the tool_rate_independent field.
+func ByToolRateIndependent(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldToolRateIndependent, opts...).ToFunc()
+}
+
+// ByToolRateMultiplier orders the results by the tool_rate_multiplier field.
+func ByToolRateMultiplier(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldToolRateMultiplier, opts...).ToFunc()
+}
+
 // BySearchPricePer1k orders the results by the search_price_per_1k field.
 func BySearchPricePer1k(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldSearchPricePer1k, opts...).ToFunc()
+}
+
+// ByFetchPricePer1k orders the results by the fetch_price_per_1k field.
+func ByFetchPricePer1k(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldFetchPricePer1k, opts...).ToFunc()
 }
 
 // ByOcrPricePer1kPages orders the results by the ocr_price_per_1k_pages field.
@@ -734,6 +769,11 @@ func ByCrossProtocolConversionEnabled(opts ...sql.OrderTermOption) OrderOption {
 // ByReturnRequestedModel orders the results by the return_requested_model field.
 func ByReturnRequestedModel(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldReturnRequestedModel, opts...).ToFunc()
+}
+
+// BySaveResponseMsgID orders the results by the save_response_msg_id field.
+func BySaveResponseMsgID(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldSaveResponseMsgID, opts...).ToFunc()
 }
 
 // ByAllowLive orders the results by the allow_live field.

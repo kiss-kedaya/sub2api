@@ -461,6 +461,25 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 		}
 
 		if err != nil {
+			if service.IsBalanceHoldTopUpError(err) {
+				if !service.IsResponseCommitted(c) && !gatewayForwardErrorAlreadyCommunicated(c, writerSizeBeforeForward, err) && !failoverClientGone(c) {
+					status, code, message, retryAfter := billingErrorDetails(err)
+					if retryAfter > 0 {
+						c.Header("Retry-After", strconv.Itoa(retryAfter))
+					}
+					if streamStarted || c.Writer.Written() {
+						h.handleStreamingAwareError(c, status, code, message, true)
+					} else {
+						h.chatCompletionsErrorResponse(c, status, code, message)
+					}
+				}
+				reqLog.Warn("gateway.cc.balance_hold_topup_aborted",
+					zap.Int64("account_id", account.ID),
+					zap.Error(err),
+				)
+				submitForwardUsage(result)
+				return
+			}
 			h.gatewayService.InvalidateUpstreamAffinity(c.Request.Context(), apiKey.GroupID, selectionSessionHash, account, err)
 			var failoverErr *service.UpstreamFailoverError
 			if errors.As(err, &failoverErr) {

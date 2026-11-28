@@ -261,3 +261,123 @@ func TestOpenAIWSHTTPBridgeLaterTurn429RetriesCurrentTurnOnReplacementAccount(t 
 	require.Equal(t, scopeCodexAccountIdentityValue(&nextAccount, 0, "thread", "client-thread"), gjson.GetBytes(upstream.bodies[2], "client_metadata.thread_id").String())
 	require.Empty(t, upstream.requests[2].Header.Get(openAIWSTurnStateHeader))
 }
+
+func TestOpenAIWSHTTPBridgeInitialTurnNumberPreservesTurnOnParseAndHooks(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	cfg := &config.Config{}
+	cfg.Security.URLAllowlist.Enabled = false
+	cfg.Security.URLAllowlist.AllowInsecureHTTP = true
+	cfg.Gateway.OpenAIWS.Enabled = true
+	cfg.Gateway.OpenAIWS.OAuthEnabled = true
+	cfg.Gateway.OpenAIWS.ResponsesWebsocketsV2 = true
+	cfg.Gateway.OpenAIWS.ModeRouterV2Enabled = true
+	cfg.Gateway.OpenAIWS.ReadTimeoutSeconds = 3
+	cfg.Gateway.OpenAIWS.WriteTimeoutSeconds = 3
+
+	upstream := &httpUpstreamRecorder{responses: []*http.Response{
+		{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+			Body: io.NopCloser(strings.NewReader(
+				"data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_replay\",\"model\":\"gpt-5.6-sol\",\"usage\":{\"input_tokens\":5,\"output_tokens\":3}}}\n\n",
+			)),
+		},
+	}}
+	svc := &OpenAIGatewayService{
+		cfg:              cfg,
+		httpUpstream:     upstream,
+		cache:            &stubGatewayCache{},
+		openaiWSResolver: NewOpenAIWSProtocolResolver(cfg),
+		toolCorrector:    NewCodexToolCorrector(),
+	}
+	account := &Account{
+		ID:          301,
+		Name:        "replay-account",
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeOAuth,
+		Status:      StatusActive,
+		Schedulable: true,
+		Concurrency: 1,
+		Extra: map[string]any{
+			"openai_oauth_responses_websockets_v2_mode": OpenAIWSIngressModeHTTPBridge,
+		},
+		Credentials: map[string]any{
+			"chatgpt_account_id": "account-replay",
+			"chatgpt_user_id":    "user-replay",
+		},
+	}
+
+	var mapTurn, beforeReqTurn, beforeTurnNo, afterTurnNo int
+	var mappedInputModel string
+	hooks := &OpenAIWSIngressHooks{
+		InitialRequestModel: "gpt-5.6-sol",
+		InitialTurnNumber:   2,
+		MapRequestModel: func(turn int, originalModel string) (string, error) {
+			mapTurn = turn
+			mappedInputModel = originalModel
+			return originalModel, nil
+		},
+		BeforeRequest: func(turn int, payload []byte, _ string) ([]byte, error) {
+			beforeReqTurn = turn
+			return payload, nil
+		},
+		BeforeTurn: func(turn int) error {
+			beforeTurnNo = turn
+			return nil
+		},
+		AfterTurn: func(turn int, _ *OpenAIForwardResult, _ error) {
+			afterTurnNo = turn
+		},
+	}
+
+	serverErrCh := make(chan error, 1)
+	wsServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			serverErrCh <- err
+			return
+		}
+		defer func() { _ = conn.CloseNow() }()
+		_, firstMessage, err := conn.Read(r.Context())
+		if err != nil {
+			serverErrCh <- err
+			return
+		}
+		ginCtx, _ := gin.CreateTestContext(httptest.NewRecorder())
+		ginCtx.Request = r.Clone(r.Context())
+		serverErrCh <- svc.ProxyResponsesWebSocketFromClient(r.Context(), ginCtx, conn, account, "access-token-replay", firstMessage, hooks)
+	}))
+	defer wsServer.Close()
+
+	dialCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	clientConn, _, err := websocket.Dial(dialCtx, "ws"+strings.TrimPrefix(wsServer.URL, "http"), nil)
+	cancel()
+	require.NoError(t, err)
+	defer func() { _ = clientConn.CloseNow() }()
+
+	// Omit "model" in replayed Turn 2 payload: must inherit InitialRequestModel and pass turn=2 to MapRequestModel.
+	writeCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	err = clientConn.Write(writeCtx, websocket.MessageText, []byte(`{"type":"response.create","input":[{"role":"user","content":"replayed turn 2 without model"}]}`))
+	cancel()
+	require.NoError(t, err)
+
+	readCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	_, completed, err := clientConn.Read(readCtx)
+	cancel()
+	require.NoError(t, err)
+	require.Equal(t, "response.completed", gjson.GetBytes(completed, "type").String())
+	_ = clientConn.Close(websocket.StatusNormalClosure, "done")
+
+	select {
+	case proxyErr := <-serverErrCh:
+		require.NoError(t, proxyErr)
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for http bridge replay completion")
+	}
+	require.Equal(t, 2, mapTurn, "parseClientPayload must pass InitialTurnNumber (2) to MapRequestModel, not hardcoded 1")
+	require.Equal(t, "gpt-5.6-sol", mappedInputModel, "omitted model on Turn 2 replay must fall back to InitialRequestModel")
+	require.Equal(t, 2, beforeReqTurn)
+	require.Equal(t, 2, beforeTurnNo)
+	require.Equal(t, 2, afterTurnNo)
+}

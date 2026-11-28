@@ -89,8 +89,14 @@ type Group struct {
 	VideoModelPrices map[string]map[string]float64 `json:"video_model_prices,omitempty"`
 	// Codex alpha/search 网页搜索单次价格（USD/次）；nil 表示使用默认价 0.01（官方 $10/1000 次）
 	WebSearchPricePerCall *float64 `json:"web_search_price_per_call,omitempty"`
+	// 工具端点是否使用独立倍率；false 表示共享分组/用户有效倍率（不含高峰倍率）
+	ToolRateIndependent bool `json:"tool_rate_independent,omitempty"`
+	// 工具端点独立倍率，仅 tool_rate_independent=true 时生效
+	ToolRateMultiplier float64 `json:"tool_rate_multiplier,omitempty"`
 	// 搜索工具价格 per 1000 calls（web_search 等）
 	SearchPricePer1k *float64 `json:"search_price_per_1k,omitempty"`
+	// 网页抓取工具价格 per 1,000 calls（DeepSeek /v1/tools/fetch 与托管 web_fetch）；NULL 回落 search_price_per_1k 再回落默认价，0 免费
+	FetchPricePer1k *float64 `json:"fetch_price_per_1k,omitempty"`
 	// OCR 价格（每 1,000 页，单位与本组其它价格一致）；NULL 使用默认价，0 免费，正数覆盖
 	OcrPricePer1kPages *float64 `json:"ocr_price_per_1k_pages,omitempty"`
 	// 搜索专用服务地址；空表示使用账号自带的 base_url
@@ -131,6 +137,8 @@ type Group struct {
 	CrossProtocolConversionEnabled bool `json:"cross_protocol_conversion_enabled,omitempty"`
 	// 响应模型字段返回请求中的模型名，不改变请求路由、计费或正文
 	ReturnRequestedModel bool `json:"return_requested_model,omitempty"`
+	// 是否保存 Claude/Anthropic 响应正文中的消息 ID（msg_...）到使用记录
+	SaveResponseMsgID bool `json:"save_response_msg_id,omitempty"`
 	// 是否允许此 OpenAI 分组访问 Live 接口
 	AllowLive bool `json:"allow_live,omitempty"`
 	// 是否强制此 OpenAI/Composite 分组请求使用 service_tier=priority
@@ -275,9 +283,9 @@ func (*Group) scanValues(columns []string) ([]any, error) {
 		switch columns[i] {
 		case group.FieldVideoModelPrices, group.FieldModelPricing, group.FieldModelRouting, group.FieldSupportedModelScopes, group.FieldMessagesDispatchModelConfig, group.FieldModelAllowlist, group.FieldCodexModelsManifestConfig, group.FieldReasoningEffortMappings:
 			values[i] = new([]byte)
-		case group.FieldPeakRateEnabled, group.FieldIsExclusive, group.FieldAllowImageGeneration, group.FieldAllowBatchImageGeneration, group.FieldImageRateIndependent, group.FieldVideoRateIndependent, group.FieldLongContextPricingEnabled, group.FieldClaudeCodeOnly, group.FieldModelRoutingEnabled, group.FieldMcpXMLInject, group.FieldAllowMessagesDispatch, group.FieldCrossProtocolConversionEnabled, group.FieldReturnRequestedModel, group.FieldAllowLive, group.FieldForceOpenaiFast, group.FieldFreeOpenaiFast, group.FieldRequireOauthOnly, group.FieldRequirePrivacySet, group.FieldProfitControlEnabled:
+		case group.FieldPeakRateEnabled, group.FieldIsExclusive, group.FieldAllowImageGeneration, group.FieldAllowBatchImageGeneration, group.FieldImageRateIndependent, group.FieldVideoRateIndependent, group.FieldToolRateIndependent, group.FieldLongContextPricingEnabled, group.FieldClaudeCodeOnly, group.FieldModelRoutingEnabled, group.FieldMcpXMLInject, group.FieldAllowMessagesDispatch, group.FieldCrossProtocolConversionEnabled, group.FieldReturnRequestedModel, group.FieldSaveResponseMsgID, group.FieldAllowLive, group.FieldForceOpenaiFast, group.FieldFreeOpenaiFast, group.FieldRequireOauthOnly, group.FieldRequirePrivacySet, group.FieldProfitControlEnabled:
 			values[i] = new(sql.NullBool)
-		case group.FieldRateMultiplier, group.FieldPeakRateMultiplier, group.FieldDailyLimitUsd, group.FieldWeeklyLimitUsd, group.FieldMonthlyLimitUsd, group.FieldImageRateMultiplier, group.FieldImagePrice1k, group.FieldImagePrice2k, group.FieldImagePrice4k, group.FieldBatchImageDiscountMultiplier, group.FieldBatchImageHoldMultiplier, group.FieldVideoRateMultiplier, group.FieldVideoPrice480p, group.FieldVideoPrice720p, group.FieldVideoPrice1080p, group.FieldWebSearchPricePerCall, group.FieldSearchPricePer1k, group.FieldOcrPricePer1kPages, group.FieldGrokModerationRefusalPrice, group.FieldAudioRealtimePricePerMin, group.FieldAudioTtsPricePerMillionChars, group.FieldAudioSttPricePerHour, group.FieldOpenaiFastMultiplier, group.FieldOpenaiUltrafastMultiplier, group.FieldProfitMinMargin, group.FieldProfitSafetyBuffer:
+		case group.FieldRateMultiplier, group.FieldPeakRateMultiplier, group.FieldDailyLimitUsd, group.FieldWeeklyLimitUsd, group.FieldMonthlyLimitUsd, group.FieldImageRateMultiplier, group.FieldImagePrice1k, group.FieldImagePrice2k, group.FieldImagePrice4k, group.FieldBatchImageDiscountMultiplier, group.FieldBatchImageHoldMultiplier, group.FieldVideoRateMultiplier, group.FieldVideoPrice480p, group.FieldVideoPrice720p, group.FieldVideoPrice1080p, group.FieldWebSearchPricePerCall, group.FieldToolRateMultiplier, group.FieldSearchPricePer1k, group.FieldFetchPricePer1k, group.FieldOcrPricePer1kPages, group.FieldGrokModerationRefusalPrice, group.FieldAudioRealtimePricePerMin, group.FieldAudioTtsPricePerMillionChars, group.FieldAudioSttPricePerHour, group.FieldOpenaiFastMultiplier, group.FieldOpenaiUltrafastMultiplier, group.FieldProfitMinMargin, group.FieldProfitSafetyBuffer:
 			values[i] = new(sql.NullFloat64)
 		case group.FieldID, group.FieldDefaultValidityDays, group.FieldFallbackGroupID, group.FieldFallbackGroupIDOnInvalidRequest, group.FieldSortOrder, group.FieldRpmLimit:
 			values[i] = new(sql.NullInt64)
@@ -531,12 +539,31 @@ func (_m *Group) assignValues(columns []string, values []any) error {
 				_m.WebSearchPricePerCall = new(float64)
 				*_m.WebSearchPricePerCall = value.Float64
 			}
+		case group.FieldToolRateIndependent:
+			if value, ok := values[i].(*sql.NullBool); !ok {
+				return fmt.Errorf("unexpected type %T for field tool_rate_independent", values[i])
+			} else if value.Valid {
+				_m.ToolRateIndependent = value.Bool
+			}
+		case group.FieldToolRateMultiplier:
+			if value, ok := values[i].(*sql.NullFloat64); !ok {
+				return fmt.Errorf("unexpected type %T for field tool_rate_multiplier", values[i])
+			} else if value.Valid {
+				_m.ToolRateMultiplier = value.Float64
+			}
 		case group.FieldSearchPricePer1k:
 			if value, ok := values[i].(*sql.NullFloat64); !ok {
 				return fmt.Errorf("unexpected type %T for field search_price_per_1k", values[i])
 			} else if value.Valid {
 				_m.SearchPricePer1k = new(float64)
 				*_m.SearchPricePer1k = value.Float64
+			}
+		case group.FieldFetchPricePer1k:
+			if value, ok := values[i].(*sql.NullFloat64); !ok {
+				return fmt.Errorf("unexpected type %T for field fetch_price_per_1k", values[i])
+			} else if value.Valid {
+				_m.FetchPricePer1k = new(float64)
+				*_m.FetchPricePer1k = value.Float64
 			}
 		case group.FieldOcrPricePer1kPages:
 			if value, ok := values[i].(*sql.NullFloat64); !ok {
@@ -672,6 +699,12 @@ func (_m *Group) assignValues(columns []string, values []any) error {
 				return fmt.Errorf("unexpected type %T for field return_requested_model", values[i])
 			} else if value.Valid {
 				_m.ReturnRequestedModel = value.Bool
+			}
+		case group.FieldSaveResponseMsgID:
+			if value, ok := values[i].(*sql.NullBool); !ok {
+				return fmt.Errorf("unexpected type %T for field save_response_msg_id", values[i])
+			} else if value.Valid {
+				_m.SaveResponseMsgID = value.Bool
 			}
 		case group.FieldAllowLive:
 			if value, ok := values[i].(*sql.NullBool); !ok {
@@ -998,8 +1031,19 @@ func (_m *Group) String() string {
 		builder.WriteString(fmt.Sprintf("%v", *v))
 	}
 	builder.WriteString(", ")
+	builder.WriteString("tool_rate_independent=")
+	builder.WriteString(fmt.Sprintf("%v", _m.ToolRateIndependent))
+	builder.WriteString(", ")
+	builder.WriteString("tool_rate_multiplier=")
+	builder.WriteString(fmt.Sprintf("%v", _m.ToolRateMultiplier))
+	builder.WriteString(", ")
 	if v := _m.SearchPricePer1k; v != nil {
 		builder.WriteString("search_price_per_1k=")
+		builder.WriteString(fmt.Sprintf("%v", *v))
+	}
+	builder.WriteString(", ")
+	if v := _m.FetchPricePer1k; v != nil {
+		builder.WriteString("fetch_price_per_1k=")
 		builder.WriteString(fmt.Sprintf("%v", *v))
 	}
 	builder.WriteString(", ")
@@ -1077,6 +1121,9 @@ func (_m *Group) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("return_requested_model=")
 	builder.WriteString(fmt.Sprintf("%v", _m.ReturnRequestedModel))
+	builder.WriteString(", ")
+	builder.WriteString("save_response_msg_id=")
+	builder.WriteString(fmt.Sprintf("%v", _m.SaveResponseMsgID))
 	builder.WriteString(", ")
 	builder.WriteString("allow_live=")
 	builder.WriteString(fmt.Sprintf("%v", _m.AllowLive))

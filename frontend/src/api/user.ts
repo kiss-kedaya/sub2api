@@ -18,6 +18,9 @@ import type {
   UserAffiliateCodeQuota,
   AffiliateTransferResponse,
   PlatformQuotasResponse,
+  ApiKeyVerificationPayload,
+  UserPersonalApiKeyStatus,
+  CreateUserPersonalApiKeyResponse,
 } from '@/types'
 
 /**
@@ -244,6 +247,38 @@ export async function updateBarkSettings(deviceKey: string | undefined, enabled:
   await apiClient.put('/user/bark', { ...(deviceKey === undefined ? {} : { device_key: deviceKey }), enabled }, request)
 }
 
+/**
+ * Get current user's personal management API key status (masked prefix and metadata only; never plaintext).
+ */
+export async function getPersonalApiKey(): Promise<UserPersonalApiKeyStatus> {
+  const { data } = await apiClient.get<UserPersonalApiKeyStatus>('/user/personal-api-key', {
+    headers: { 'Cache-Control': 'no-store', Pragma: 'no-cache' },
+  })
+  return data
+}
+
+/**
+ * Create or regenerate current user's personal management API key.
+ * Plaintext key is returned once in the response and never stored or shown again.
+ */
+export async function createOrRegeneratePersonalApiKey(
+  verification?: ApiKeyVerificationPayload,
+): Promise<CreateUserPersonalApiKeyResponse> {
+  const payload = verification ? { verification } : {}
+  const { data } = await apiClient.post<CreateUserPersonalApiKeyResponse>('/user/personal-api-key', payload, {
+    headers: { 'Cache-Control': 'no-store', Pragma: 'no-cache' },
+  })
+  return data
+}
+
+/**
+ * Revoke and delete current user's personal management API key immediately.
+ */
+export async function deletePersonalApiKey(): Promise<{ deleted: boolean; message: string }> {
+  const { data } = await apiClient.delete<{ deleted: boolean; message: string }>('/user/personal-api-key')
+  return data
+}
+
 export const userAPI = {
   getProfile,
   updateProfile,
@@ -264,6 +299,9 @@ export const userAPI = {
   createUserAffiliateCode,
   deleteUserAffiliateCode,
   getMyPlatformQuotas,
+  getPersonalApiKey,
+  createOrRegeneratePersonalApiKey,
+  deletePersonalApiKey,
 }
 
 export default userAPI

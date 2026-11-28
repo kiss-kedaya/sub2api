@@ -168,9 +168,11 @@ func (s *GatewayService) forwardBedrock(
 		// 请求体已去掉 model，估算用客户端原始请求体）。
 		outputTokens, inputTokens := applyIncompleteAnthropicStreamUsageWithEstimate(account, streamResult, body, estimatedInputTokens, hasEstimatedInputTokens, reqModel, resp.Header.Get("x-request-id"), err)
 		if err != nil {
-			// 估算出了东西才带结果返回；其余读错误保持原行为。
-			if outputTokens > 0 || inputTokens > 0 {
-				return partialStreamUsageResult(c, resp, streamResult, reqModel, mappedModel, startTime, err), err
+			// 估算出了东西或流式预扣补扣中止时带结果返回；其余读错误保持原行为。
+			if outputTokens > 0 || inputTokens > 0 || isBalanceHoldTopUpError(err) {
+				if partial := partialStreamUsageResult(c, resp, streamResult, reqModel, mappedModel, startTime, err); partial != nil {
+					return partial, err
+				}
 			}
 			return nil, err
 		}
@@ -193,6 +195,7 @@ func (s *GatewayService) forwardBedrock(
 
 	return &ForwardResult{
 		RequestID:        resp.Header.Get("x-amzn-requestid"),
+		ResponseMsgID:    observedUpstreamResponseMessageID(c),
 		UpstreamHeaders:  resp.Header,
 		Usage:            *usage,
 		Model:            reqModel,
@@ -431,6 +434,12 @@ func (s *GatewayService) handleBedrockNonStreamingResponse(
 	// 转换 Bedrock 特有的 amazon-bedrock-invocationMetrics 为标准 Anthropic usage 格式
 	// 并移除该字段避免透传给客户端
 	body = transformBedrockInvocationMetrics(body)
+
+	observer := upstreamResponseModelObserverFromContext(c)
+	if observer == nil {
+		observer = beginUpstreamResponseModelObservation(c)
+	}
+	observer.ObserveAnthropic(body)
 
 	usage := parseClaudeUsageFromResponseBody(body)
 

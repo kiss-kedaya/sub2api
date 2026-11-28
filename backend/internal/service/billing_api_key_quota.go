@@ -131,7 +131,11 @@ func (s *BillingCacheService) reserveAdmission(
 		quotaCache: quotaCache,
 	}
 	r.refs.Store(1)
-	if balanceAmount > 0 {
+	if quotaCache != nil {
+		r.quotaAmount = estimate
+	}
+	if balanceCache != nil && balanceAmount > 0 {
+		r.balanceAmount = balanceAmount
 		r.amount = balanceAmount
 	}
 	if apiKey != nil {
@@ -154,6 +158,234 @@ func (s *BillingCacheService) reserveAdmission(
 		r.startRenewal()
 	}
 	return r, nil
+}
+
+// ReserveAdmissionDelta 为智能路由切组补差：仅在 quotaDelta > 0 或 balanceDelta > 0 的维度追加预占。
+// 若余额补差失败，会立即回滚本次登记的配额补差，避免泄漏到 TTL 过期。
+func (s *BillingCacheService) ReserveAdmissionDelta(
+	ctx context.Context,
+	user *User,
+	apiKey *APIKey,
+	group *Group,
+	subscription *UserSubscription,
+	quotaDelta float64,
+	balanceDelta float64,
+) (*InflightReservation, error) {
+	if s == nil || user == nil {
+		return nil, nil
+	}
+	if s.cfg != nil && s.cfg.RunMode == config.RunModeSimple {
+		return nil, nil
+	}
+	if !validCost(quotaDelta) {
+		quotaDelta = 0
+	}
+	if !validCost(balanceDelta) {
+		balanceDelta = 0
+	}
+	if quotaDelta == 0 && balanceDelta == 0 {
+		return nil, nil
+	}
+	ttl := defaultInflightReservationTTL
+	if s.cfg != nil && s.cfg.Billing.InflightReservation.TTLSeconds > 0 {
+		ttl = time.Duration(s.cfg.Billing.InflightReservation.TTLSeconds) * time.Second
+	}
+	requestID := uuid.NewString()
+
+	var quotaCache APIKeyQuotaReservationCache
+	if quotaDelta > 0 && apiKey != nil && apiKey.ID > 0 && apiKey.Quota > 0 {
+		rc, err := s.reserveAPIKeyQuota(ctx, apiKey, quotaDelta, requestID, ttl)
+		if err != nil {
+			return nil, err
+		}
+		quotaCache = rc
+	}
+
+	var balanceCache InflightBalanceReservationCache
+	var balanceAmount float64
+	if balanceDelta > 0 {
+		var balanceErr error
+		balanceCache, balanceAmount, balanceErr = s.reserveBalanceInflight(ctx, user, group, subscription, balanceDelta, requestID, ttl)
+		if balanceErr != nil {
+			if quotaCache != nil {
+				releaseCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), inflightReservationReleaseTimeout)
+				if relErr := quotaCache.ReleaseAPIKeyQuota(releaseCtx, apiKey.ID, requestID); relErr != nil {
+					logger.LegacyPrintf("service.billing_cache",
+						"Warning: release api key quota delta after failed balance reservation failed for key %d: %v", apiKey.ID, relErr)
+				}
+				cancel()
+			}
+			return nil, balanceErr
+		}
+	}
+	if balanceCache == nil && quotaCache == nil {
+		return nil, nil
+	}
+
+	r := &InflightReservation{
+		cache:      balanceCache,
+		userID:     user.ID,
+		requestID:  requestID,
+		amount:     quotaDelta,
+		ttl:        ttl,
+		quotaCache: quotaCache,
+	}
+	r.refs.Store(1)
+	if quotaCache != nil {
+		r.quotaAmount = quotaDelta
+	}
+	if balanceCache != nil && balanceAmount > 0 {
+		r.balanceAmount = balanceAmount
+		r.amount = balanceAmount
+	}
+	if apiKey != nil {
+		r.apiKeyID = apiKey.ID
+	}
+	if balanceCache != nil {
+		if renewer, ok := s.cache.(InflightBalanceReservationRenewer); ok && renewer != nil {
+			r.renewers = append(r.renewers, func(ctx context.Context) (bool, error) {
+				return renewer.RenewInflightBalance(ctx, user.ID, requestID, ttl)
+			})
+		}
+	}
+	if quotaCache != nil {
+		keyID := apiKey.ID
+		r.renewers = append(r.renewers, func(ctx context.Context) (bool, error) {
+			return quotaCache.RenewAPIKeyQuota(ctx, keyID, requestID, ttl)
+		})
+	}
+	r.startRenewal()
+	return r, nil
+}
+
+// ReserveAPIKeyQuotaHold 仅在 API Key 配额维度做原子在途预占（用于 Batch Image 等独立预扣冻结路径）。
+func (s *BillingCacheService) ReserveAPIKeyQuotaHold(ctx context.Context, apiKey *APIKey, amount float64) (*InflightReservation, error) {
+	if s == nil || apiKey == nil || apiKey.ID <= 0 || apiKey.Quota <= 0 || !validCost(amount) {
+		return nil, nil
+	}
+	if s.cfg != nil && s.cfg.RunMode == config.RunModeSimple {
+		return nil, nil
+	}
+	ttl := defaultInflightReservationTTL
+	if s.cfg != nil && s.cfg.Billing.InflightReservation.TTLSeconds > 0 {
+		ttl = time.Duration(s.cfg.Billing.InflightReservation.TTLSeconds) * time.Second
+	}
+	requestID := uuid.NewString()
+	quotaCache, err := s.reserveAPIKeyQuota(ctx, apiKey, amount, requestID, ttl)
+	if err != nil || quotaCache == nil {
+		return nil, err
+	}
+	r := &InflightReservation{
+		requestID:   requestID,
+		amount:      amount,
+		quotaAmount: amount,
+		ttl:         ttl,
+		quotaCache:  quotaCache,
+		apiKeyID:    apiKey.ID,
+	}
+	r.refs.Store(1)
+	return r, nil
+}
+
+// CheckAPIKeyChargeEligibility 在提交带预计金额的异步任务（如 Batch Image）前校验
+// API Key 的到期状态、USD 总配额以及 5h/1d/7d 速率窗口限额（含本笔预计金额）。
+func (s *BillingCacheService) CheckAPIKeyChargeEligibility(ctx context.Context, apiKey *APIKey, amount float64) error {
+	if apiKey == nil {
+		return nil
+	}
+	if apiKey.IsExpired() {
+		return ErrAPIKeyExpired
+	}
+	if apiKey.IsQuotaExhausted() {
+		return ErrAPIKeyQuotaExhausted
+	}
+	if !validCost(amount) {
+		amount = 0
+	}
+	const eps = 1e-9
+
+	var dbData *APIKeyRateLimitData
+	loadDBOnly := func() (*APIKeyRateLimitData, error) {
+		if dbData != nil {
+			return dbData, nil
+		}
+		if s == nil || s.apiKeyRateLimitLoader == nil || apiKey.ID <= 0 {
+			return nil, nil
+		}
+		// Read DB snapshot directly without writing back to Redis so a slightly
+		// lagging PG snapshot cannot clobber fresher Redis rate-limit counters.
+		loadCtx, cancel := context.WithTimeout(ctx, balanceLoadTimeout)
+		defer cancel()
+		data, err := s.apiKeyRateLimitLoader.GetRateLimitData(loadCtx, apiKey.ID)
+		if err != nil {
+			return nil, err
+		}
+		dbData = data
+		return dbData, nil
+	}
+
+	if apiKey.Quota > 0 {
+		used := math.Max(0, apiKey.QuotaUsed)
+		if data, err := loadDBOnly(); err == nil && data != nil && data.QuotaUsed > used {
+			used = data.QuotaUsed
+		}
+		if used >= apiKey.Quota || (amount > 0 && used+amount > apiKey.Quota+eps) {
+			return ErrAPIKeyQuotaExhausted
+		}
+	}
+
+	if !apiKey.HasRateLimits() {
+		return nil
+	}
+	usage5h, usage1d, usage7d := apiKey.Usage5h, apiKey.Usage1d, apiKey.Usage7d
+	w5h, w1d, w7d := apiKey.Window5hStart, apiKey.Window1dStart, apiKey.Window7dStart
+	if s != nil {
+		loadedFromStore := false
+		if s.cache != nil && apiKey.ID > 0 {
+			if cacheData, err := s.cache.GetAPIKeyRateLimit(ctx, apiKey.ID); err == nil && cacheData != nil {
+				usage5h, usage1d, usage7d = cacheData.Usage5h, cacheData.Usage1d, cacheData.Usage7d
+				w5h, w1d, w7d = nil, nil, nil
+				if cacheData.Window5h > 0 {
+					t := time.Unix(cacheData.Window5h, 0)
+					w5h = &t
+				}
+				if cacheData.Window1d > 0 {
+					t := time.Unix(cacheData.Window1d, 0)
+					w1d = &t
+				}
+				if cacheData.Window7d > 0 {
+					t := time.Unix(cacheData.Window7d, 0)
+					w7d = &t
+				}
+				loadedFromStore = true
+			}
+		}
+		if !loadedFromStore {
+			if data, err := loadDBOnly(); err == nil && data != nil {
+				usage5h, usage1d, usage7d = data.Usage5h, data.Usage1d, data.Usage7d
+				w5h, w1d, w7d = data.Window5hStart, data.Window1dStart, data.Window7dStart
+			}
+		}
+	}
+	if IsWindowExpired(w5h, RateLimitWindow5h) {
+		usage5h = 0
+	}
+	if IsWindowExpired(w1d, RateLimitWindow1d) {
+		usage1d = 0
+	}
+	if IsWindowExpired(w7d, RateLimitWindow7d) {
+		usage7d = 0
+	}
+	if apiKey.RateLimit5h > 0 && (usage5h >= apiKey.RateLimit5h || (amount > 0 && usage5h+amount > apiKey.RateLimit5h+eps)) {
+		return ErrAPIKeyRateLimit5hExceeded
+	}
+	if apiKey.RateLimit1d > 0 && (usage1d >= apiKey.RateLimit1d || (amount > 0 && usage1d+amount > apiKey.RateLimit1d+eps)) {
+		return ErrAPIKeyRateLimit1dExceeded
+	}
+	if apiKey.RateLimit7d > 0 && (usage7d >= apiKey.RateLimit7d || (amount > 0 && usage7d+amount > apiKey.RateLimit7d+eps)) {
+		return ErrAPIKeyRateLimit7dExceeded
+	}
+	return nil
 }
 
 // reserveBalanceInflight 保留原 reserveInflight 的全部行为（开关、订阅豁免、MaxReservationUSD、失败策略）。

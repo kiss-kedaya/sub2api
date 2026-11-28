@@ -539,6 +539,45 @@ func (s *APIKeyVerificationService) verifyForUser(ctx context.Context, userID in
 	return s.verifyFactor(ctx, user, factors, in)
 }
 
+// VerifyAPIKeyOwnership 仅校验指定 API Key 是否属于当前用户（轻量 DB 查表，不查 Redis 并发队列）。
+// 供个人接口密钥（uak_）调用 PUT /keys/:id 轮换路径时复用，防越权探测他人 Key ID。
+func (s *APIKeyVerificationService) VerifyAPIKeyOwnership(ctx context.Context, userID, apiKeyID int64) error {
+	if s == nil || s.apiKeyRepo == nil || userID <= 0 {
+		return ErrAPIKeyVerificationUnavailable
+	}
+	if apiKeyID <= 0 {
+		return ErrAPIKeyNotFound
+	}
+	key, err := s.apiKeyRepo.GetByID(ctx, apiKeyID)
+	if err != nil {
+		return err
+	}
+	if key == nil || key.UserID != userID {
+		return ErrAPIKeyNotFound
+	}
+	return nil
+}
+
+// VerifyStrict 强制要求账号在存在任意可用校验因子（Passkey / TOTP / 登录密码）时必须完成校验。
+//
+// 与 VerifyForCreate 不同：不读取 user_security_preferences（「创建 API Key 时是否验证」开关），
+// 专用于签发 / 重置个人接口密钥这类高敏感凭据入口——避免会话被临时接管时静默签发长期密钥。
+// 账号确实没有任何可用因子（纯第三方登录且未绑 2FA）时放行，避免把无因子账号永久锁死；
+// 若请求主动携带因子，仍按因子严格校验。
+func (s *APIKeyVerificationService) VerifyStrict(ctx context.Context, userID int64, in *APIKeyVerificationInput) (*APIKeyVerificationResult, error) {
+	user, factors, err := s.loadAccountFactors(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	if in == nil || strings.TrimSpace(in.Method) == "" {
+		if !factors.Available() {
+			return &APIKeyVerificationResult{}, nil
+		}
+		return nil, ErrAPIKeyVerificationRequired
+	}
+	return s.verifyFactor(ctx, user, factors, in)
+}
+
 // VerifyForSeal 校验「封存密文用的登录密码」。
 //
 // 封存后的本地解密只认登录密码（PBKDF2），所以只要用户选择「以后查看」，

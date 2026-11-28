@@ -120,7 +120,7 @@ func applyIncompleteAnthropicStreamUsage(account *Account, result *streamingResu
 
 func TestFillIncompleteAnthropicUsage(t *testing.T) {
 	body := []byte(anthropicIncompleteRequestBody)
-	wantSplit := splitIncompleteInput(estimateRequestInputTokens(body))
+	wantSplit := splitAnthropicIncompleteInput(estimateRequestInputTokens(body))
 	require.Greater(t, wantSplit.Total, 0)
 	produced := "a streamed answer of some length"
 
@@ -250,7 +250,6 @@ func TestApplyIncompleteAnthropicStreamUsage_Eligibility(t *testing.T) {
 			"replayable failover":      &UpstreamFailoverError{StatusCode: http.StatusBadGateway},
 			"wrapped failover":         fmt.Errorf("attempt failed: %w", &UpstreamFailoverError{StatusCode: http.StatusBadGateway}),
 			"forwarded upstream error": &AnthropicPassthroughStreamError{StatusCode: http.StatusBadGateway},
-			"balance abort":            wrapStreamOutputHoldTopUpFailure(ErrBalanceWithholdingFailed),
 		} {
 			result := incomplete(true)
 			out, in := apply(result, err)
@@ -258,6 +257,14 @@ func TestApplyIncompleteAnthropicStreamUsage_Eligibility(t *testing.T) {
 			require.Zero(t, in, name)
 			require.Equal(t, ClaudeUsage{}, *result.usage, name)
 		}
+	})
+	t.Run("balance abort estimates delivered output and input tokens", func(t *testing.T) {
+		result := incomplete(false)
+		out, in := apply(result, wrapStreamOutputHoldTopUpFailure(ErrBalanceWithholdingFailed))
+		require.Greater(t, out, 0)
+		require.Greater(t, in, 0)
+		require.Equal(t, out, result.usage.OutputTokens)
+		require.Equal(t, in, result.usage.InputTokens+result.usage.CacheReadInputTokens)
 	})
 	t.Run("nothing to work with is a no-op", func(t *testing.T) {
 		for name, result := range map[string]*streamingResult{
@@ -455,7 +462,7 @@ func TestAnthropicUpstreamCall_DepartedClient(t *testing.T) {
 
 func TestAnthropicClientGoneResult(t *testing.T) {
 	body := []byte(anthropicIncompleteRequestBody)
-	split := splitIncompleteInput(estimateRequestInputTokens(body))
+	split := splitAnthropicIncompleteInput(estimateRequestInputTokens(body))
 	require.Greater(t, split.Total, 0)
 
 	t.Run("a request without a response", func(t *testing.T) {

@@ -1078,9 +1078,9 @@
                 </UFormField>
               </div>
             </div>
-            <!-- 搜索单价：所有可能走搜索的平台（Grok / DeepSeek） -->
+            <!-- Grok 搜索单价 -->
             <div
-              v-if="supportsSearchPricing(createForm.platform)"
+              v-if="createForm.platform === 'grok'"
             >
               <h4 class="text-sm font-medium text-default mb-1">
                 {{ t("admin.groups.explicitPricing.title") }}
@@ -1100,10 +1100,138 @@
                     class="w-full"
                   />
                 </UFormField>
-                <UFormField
-                  :label="t('admin.groups.explicitPricing.searchProviderBaseUrl')"
-                  v-if="createForm.platform === 'deepseek'"
-                >
+              </div>
+            </div>
+            <!-- DeepSeek 工具定价（Search / Fetch / OCR / TTS / ASR） -->
+            <div
+              v-if="createForm.platform === 'deepseek'"
+            >
+              <h4 class="text-sm font-medium text-default mb-1">
+                {{ t("admin.groups.explicitPricing.deepseekToolsTitle") }}
+              </h4>
+              <p class="text-xs text-muted mb-3">
+                {{ t("admin.groups.explicitPricing.deepseekToolsHint") }}
+              </p>
+              <div class="mb-4">
+                <UCheckbox
+                  v-model="createForm.tool_rate_independent"
+                  :label="t('admin.groups.explicitPricing.toolRateIndependent')"
+                  data-testid="create-tool-rate-independent"
+                />
+              </div>
+              <UFormField
+                v-if="createForm.tool_rate_independent"
+                :label="t('admin.groups.explicitPricing.toolRateMultiplier')"
+                class="mb-4"
+              >
+                <UInput
+                  v-model.number="createForm.tool_rate_multiplier"
+                  type="number"
+                  step="0.0001"
+                  min="0"
+                  placeholder="1"
+                  data-testid="create-tool-rate-multiplier"
+                  class="w-full"
+                />
+              </UFormField>
+              <div class="grid grid-cols-1 gap-3 md:grid-cols-3">
+                <UFormField :label="t('admin.groups.explicitPricing.deepseekSearchPricePer1k')">
+                  <UInput
+                    v-model.number="createForm.search_price_per_1k"
+                    type="number"
+                    step="0.000001"
+                    min="0"
+                    :placeholder="t('admin.groups.explicitPricing.deepseekSearchPricePlaceholder')"
+                    data-testid="create-search-price"
+                    class="w-full"
+                  />
+                </UFormField>
+                <UFormField :label="t('admin.groups.explicitPricing.deepseekFetchPricePer1k')">
+                  <UInput
+                    v-model.number="createForm.fetch_price_per_1k"
+                    type="number"
+                    step="0.000001"
+                    min="0"
+                    :placeholder="t('admin.groups.explicitPricing.deepseekFetchPricePlaceholder')"
+                    data-testid="create-fetch-price"
+                    class="w-full"
+                  />
+                </UFormField>
+                <UFormField :label="t('admin.groups.explicitPricing.ocrPricePer1kPages')">
+                  <UInput
+                    v-model.number="createForm.ocr_price_per_1k_pages"
+                    type="number"
+                    step="0.000001"
+                    min="0"
+                    :placeholder="t('admin.groups.explicitPricing.ocrPricePlaceholder')"
+                    data-testid="create-ocr-price"
+                    class="w-full"
+                  />
+                </UFormField>
+                <UFormField :label="t('admin.groups.explicitPricing.deepseekTtsPerMillionChars')">
+                  <UInput
+                    v-model.number="createForm.audio_tts_price_per_million_chars"
+                    type="number"
+                    step="0.000001"
+                    min="0"
+                    :placeholder="t('admin.groups.explicitPricing.deepseekTtsPlaceholder')"
+                    data-testid="create-deepseek-tts-price"
+                    class="w-full"
+                  />
+                </UFormField>
+                <UFormField :label="t('admin.groups.explicitPricing.deepseekAsrPerHour')">
+                  <UInput
+                    v-model.number="createForm.audio_stt_price_per_hour"
+                    type="number"
+                    step="0.000001"
+                    min="0"
+                    :placeholder="t('admin.groups.explicitPricing.deepseekAsrPlaceholder')"
+                    data-testid="create-deepseek-asr-price"
+                    class="w-full"
+                  />
+                </UFormField>
+              </div>
+              <div
+                class="mt-3 rounded-lg bg-elevated/50 p-3 text-xs text-default"
+                data-testid="create-deepseek-tool-preview"
+              >
+                <div class="mb-1.5 font-medium">
+                  {{
+                    t("admin.groups.explicitPricing.deepseekToolPreviewTitle", {
+                      multiplier: formatDeepSeekToolAmount(createDeepSeekToolPreview.multiplier),
+                    })
+                  }}
+                </div>
+                <div class="grid grid-cols-1 gap-1.5 sm:grid-cols-2 md:grid-cols-3">
+                  <div
+                    v-for="item in createDeepSeekToolPreview.items"
+                    :key="item.model"
+                    class="flex items-center justify-between gap-2 rounded border border-default/60 bg-default/40 px-2.5 py-1.5"
+                    :data-testid="`create-deepseek-preview-${item.model}`"
+                  >
+                    <span class="font-medium text-default">
+                      {{ deepSeekToolShortLabels[item.model] }}
+                      <span
+                        v-if="item.inheritedFromSearch"
+                        class="ml-1 text-[11px] font-normal text-muted"
+                      >
+                        ({{ t("admin.groups.explicitPricing.deepseekToolPreviewInherited") }})
+                      </span>
+                      <span
+                        v-else-if="item.isDefault"
+                        class="ml-1 text-[11px] font-normal text-muted"
+                      >
+                        ({{ t("admin.groups.explicitPricing.deepseekToolPreviewDefault") }})
+                      </span>
+                    </span>
+                    <span class="font-mono tabular-nums text-highlighted">
+                      {{ formatDeepSeekToolPreviewValue(item) }}
+                    </span>
+                  </div>
+                </div>
+              </div>
+              <div class="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2">
+                <UFormField :label="t('admin.groups.explicitPricing.searchProviderBaseUrl')">
                   <UInput
                     v-model="createForm.search_provider_base_url"
                     type="text"
@@ -1112,10 +1240,7 @@
                     class="w-full"
                   />
                 </UFormField>
-                <UFormField
-                  :label="t('admin.groups.explicitPricing.searchProviderApiKey')"
-                  v-if="createForm.platform === 'deepseek'"
-                >
+                <UFormField :label="t('admin.groups.explicitPricing.searchProviderApiKey')">
                   <UInput
                     v-model="createForm.search_provider_api_key"
                     type="password"
@@ -1126,49 +1251,6 @@
                   />
                 </UFormField>
               </div>
-              <template v-if="createForm.platform === 'deepseek'">
-                <h4 class="mt-4 mb-1 text-sm font-medium text-default">
-                  {{ t("admin.groups.explicitPricing.deepseekToolsTitle") }}
-                </h4>
-                <p class="mb-3 text-xs text-muted">
-                  {{ t("admin.groups.explicitPricing.deepseekToolsHint") }}
-                </p>
-                <div class="grid grid-cols-1 gap-3 md:grid-cols-3">
-                  <UFormField :label="t('admin.groups.explicitPricing.ocrPricePer1kPages')">
-                    <UInput
-                      v-model.number="createForm.ocr_price_per_1k_pages"
-                      type="number"
-                      step="0.000001"
-                      min="0"
-                      :placeholder="t('admin.groups.explicitPricing.ocrPricePlaceholder')"
-                      data-testid="create-ocr-price"
-                      class="w-full"
-                    />
-                  </UFormField>
-                  <UFormField :label="t('admin.groups.explicitPricing.deepseekTtsPerMillionChars')">
-                    <UInput
-                      v-model.number="createForm.audio_tts_price_per_million_chars"
-                      type="number"
-                      step="0.000001"
-                      min="0"
-                      :placeholder="t('admin.groups.explicitPricing.deepseekTtsPlaceholder')"
-                      data-testid="create-deepseek-tts-price"
-                      class="w-full"
-                    />
-                  </UFormField>
-                  <UFormField :label="t('admin.groups.explicitPricing.deepseekAsrPerHour')">
-                    <UInput
-                      v-model.number="createForm.audio_stt_price_per_hour"
-                      type="number"
-                      step="0.000001"
-                      min="0"
-                      :placeholder="t('admin.groups.explicitPricing.deepseekAsrPlaceholder')"
-                      data-testid="create-deepseek-asr-price"
-                      class="w-full"
-                    />
-                  </UFormField>
-                </div>
-              </template>
             </div>
             <!-- Codex 网页搜索按次计费（仅 openai 平台） -->
             <div
@@ -1482,6 +1564,22 @@
                   v-model="createForm.fallback_group_id"
                   :options="fallbackGroupOptions"
                   :placeholder="t('admin.groups.claudeCode.noFallback')"
+                />
+              </UFormField>
+              <UFormField
+                :description="createForm.save_response_msg_id
+                  ? t('admin.groups.saveResponseMsgId.enabled')
+                  : t('admin.groups.saveResponseMsgId.disabled')"
+                class="flex items-center justify-between gap-4 mt-4"
+                :ui="{ container: 'mt-0 shrink-0' }"
+              >
+                <template #label>
+                  <span class="inline-flex items-center gap-1">{{ t("admin.groups.saveResponseMsgId.title") }} <GroupFieldHelp :label="t('admin.groups.saveResponseMsgId.title')" :text="t('admin.groups.saveResponseMsgId.tooltip')" /></span>
+                </template>
+                <Toggle
+                  data-testid="create-save-response-msg-id"
+                  :aria-label="t('admin.groups.saveResponseMsgId.title')"
+                  v-model="createForm.save_response_msg_id"
                 />
               </UFormField>
             </div>
@@ -2441,9 +2539,9 @@
                 </UFormField>
               </div>
             </div>
-            <!-- 搜索单价：所有可能走搜索的平台（Grok / DeepSeek） -->
+            <!-- Grok 搜索单价 -->
             <div
-              v-if="supportsSearchPricing(editForm.platform)"
+              v-if="editForm.platform === 'grok'"
             >
               <h4 class="text-sm font-medium text-default mb-1">
                 {{ t("admin.groups.explicitPricing.title") }}
@@ -2463,10 +2561,138 @@
                     class="w-full"
                   />
                 </UFormField>
-                <UFormField
-                  :label="t('admin.groups.explicitPricing.searchProviderBaseUrl')"
-                  v-if="editForm.platform === 'deepseek'"
-                >
+              </div>
+            </div>
+            <!-- DeepSeek 工具定价（Search / Fetch / OCR / TTS / ASR） -->
+            <div
+              v-if="editForm.platform === 'deepseek'"
+            >
+              <h4 class="text-sm font-medium text-default mb-1">
+                {{ t("admin.groups.explicitPricing.deepseekToolsTitle") }}
+              </h4>
+              <p class="text-xs text-muted mb-3">
+                {{ t("admin.groups.explicitPricing.deepseekToolsHint") }}
+              </p>
+              <div class="mb-4">
+                <UCheckbox
+                  v-model="editForm.tool_rate_independent"
+                  :label="t('admin.groups.explicitPricing.toolRateIndependent')"
+                  data-testid="edit-tool-rate-independent"
+                />
+              </div>
+              <UFormField
+                v-if="editForm.tool_rate_independent"
+                :label="t('admin.groups.explicitPricing.toolRateMultiplier')"
+                class="mb-4"
+              >
+                <UInput
+                  v-model.number="editForm.tool_rate_multiplier"
+                  type="number"
+                  step="0.0001"
+                  min="0"
+                  placeholder="1"
+                  data-testid="edit-tool-rate-multiplier"
+                  class="w-full"
+                />
+              </UFormField>
+              <div class="grid grid-cols-1 gap-3 md:grid-cols-3">
+                <UFormField :label="t('admin.groups.explicitPricing.deepseekSearchPricePer1k')">
+                  <UInput
+                    v-model.number="editForm.search_price_per_1k"
+                    type="number"
+                    step="0.000001"
+                    min="0"
+                    :placeholder="t('admin.groups.explicitPricing.deepseekSearchPricePlaceholder')"
+                    data-testid="edit-search-price"
+                    class="w-full"
+                  />
+                </UFormField>
+                <UFormField :label="t('admin.groups.explicitPricing.deepseekFetchPricePer1k')">
+                  <UInput
+                    v-model.number="editForm.fetch_price_per_1k"
+                    type="number"
+                    step="0.000001"
+                    min="0"
+                    :placeholder="t('admin.groups.explicitPricing.deepseekFetchPricePlaceholder')"
+                    data-testid="edit-fetch-price"
+                    class="w-full"
+                  />
+                </UFormField>
+                <UFormField :label="t('admin.groups.explicitPricing.ocrPricePer1kPages')">
+                  <UInput
+                    v-model.number="editForm.ocr_price_per_1k_pages"
+                    type="number"
+                    step="0.000001"
+                    min="0"
+                    :placeholder="t('admin.groups.explicitPricing.ocrPricePlaceholder')"
+                    data-testid="edit-ocr-price"
+                    class="w-full"
+                  />
+                </UFormField>
+                <UFormField :label="t('admin.groups.explicitPricing.deepseekTtsPerMillionChars')">
+                  <UInput
+                    v-model.number="editForm.audio_tts_price_per_million_chars"
+                    type="number"
+                    step="0.000001"
+                    min="0"
+                    :placeholder="t('admin.groups.explicitPricing.deepseekTtsPlaceholder')"
+                    data-testid="edit-deepseek-tts-price"
+                    class="w-full"
+                  />
+                </UFormField>
+                <UFormField :label="t('admin.groups.explicitPricing.deepseekAsrPerHour')">
+                  <UInput
+                    v-model.number="editForm.audio_stt_price_per_hour"
+                    type="number"
+                    step="0.000001"
+                    min="0"
+                    :placeholder="t('admin.groups.explicitPricing.deepseekAsrPlaceholder')"
+                    data-testid="edit-deepseek-asr-price"
+                    class="w-full"
+                  />
+                </UFormField>
+              </div>
+              <div
+                class="mt-3 rounded-lg bg-elevated/50 p-3 text-xs text-default"
+                data-testid="edit-deepseek-tool-preview"
+              >
+                <div class="mb-1.5 font-medium">
+                  {{
+                    t("admin.groups.explicitPricing.deepseekToolPreviewTitle", {
+                      multiplier: formatDeepSeekToolAmount(editDeepSeekToolPreview.multiplier),
+                    })
+                  }}
+                </div>
+                <div class="grid grid-cols-1 gap-1.5 sm:grid-cols-2 md:grid-cols-3">
+                  <div
+                    v-for="item in editDeepSeekToolPreview.items"
+                    :key="item.model"
+                    class="flex items-center justify-between gap-2 rounded border border-default/60 bg-default/40 px-2.5 py-1.5"
+                    :data-testid="`edit-deepseek-preview-${item.model}`"
+                  >
+                    <span class="font-medium text-default">
+                      {{ deepSeekToolShortLabels[item.model] }}
+                      <span
+                        v-if="item.inheritedFromSearch"
+                        class="ml-1 text-[11px] font-normal text-muted"
+                      >
+                        ({{ t("admin.groups.explicitPricing.deepseekToolPreviewInherited") }})
+                      </span>
+                      <span
+                        v-else-if="item.isDefault"
+                        class="ml-1 text-[11px] font-normal text-muted"
+                      >
+                        ({{ t("admin.groups.explicitPricing.deepseekToolPreviewDefault") }})
+                      </span>
+                    </span>
+                    <span class="font-mono tabular-nums text-highlighted">
+                      {{ formatDeepSeekToolPreviewValue(item) }}
+                    </span>
+                  </div>
+                </div>
+              </div>
+              <div class="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2">
+                <UFormField :label="t('admin.groups.explicitPricing.searchProviderBaseUrl')">
                   <UInput
                     v-model="editForm.search_provider_base_url"
                     type="text"
@@ -2475,7 +2701,7 @@
                     class="w-full"
                   />
                 </UFormField>
-                <div v-if="editForm.platform === 'deepseek'">
+                <div>
                   <label class="mb-1 block text-sm font-medium text-default">{{ t("admin.groups.explicitPricing.searchProviderApiKey") }}</label>
                   <UInput
                     v-model="editForm.search_provider_api_key"
@@ -2499,49 +2725,6 @@
                   />
                 </div>
               </div>
-              <template v-if="editForm.platform === 'deepseek'">
-                <h4 class="mt-4 mb-1 text-sm font-medium text-default">
-                  {{ t("admin.groups.explicitPricing.deepseekToolsTitle") }}
-                </h4>
-                <p class="mb-3 text-xs text-muted">
-                  {{ t("admin.groups.explicitPricing.deepseekToolsHint") }}
-                </p>
-                <div class="grid grid-cols-1 gap-3 md:grid-cols-3">
-                  <UFormField :label="t('admin.groups.explicitPricing.ocrPricePer1kPages')">
-                    <UInput
-                      v-model.number="editForm.ocr_price_per_1k_pages"
-                      type="number"
-                      step="0.000001"
-                      min="0"
-                      :placeholder="t('admin.groups.explicitPricing.ocrPricePlaceholder')"
-                      data-testid="edit-ocr-price"
-                      class="w-full"
-                    />
-                  </UFormField>
-                  <UFormField :label="t('admin.groups.explicitPricing.deepseekTtsPerMillionChars')">
-                    <UInput
-                      v-model.number="editForm.audio_tts_price_per_million_chars"
-                      type="number"
-                      step="0.000001"
-                      min="0"
-                      :placeholder="t('admin.groups.explicitPricing.deepseekTtsPlaceholder')"
-                      data-testid="edit-deepseek-tts-price"
-                      class="w-full"
-                    />
-                  </UFormField>
-                  <UFormField :label="t('admin.groups.explicitPricing.deepseekAsrPerHour')">
-                    <UInput
-                      v-model.number="editForm.audio_stt_price_per_hour"
-                      type="number"
-                      step="0.000001"
-                      min="0"
-                      :placeholder="t('admin.groups.explicitPricing.deepseekAsrPlaceholder')"
-                      data-testid="edit-deepseek-asr-price"
-                      class="w-full"
-                    />
-                  </UFormField>
-                </div>
-              </template>
             </div>
             <!-- Codex 网页搜索按次计费（仅 openai 平台） -->
             <div
@@ -2854,6 +3037,22 @@
                   v-model="editForm.fallback_group_id"
                   :options="fallbackGroupOptionsForEdit"
                   :placeholder="t('admin.groups.claudeCode.noFallback')"
+                />
+              </UFormField>
+              <UFormField
+                :description="editForm.save_response_msg_id
+                  ? t('admin.groups.saveResponseMsgId.enabled')
+                  : t('admin.groups.saveResponseMsgId.disabled')"
+                class="flex items-center justify-between gap-4 mt-4"
+                :ui="{ container: 'mt-0 shrink-0' }"
+              >
+                <template #label>
+                  <span class="inline-flex items-center gap-1">{{ t("admin.groups.saveResponseMsgId.title") }} <GroupFieldHelp :label="t('admin.groups.saveResponseMsgId.title')" :text="t('admin.groups.saveResponseMsgId.tooltip')" /></span>
+                </template>
+                <Toggle
+                  data-testid="edit-save-response-msg-id"
+                  :aria-label="t('admin.groups.saveResponseMsgId.title')"
+                  v-model="editForm.save_response_msg_id"
                 />
               </UFormField>
             </div>
@@ -3568,12 +3767,12 @@ import {
 } from "./groupModelAllowlist";
 import { createModelAllowlistCandidatesTracker } from "./modelAllowlistCandidates";
 import { normalizeSupportedModelScopesForPlatform } from "./groupsSupportedModelScopes";
-
-// 分组级「搜索每千次单价」目前对 Grok（原生 x_search/web_search）和
-// DeepSeek（/v1/tools/search 代理 + 可注入的搜索工具）开放。
-function supportsSearchPricing(platform: string | undefined): boolean {
-  return platform === "grok" || platform === "deepseek";
-}
+import {
+  DEEPSEEK_TOOL_SPECS,
+  computeDeepSeekToolPreviews,
+  formatDeepSeekToolAmount,
+  type DeepSeekToolPreviewItem,
+} from "@/utils/deepseekTools";
 
 import {
   isProfitControlPlatform,
@@ -4278,7 +4477,10 @@ const createForm = reactive({
   // Grok 安全拒绝单次扣费；null = 默认 0.1 USD，0 = 不扣费
   grok_moderation_refusal_price: null as number | null,
   web_search_price_per_call: null as number | null,
+  tool_rate_independent: false,
+  tool_rate_multiplier: 1,
   search_price_per_1k: null as number | null,
+  fetch_price_per_1k: null as number | null,
   ocr_price_per_1k_pages: null as number | null,
   search_provider_base_url: '' as string,
   search_provider_api_key: '' as string,
@@ -4298,6 +4500,7 @@ const createForm = reactive({
   profit_safety_buffer_percent: 0,
   // Claude Code 客户端限制（仅 anthropic 平台使用）
   claude_code_only: false,
+  save_response_msg_id: false,
   fallback_group_id: null as number | null,
   fallback_group_id_on_invalid_request: null as number | null,
   // OpenAI Messages 调度配置（仅 openai 平台使用）
@@ -4693,7 +4896,10 @@ const editForm = reactive({
   // Grok 安全拒绝单次扣费；null = 默认 0.1 USD，0 = 不扣费
   grok_moderation_refusal_price: null as number | null,
   web_search_price_per_call: null as number | null,
+  tool_rate_independent: false,
+  tool_rate_multiplier: 1,
   search_price_per_1k: null as number | null,
+  fetch_price_per_1k: null as number | null,
   ocr_price_per_1k_pages: null as number | null,
   audio_realtime_price_per_min: null as number | null,
   search_provider_base_url: '' as string,
@@ -4713,6 +4919,7 @@ const editForm = reactive({
   profit_safety_buffer_percent: 0,
   // Claude Code 客户端限制（仅 anthropic 平台使用）
   claude_code_only: false,
+  save_response_msg_id: false,
   fallback_group_id: null as number | null,
   fallback_group_id_on_invalid_request: null as number | null,
   // OpenAI Messages 调度配置（仅 openai 平台使用）
@@ -4869,6 +5076,26 @@ const createVideoFinalPricePreview = computed(() =>
 const editVideoFinalPricePreview = computed(() =>
   buildVideoFinalPricePreview(editForm),
 );
+const deepSeekToolShortLabels: Record<DeepSeekToolPreviewItem["model"], string> = {
+  "deepseek-tools-search": "Search",
+  "deepseek-tools-fetch": "Fetch",
+  "deepseek-tools-ocr": "OCR",
+  "deepseek-tools-tts": "TTS",
+  "deepseek-tools-asr": "ASR",
+};
+const createDeepSeekToolPreview = computed(() =>
+  computeDeepSeekToolPreviews(createForm),
+);
+const editDeepSeekToolPreview = computed(() =>
+  computeDeepSeekToolPreviews(editForm),
+);
+const formatDeepSeekToolPreviewValue = (item: DeepSeekToolPreviewItem) => {
+  if (item.isFree) {
+    return t("admin.groups.explicitPricing.deepseekToolPreviewFree");
+  }
+  const unit = t(`modelPlaza.table.${DEEPSEEK_TOOL_SPECS[item.model].unitKey}`);
+  return `${formatDeepSeekToolAmount(item.effectiveUnitPrice)} ${unit}`;
+};
 
 // Codex 网页搜索单次默认价（与后端 defaultWebSearchPricePerCall 一致，官方 $10/1000 次）
 const DEFAULT_WEB_SEARCH_PRICE_PER_CALL = 0.01;
@@ -5208,7 +5435,10 @@ const closeCreateModal = () => {
   createForm.openai_ultrafast_multiplier = "";
   createForm.model_pricing = [];
   createForm.web_search_price_per_call = null;
+  createForm.tool_rate_independent = false;
+  createForm.tool_rate_multiplier = 1;
   createForm.search_price_per_1k = null;
+  createForm.fetch_price_per_1k = null;
   createForm.ocr_price_per_1k_pages = null;
   createForm.grok_moderation_refusal_price = null;
   createForm.search_provider_base_url = '';
@@ -5224,6 +5454,7 @@ const closeCreateModal = () => {
   createForm.profit_min_margin_percent = 0;
   createForm.profit_safety_buffer_percent = 0;
   createForm.claude_code_only = false;
+  createForm.save_response_msg_id = false;
   createForm.return_requested_model = false;
   createForm.fallback_group_id = null;
   createForm.fallback_group_id_on_invalid_request = null;
@@ -5287,13 +5518,32 @@ const validateProfitControlForm = (form: ProfitControlFormState): boolean => {
 
 const validateDeepseekToolPrices = (form: {
   platform: string;
+  tool_rate_independent: boolean;
+  tool_rate_multiplier: number | string | null;
+  search_price_per_1k: number | string | null;
+  fetch_price_per_1k: number | string | null;
   ocr_price_per_1k_pages: number | string | null;
   audio_tts_price_per_million_chars: number | string | null;
   audio_stt_price_per_hour: number | string | null;
 }): boolean => {
   if (form.platform !== "deepseek") return true;
-  const prices = [form.ocr_price_per_1k_pages, form.audio_tts_price_per_million_chars, form.audio_stt_price_per_hour];
+  const prices = [
+    form.search_price_per_1k,
+    form.fetch_price_per_1k,
+    form.ocr_price_per_1k_pages,
+    form.audio_tts_price_per_million_chars,
+    form.audio_stt_price_per_hour,
+  ];
   if (prices.some(price => price !== null && price !== "" && (!Number.isFinite(Number(price)) || Number(price) < 0))) {
+    appStore.showError(t("admin.groups.explicitPricing.invalidDeepseekToolPrice"));
+    return false;
+  }
+  if (
+    form.tool_rate_independent &&
+    form.tool_rate_multiplier !== null &&
+    form.tool_rate_multiplier !== "" &&
+    (!Number.isFinite(Number(form.tool_rate_multiplier)) || Number(form.tool_rate_multiplier) < 0)
+  ) {
     appStore.showError(t("admin.groups.explicitPricing.invalidDeepseekToolPrice"));
     return false;
   }
@@ -5403,6 +5653,8 @@ const handleCreateGroup = async () => {
       ),
       cross_protocol_conversion_enabled:
         createForm.cross_protocol_conversion_enabled,
+      save_response_msg_id:
+        createForm.platform === "anthropic" && Boolean(createForm.save_response_msg_id),
       messages_dispatch_model_config:
         createForm.platform === "openai"
           ? messagesDispatchFormStateToConfig({
@@ -5445,6 +5697,15 @@ const handleCreateGroup = async () => {
     requestData.video_rate_multiplier = normalizeRateMultiplier(
       requestData.video_rate_multiplier,
     );
+    if (createForm.platform === "deepseek") {
+      requestData.tool_rate_independent = Boolean(createForm.tool_rate_independent);
+      requestData.tool_rate_multiplier = normalizeRateMultiplier(
+        requestData.tool_rate_multiplier,
+      );
+    } else {
+      requestData.tool_rate_independent = false;
+      requestData.tool_rate_multiplier = 1;
+    }
     // 媒体价格输入清空时 v-model.number 产生 ""，直接提交会被后端 *float64 反序列化拒绝（400），
     // 创建时按"未配置"（null）处理。
     requestData.image_price_1k = emptyToNull(requestData.image_price_1k);
@@ -5458,6 +5719,9 @@ const handleCreateGroup = async () => {
     );
     requestData.search_price_per_1k = emptyToNull(
       requestData.search_price_per_1k,
+    );
+    requestData.fetch_price_per_1k = emptyToNull(
+      requestData.fetch_price_per_1k,
     );
     requestData.ocr_price_per_1k_pages = emptyToNull(
       requestData.ocr_price_per_1k_pages,
@@ -5551,15 +5815,18 @@ const handleEdit = async (group: AdminGroup) => {
   editForm.video_model_prices = createVideoModelPricesForm(
     group.video_model_prices,
   );
-  editForm.web_search_price_per_call = group.web_search_price_per_call ?? null;
-  editForm.search_price_per_1k = group.search_price_per_1k ?? null;
-  editForm.ocr_price_per_1k_pages = group.ocr_price_per_1k_pages ?? null;
+  const nonNegativePriceOrNull = (value: number | null | undefined): number | null =>
+    typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null;
+  editForm.web_search_price_per_call = nonNegativePriceOrNull(group.web_search_price_per_call);
+  editForm.tool_rate_independent = group.platform === "deepseek" && (group.tool_rate_independent ?? false);
+  editForm.tool_rate_multiplier = group.tool_rate_multiplier ?? 1;
+  editForm.search_price_per_1k = nonNegativePriceOrNull(group.search_price_per_1k);
+  editForm.fetch_price_per_1k = nonNegativePriceOrNull(group.fetch_price_per_1k);
+  editForm.ocr_price_per_1k_pages = nonNegativePriceOrNull(group.ocr_price_per_1k_pages);
   editForm.grok_moderation_refusal_price = group.grok_moderation_refusal_price ?? null;
   editForm.search_provider_base_url = group.search_provider_base_url ?? '';
   editForm.search_provider_api_key = '';
   editForm.clearSearchProviderKey = false;
-  // Server never returns the key itself, only whether one is stored.
-  editForm.searchProviderKeyConfigured = group.search_provider_api_key_set === true;
   // Server never returns the key itself, only whether one is stored.
   editForm.searchProviderKeyConfigured = group.search_provider_api_key_set === true;
   editForm.audio_realtime_price_per_min = group.audio_realtime_price_per_min ?? null;
@@ -5577,6 +5844,7 @@ const handleEdit = async (group: AdminGroup) => {
     group.profit_safety_buffer ?? 0,
   );
   editForm.claude_code_only = group.claude_code_only || false;
+  editForm.save_response_msg_id = group.save_response_msg_id || false;
   editForm.fallback_group_id = group.fallback_group_id;
   editForm.fallback_group_id_on_invalid_request =
     group.fallback_group_id_on_invalid_request;
@@ -5694,12 +5962,15 @@ const closeEditModal = () => {
   editForm.openai_ultrafast_multiplier = "";
   editForm.model_pricing = [];
   editForm.web_search_price_per_call = null;
+  editForm.tool_rate_independent = false;
+  editForm.tool_rate_multiplier = 1;
   editForm.search_price_per_1k = null;
+  editForm.fetch_price_per_1k = null;
+  editForm.ocr_price_per_1k_pages = null;
   editForm.grok_moderation_refusal_price = null;
   editForm.search_provider_base_url = '';
   editForm.search_provider_api_key = '';
   editForm.clearSearchProviderKey = false;
-  editForm.searchProviderKeyConfigured = false;
   editForm.searchProviderKeyConfigured = false;
   editForm.audio_realtime_price_per_min = null;
   editForm.audio_tts_price_per_million_chars = null;
@@ -5707,6 +5978,7 @@ const closeEditModal = () => {
   resetMessagesDispatchFormState(editForm);
   editForm.allow_live = false;
   editForm.cross_protocol_conversion_enabled = false;
+  editForm.save_response_msg_id = false;
   editForm.return_requested_model = false;
   resetModelAllowlistState(editModelAllowlistState);
   editCodexManifestConfig.value = createCodexManifestDefaults();
@@ -5819,6 +6091,8 @@ const handleUpdateGroup = async () => {
           : undefined,
       cross_protocol_conversion_enabled:
         editForm.cross_protocol_conversion_enabled,
+      save_response_msg_id:
+        editForm.platform === "anthropic" && Boolean(editForm.save_response_msg_id),
       reasoning_effort_mappings: reasoningEffortMappingsToAPI(
         editForm.reasoning_effort_mappings,
       ),
@@ -5851,6 +6125,15 @@ const handleUpdateGroup = async () => {
     payload.video_rate_multiplier = normalizeRateMultiplier(
       payload.video_rate_multiplier,
     );
+    if (editForm.platform === "deepseek") {
+      payload.tool_rate_independent = Boolean(editForm.tool_rate_independent);
+      payload.tool_rate_multiplier = normalizeRateMultiplier(
+        payload.tool_rate_multiplier,
+      );
+    } else {
+      payload.tool_rate_independent = false;
+      payload.tool_rate_multiplier = 1;
+    }
     // 媒体价格输入清空时 v-model.number 产生 ""，直接提交会被后端 *float64 反序列化拒绝（400）。
     // 更新语义中 null 表示"不修改"，因此清空后的字段发送 -1：后端 normalizePrice 将负价归一为
     // NULL，从而真正清除已配置的价格。
@@ -5866,6 +6149,9 @@ const handleUpdateGroup = async () => {
     );
     payload.search_price_per_1k = emptyPriceToClear(
       payload.search_price_per_1k,
+    );
+    payload.fetch_price_per_1k = emptyPriceToClear(
+      payload.fetch_price_per_1k,
     );
     // base_url 每次都提交（空串 = 清除）。
     payload.search_provider_base_url = (editForm.search_provider_base_url ?? "").trim();

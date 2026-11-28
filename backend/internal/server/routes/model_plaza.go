@@ -24,6 +24,8 @@ func RegisterModelPlazaRoutes(
 	plaza.Use(panelRateLimiter.PublicIP())
 	plaza.Use(gin.HandlerFunc(optionalJWT))
 	plaza.Use(middleware.BackendModeUserGuard(settingService))
+	// 已认证用户（含个人接口密钥 uak_）叠加按用户限流，匿名请求无 AuthSubject 自动放行。
+	plaza.Use(panelRateLimiter.Global())
 	{
 		plaza.GET("", h.ModelPlaza.Get)
 	}

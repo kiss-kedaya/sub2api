@@ -67,6 +67,10 @@ type PlazaGroup struct {
 	// = 档位价 × VideoRateMultiplier，不乘分组/用户专属倍率（与计费口径一致）。
 	VideoRateIndependent bool
 	VideoRateMultiplier  float64
+	// 工具端点独立倍率：ToolRateIndependent 为 true 时，DeepSeek 工具端点的实付
+	// = 工具单价 × ToolRateMultiplier，不乘分组/用户专属倍率（与计费口径一致）。
+	ToolRateIndependent bool
+	ToolRateMultiplier  float64
 	// LongContextPricingEnabled 分组是否按上下文长度应用阶梯价；关闭时模型展示的是最低档。
 	LongContextPricingEnabled bool
 	Models                    []PlazaModel
@@ -152,6 +156,8 @@ func (s *ModelPlazaService) ListGroups(ctx context.Context) ([]PlazaGroup, error
 			ImageRateMultiplier:       g.ImageRateMultiplier,
 			VideoRateIndependent:      g.VideoRateIndependent,
 			VideoRateMultiplier:       g.VideoRateMultiplier,
+			ToolRateIndependent:       g.ToolRateIndependent,
+			ToolRateMultiplier:        g.ToolRateMultiplier,
 			LongContextPricingEnabled: g.LongContextPricingEnabled,
 		}
 		groupEnt[g.ID] = g
@@ -219,15 +225,17 @@ func (s *ModelPlazaService) ListGroups(ctx context.Context) ([]PlazaGroup, error
 		if len(pg.Models) == 0 {
 			continue
 		}
+		g := groupEnt[gid]
+		appendDeepSeekToolPlazaModels(pg, g)
 		sort.SliceStable(pg.Models, func(i, j int) bool {
 			if pg.Models[i].Name != pg.Models[j].Name {
 				return pg.Models[i].Name < pg.Models[j].Name
 			}
 			return pg.Models[i].Platform < pg.Models[j].Platform
 		})
-		g := groupEnt[gid]
 		for j := range pg.Models {
-			if pricingNeedsFallback(pg.Models[j].Pricing) {
+			isDeepSeekTool := g != nil && g.Platform == PlatformDeepseek && IsDeepSeekToolLabel(pg.Models[j].Name)
+			if !isDeepSeekTool && pricingNeedsFallback(pg.Models[j].Pricing) {
 				one := []SupportedModel{{
 					Name:     pg.Models[j].Name,
 					Platform: pg.Models[j].Platform,
@@ -237,8 +245,12 @@ func (s *ModelPlazaService) ListGroups(ctx context.Context) ([]PlazaGroup, error
 				pg.Models[j].Pricing = one[0].Pricing
 			}
 			sched := s.fillDisplayPricing(ctx, &pg.Models[j], g)
-			official := s.lookupOfficialPricing(ctx, pg.Models[j].Name, officialMemo)
-			pg.Models[j].OfficialPricing = configuredReferencePricing(official, sched)
+			if isDeepSeekTool {
+				pg.Models[j].OfficialPricing = nil
+			} else {
+				official := s.lookupOfficialPricing(ctx, pg.Models[j].Name, officialMemo)
+				pg.Models[j].OfficialPricing = configuredReferencePricing(official, sched)
+			}
 			pg.Models[j].Metadata = s.resolvePlazaMetadata(ctx, pg.Models[j].Platform, pg.Models[j].Name, metadataMemo)
 		}
 		out = append(out, *pg)
@@ -281,6 +293,12 @@ func (s *ModelPlazaService) resolvePlazaMetadata(ctx context.Context, platform, 
 // token 模型取计费阶梯表（单价与档位均由真实计费函数得出），
 // 按次/图片/视频按秒模型（或阶梯表不可用时）按与计费一致的解析链合成展示定价。
 func (s *ModelPlazaService) fillDisplayPricing(ctx context.Context, m *PlazaModel, g *Group) *ContextPricingSchedule {
+	if m != nil && g != nil && g.Platform == PlatformDeepseek && IsDeepSeekToolLabel(m.Name) {
+		if toolPricing := s.plazaDeepSeekToolDisplayPricing(ctx, m.Name, g); toolPricing != nil {
+			m.Pricing = toolPricing
+			return nil
+		}
+	}
 	if m != nil && strings.EqualFold(strings.TrimSpace(m.Name), MiniMaxH3PriceFamily) {
 		if h3 := plazaMiniMaxH3DisplayPricing(g); h3 != nil {
 			m.Pricing = h3
@@ -334,6 +352,11 @@ func isNonTokenBillingMode(mode BillingMode) bool {
 func (s *ModelPlazaService) plazaNonTokenDisplayPricing(ctx context.Context, m *PlazaModel, g *Group) *ChannelModelPricing {
 	if m == nil {
 		return nil
+	}
+	if g != nil && g.Platform == PlatformDeepseek && IsDeepSeekToolLabel(m.Name) {
+		if toolPricing := s.plazaDeepSeekToolDisplayPricing(ctx, m.Name, g); toolPricing != nil {
+			return toolPricing
+		}
 	}
 	if strings.EqualFold(strings.TrimSpace(m.Name), MiniMaxH3PriceFamily) {
 		if h3 := plazaMiniMaxH3DisplayPricing(g); h3 != nil {
@@ -579,6 +602,37 @@ func plazaGroupOnlyVideoDisplayPricing(modelName string, g *Group, bs *BillingSe
 	return &ChannelModelPricing{
 		BillingMode: BillingModeVideo,
 		Intervals:   intervals,
+	}
+}
+
+func appendDeepSeekToolPlazaModels(pg *PlazaGroup, g *Group) {
+	if pg == nil || g == nil || g.Platform != PlatformDeepseek {
+		return
+	}
+	existing := make(map[string]struct{}, len(pg.Models))
+	for i := range pg.Models {
+		existing[strings.ToLower(strings.TrimSpace(pg.Models[i].Name))] = struct{}{}
+	}
+	for _, toolModel := range DeepSeekToolCatalogOrder {
+		if _, ok := existing[toolModel]; ok {
+			continue
+		}
+		pg.Models = append(pg.Models, PlazaModel{
+			Name:     toolModel,
+			Platform: PlatformDeepseek,
+		})
+	}
+}
+
+func (s *ModelPlazaService) plazaDeepSeekToolDisplayPricing(ctx context.Context, modelName string, g *Group) *ChannelModelPricing {
+	unitPrice, ok := ResolveDeepSeekToolUnitPrice(ctx, s.resolver, g, modelName)
+	if !ok {
+		return nil
+	}
+	p := unitPrice
+	return &ChannelModelPricing{
+		BillingMode:     BillingModePerRequest,
+		PerRequestPrice: &p,
 	}
 }
 

@@ -73,40 +73,47 @@ type APIKeyAuthUserSnapshot struct {
 
 // APIKeyAuthGroupSnapshot 分组快照
 type APIKeyAuthGroupSnapshot struct {
-	ID                              int64                         `json:"id"`
-	Name                            string                        `json:"name"`
-	Platform                        string                        `json:"platform"`
-	IsExclusive                     bool                          `json:"is_exclusive"`
-	Status                          string                        `json:"status"`
-	SubscriptionType                string                        `json:"subscription_type"`
-	RateMultiplier                  float64                       `json:"rate_multiplier"`
-	DailyLimitUSD                   *float64                      `json:"daily_limit_usd,omitempty"`
-	WeeklyLimitUSD                  *float64                      `json:"weekly_limit_usd,omitempty"`
-	MonthlyLimitUSD                 *float64                      `json:"monthly_limit_usd,omitempty"`
-	AllowImageGeneration            bool                          `json:"allow_image_generation"`
-	AllowBatchImageGeneration       bool                          `json:"allow_batch_image_generation"`
-	ImageRateIndependent            bool                          `json:"image_rate_independent"`
-	ImageRateMultiplier             float64                       `json:"image_rate_multiplier"`
-	ImagePrice1K                    *float64                      `json:"image_price_1k,omitempty"`
-	ImagePrice2K                    *float64                      `json:"image_price_2k,omitempty"`
-	ImagePrice4K                    *float64                      `json:"image_price_4k,omitempty"`
-	VideoRateIndependent            bool                          `json:"video_rate_independent"`
-	VideoRateMultiplier             float64                       `json:"video_rate_multiplier"`
-	VideoPrice480P                  *float64                      `json:"video_price_480p,omitempty"`
-	VideoPrice720P                  *float64                      `json:"video_price_720p,omitempty"`
-	VideoPrice1080P                 *float64                      `json:"video_price_1080p,omitempty"`
-	VideoModelPrices                map[string]map[string]float64 `json:"video_model_prices,omitempty"`
-	WebSearchPricePerCall           *float64                      `json:"web_search_price_per_call,omitempty"`
-	SearchPricePer1k                *float64                      `json:"search_price_per_1k,omitempty"`
-	OCRPricePer1kPages              *float64                      `json:"ocr_price_per_1k_pages,omitempty"`
-	AudioRealtimePricePerMin        *float64                      `json:"audio_realtime_price_per_min,omitempty"`
-	AudioTTSPricePerMillionChars    *float64                      `json:"audio_tts_price_per_million_chars,omitempty"`
-	AudioSTTPricePerHour            *float64                      `json:"audio_stt_price_per_hour,omitempty"`
-	LongContextPricingEnabled       bool                          `json:"long_context_pricing_enabled"`
-	ModelPricing                    []ChannelModelPricing         `json:"model_pricing,omitempty"`
-	ClaudeCodeOnly                  bool                          `json:"claude_code_only"`
-	FallbackGroupID                 *int64                        `json:"fallback_group_id,omitempty"`
-	FallbackGroupIDOnInvalidRequest *int64                        `json:"fallback_group_id_on_invalid_request,omitempty"`
+	ID                        int64                         `json:"id"`
+	Name                      string                        `json:"name"`
+	Platform                  string                        `json:"platform"`
+	IsExclusive               bool                          `json:"is_exclusive"`
+	Status                    string                        `json:"status"`
+	SubscriptionType          string                        `json:"subscription_type"`
+	RateMultiplier            float64                       `json:"rate_multiplier"`
+	DailyLimitUSD             *float64                      `json:"daily_limit_usd,omitempty"`
+	WeeklyLimitUSD            *float64                      `json:"weekly_limit_usd,omitempty"`
+	MonthlyLimitUSD           *float64                      `json:"monthly_limit_usd,omitempty"`
+	AllowImageGeneration      bool                          `json:"allow_image_generation"`
+	AllowBatchImageGeneration bool                          `json:"allow_batch_image_generation"`
+	ImageRateIndependent      bool                          `json:"image_rate_independent"`
+	ImageRateMultiplier       float64                       `json:"image_rate_multiplier"`
+	ImagePrice1K              *float64                      `json:"image_price_1k,omitempty"`
+	ImagePrice2K              *float64                      `json:"image_price_2k,omitempty"`
+	ImagePrice4K              *float64                      `json:"image_price_4k,omitempty"`
+	VideoRateIndependent      bool                          `json:"video_rate_independent"`
+	VideoRateMultiplier       float64                       `json:"video_rate_multiplier"`
+	VideoPrice480P            *float64                      `json:"video_price_480p,omitempty"`
+	VideoPrice720P            *float64                      `json:"video_price_720p,omitempty"`
+	VideoPrice1080P           *float64                      `json:"video_price_1080p,omitempty"`
+	VideoModelPrices          map[string]map[string]float64 `json:"video_model_prices,omitempty"`
+	WebSearchPricePerCall     *float64                      `json:"web_search_price_per_call,omitempty"`
+	ToolRateIndependent       bool                          `json:"tool_rate_independent"`
+	ToolRateMultiplier        float64                       `json:"tool_rate_multiplier"`
+	SearchPricePer1k          *float64                      `json:"search_price_per_1k,omitempty"`
+	FetchPricePer1k           *float64                      `json:"fetch_price_per_1k,omitempty"`
+	OCRPricePer1kPages        *float64                      `json:"ocr_price_per_1k_pages,omitempty"`
+	// ToolPricingConfigLoaded distinguishes snapshots written by binaries that
+	// include ToolRateIndependent / ToolRateMultiplier / FetchPricePer1k from
+	// older shared-Redis snapshots written during blue-green rollout.
+	ToolPricingConfigLoaded         bool                  `json:"tool_pricing_config_loaded,omitempty"`
+	AudioRealtimePricePerMin        *float64              `json:"audio_realtime_price_per_min,omitempty"`
+	AudioTTSPricePerMillionChars    *float64              `json:"audio_tts_price_per_million_chars,omitempty"`
+	AudioSTTPricePerHour            *float64              `json:"audio_stt_price_per_hour,omitempty"`
+	LongContextPricingEnabled       bool                  `json:"long_context_pricing_enabled"`
+	ModelPricing                    []ChannelModelPricing `json:"model_pricing,omitempty"`
+	ClaudeCodeOnly                  bool                  `json:"claude_code_only"`
+	FallbackGroupID                 *int64                `json:"fallback_group_id,omitempty"`
+	FallbackGroupIDOnInvalidRequest *int64                `json:"fallback_group_id_on_invalid_request,omitempty"`
 
 	// Model routing is used by gateway account selection, so it must be part of auth cache snapshot.
 	// Only anthropic groups use these fields; others may leave them empty.
@@ -126,6 +133,7 @@ type APIKeyAuthGroupSnapshot struct {
 	// 灰度期互相把对方的条目判失效，每次 L1 未命中都打到数据库认证查询上。
 	CrossProtocolConversionEnabled *bool                             `json:"cross_protocol_conversion_enabled,omitempty"`
 	ReturnRequestedModel           bool                              `json:"return_requested_model"`
+	SaveResponseMsgID              bool                              `json:"save_response_msg_id"`
 	AllowLive                      bool                              `json:"allow_live"`
 	ForceOpenAIFast                bool                              `json:"force_openai_fast"`
 	FreeOpenAIFast                 bool                              `json:"free_openai_fast"`

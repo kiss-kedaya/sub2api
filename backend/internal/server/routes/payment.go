@@ -31,6 +31,9 @@ func RegisterPaymentRoutes(
 	// 面板全局按用户限流
 	authenticated.Use(panelRateLimiter.Global())
 	authenticated.Use(middleware.TablePagination(settingService))
+	if auditLog != nil {
+		authenticated.Use(gin.HandlerFunc(auditLog))
+	}
 	{
 		authenticated.GET("/config", paymentHandler.GetPaymentConfig)
 		authenticated.GET("/checkout-info", paymentHandler.GetCheckoutInfo)

@@ -607,14 +607,34 @@ func (s *OpenAIGatewayService) forwardGrokChatCompletionsViaResponses(
 	if account.ProxyID != nil && account.Proxy != nil {
 		proxyURL = account.Proxy.URL()
 	}
-	resp, err := s.doOpenAIUpstream(upstreamReq, proxyURL, account)
+	clientCtx := openAIClientContext(ctx, c)
+	resp, err := s.doOpenAIUpstreamWithHeaderCancel(clientCtx, upstreamReq, proxyURL, account)
 	if err != nil {
+		if clientErr := openAIClientErr(clientCtx); clientErr != nil {
+			if errors.Is(err, errOpenAIRequestNotSent) {
+				return nil, clientErr
+			}
+			return newClientGoneOpenAIForwardResult(
+				c, account, responsesBody, originalModel, billingModel, upstreamModel,
+				extractOpenAIReasoningEffortFromBody(c, body, upstreamModel, billingModel, originalModel),
+				clientStream, startTime,
+			), clientErr
+		}
 		return nil, s.handleOpenAIUpstreamTransportError(ctx, c, account, err, false)
+	}
+	if resp.StatusCode >= http.StatusBadRequest {
+		resp.Body = s.openAIBufferedBodyWithCancel(clientCtx, resp.Body)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode >= http.StatusBadRequest {
+		if clientErr := openAIClientErr(clientCtx); clientErr != nil {
+			return nil, clientErr
+		}
 		respBody, upstreamMsg := s.readOpenAIUpstreamError(resp)
+		if clientErr := openAIClientErr(clientCtx); clientErr != nil {
+			return nil, clientErr
+		}
 		if upstreamMsg == "" {
 			upstreamMsg = fmt.Sprintf("xAI upstream returned status %d", resp.StatusCode)
 		}
@@ -656,6 +676,7 @@ func (s *OpenAIGatewayService) forwardGrokChatCompletionsViaResponses(
 	}
 
 	s.updateGrokUsageFromResponse(withGrokTeamRateLimitModel(ctx, upstreamModel), account, resp.Header, resp.StatusCode)
+	stashCompatUpstreamRequestBody(c, account, responsesBody)
 
 	var result *OpenAIForwardResult
 	if clientStream {

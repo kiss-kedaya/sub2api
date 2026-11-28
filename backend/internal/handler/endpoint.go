@@ -406,6 +406,7 @@ func openAIForwardResultAsGateway(result *service.OpenAIForwardResult) *service.
 		ImageSizeSource:               result.ImageSizeSource,
 		ImageSizeBreakdown:            result.ImageSizeBreakdown,
 		SearchCount:                   result.SearchCount,
+		FetchCount:                    result.FetchCount,
 		FixedToolBilling:              result.FixedToolBilling,
 		AudioUsage:                    result.AudioUsage,
 		OCRPages:                      result.OCRPages,

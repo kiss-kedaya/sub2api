@@ -40,6 +40,18 @@ const (
 	// one slot is always taken by the backup in flight.
 	maxBackupRetainCount = maxBackupRecords - 1
 
+	// maxBackupAgeRecipients caps the number of admin-configured age X25519 public
+	// keys stored in backup_schedule to prevent bloated settings rows and headers.
+	maxBackupAgeRecipients = 16
+
+	// maxBackupRateMBps caps the admin-configured dump throughput limit (MB/s).
+	// 0 means unlimited.
+	maxBackupRateMBps = 500
+
+	// backupRateChunkBytes bounds each Read passed through rateLimitedReader so
+	// throttling paces pg_dump smoothly without large bursts.
+	backupRateChunkBytes = 32 * 1024
+
 	// backupScopeCritical marks a snapshot taken with backup.exclude_table_data:
 	// every table's schema is present but the excluded tables' rows are not.
 	backupScopeCritical = "critical"
@@ -111,6 +123,13 @@ var (
 	// ErrBackupScheduleCorrupt is returned when the persisted backup schedule JSON
 	// cannot be unmarshaled.
 	ErrBackupScheduleCorrupt = infraerrors.InternalServer("BACKUP_SCHEDULE_CORRUPT", "backup schedule config data is corrupted")
+
+	// ErrBackupAgePrivateKeyForbidden rejects an age private key (AGE-SECRET-KEY-...)
+	// pasted into an age_recipients field; the server must only ever store public keys.
+	ErrBackupAgePrivateKeyForbidden = infraerrors.BadRequest(
+		"BACKUP_AGE_PRIVATE_KEY_FORBIDDEN",
+		"age private keys (AGE-SECRET-KEY-...) must never be stored on the server; enter age1... public keys only",
+	)
 
 	// ErrSecretEncryptionKeyNotConfigured prevents storing an S3 credential
 	// before startup has initialized a persistent installation encryption key.
@@ -278,11 +297,13 @@ func (c *BackupS3Config) IsConfigured() bool {
 
 // BackupScheduleConfig 定时备份配置
 type BackupScheduleConfig struct {
-	Enabled      bool   `json:"enabled"`
-	CronExpr     string `json:"cron_expr"`     // cron 表达式，如 "0 2 * * *" 每天凌晨2点
-	RetainDays   int    `json:"retain_days"`   // 备份文件过期天数，默认14，0=不自动清理
-	RetainCount  int    `json:"retain_count"`  // 最多保留份数，0=不限制
-	CriticalOnly bool   `json:"critical_only"` // 仅备份关键表（跳过用量日志、监控、抓包等大表数据，保留全部表结构）
+	Enabled       bool     `json:"enabled"`
+	CronExpr      string   `json:"cron_expr"`                // cron 表达式，如 "0 2 * * *" 每天凌晨2点
+	RetainDays    int      `json:"retain_days"`              // 备份文件过期天数，默认14，0=不自动清理
+	RetainCount   int      `json:"retain_count"`             // 最多保留份数，0=不限制
+	CriticalOnly  bool     `json:"critical_only"`            // 仅备份关键表（跳过用量日志、监控、抓包等大表数据，保留全部表结构）
+	AgeRecipients []string `json:"age_recipients,omitempty"` // 管理员后台配置的 age X25519 公钥（age1...），服务端仅存公钥不存私钥
+	MaxRateMBps   int      `json:"max_rate_mbps,omitempty"`  // 备份导出限速（MB/s），0=不限速，上限 500
 }
 
 // BackupRecord 备份记录
@@ -430,10 +451,34 @@ func (s *BackupService) ServerCriticalModeForced() bool {
 	return s != nil && len(s.backupCfg.ExcludeTableData) > 0
 }
 
+// ServerAgeEncryptionForced reports whether deployment config
+// (backup.age_recipients) enforces age public-key encryption for every backup.
+func (s *BackupService) ServerAgeEncryptionForced() bool {
+	return s != nil && len(s.backupCfg.AgeRecipients) > 0
+}
+
+// ServerAgeRecipientCount returns how many age recipients are configured at
+// deployment level (backup.age_recipients).
+func (s *BackupService) ServerAgeRecipientCount() int {
+	if s == nil {
+		return 0
+	}
+	return len(s.backupCfg.AgeRecipients)
+}
+
 // AgeEncryptionEnabled reports whether server-side age public-key encryption is
 // configured for backup archives.
 func (s *BackupService) AgeEncryptionEnabled() bool {
-	return s != nil && len(s.backupCfg.AgeRecipients) > 0
+	return s.ServerAgeEncryptionForced()
+}
+
+// AgeEncryptionEnabledForSchedule reports whether backups will be age-encrypted
+// given deployment config plus the persisted schedule config.
+func (s *BackupService) AgeEncryptionEnabledForSchedule(cfg *BackupScheduleConfig) bool {
+	if s.ServerAgeEncryptionForced() {
+		return true
+	}
+	return cfg != nil && len(cfg.AgeRecipients) > 0
 }
 
 type resolvedBackupMode struct {
@@ -441,6 +486,16 @@ type resolvedBackupMode struct {
 	excludeTables    []string
 	requireRecipient bool
 	nonDefault       bool
+}
+
+type resolvedBackupRun struct {
+	mode          resolvedBackupMode
+	ageRecipients []string
+	maxRateMBps   int
+}
+
+func (r resolvedBackupRun) encrypted() bool {
+	return len(r.ageRecipients) > 0
 }
 
 func (s *BackupService) resolveBackupMode(opts BackupOptions) resolvedBackupMode {
@@ -466,6 +521,132 @@ func (s *BackupService) resolveBackupMode(opts BackupOptions) resolvedBackupMode
 		requireRecipient: requireRecipient,
 		nonDefault:       scope != "" || s.backupEncrypted() || s.backupCfg.MaxArchiveBytes > 0,
 	}
+}
+
+func (s *BackupService) resolveBackupRun(ctx context.Context, opts BackupOptions) (resolvedBackupRun, error) {
+	mode := s.resolveBackupMode(opts)
+	var schedule *BackupScheduleConfig
+	if s.settingRepo != nil {
+		var err error
+		schedule, err = s.GetSchedule(ctx)
+		if err != nil {
+			return resolvedBackupRun{}, err
+		}
+	}
+
+	var scheduleRecipients []string
+	maxRateMBps := 0
+	if schedule != nil {
+		if len(schedule.AgeRecipients) > maxBackupAgeRecipients {
+			return resolvedBackupRun{}, ErrBackupScheduleCorrupt
+		}
+		scheduleRecipients = schedule.AgeRecipients
+		if schedule.MaxRateMBps < 0 || schedule.MaxRateMBps > maxBackupRateMBps {
+			return resolvedBackupRun{}, ErrBackupScheduleCorrupt
+		}
+		maxRateMBps = schedule.MaxRateMBps
+	}
+
+	recipients := mergeBackupAgeRecipients(s.backupCfg.AgeRecipients, scheduleRecipients)
+	if len(recipients) > 0 {
+		mode.nonDefault = true
+	}
+
+	return resolvedBackupRun{
+		mode:          mode,
+		ageRecipients: recipients,
+		maxRateMBps:   maxRateMBps,
+	}, nil
+}
+
+// mergeBackupAgeRecipients combines deployment-level and admin-configured
+// recipients in order (server keys first so they can never be stripped by DB
+// settings), deduplicating non-empty trimmed entries case-insensitively while
+// preserving blank entries intact so parseAgeRecipients fails closed.
+func mergeBackupAgeRecipients(serverKeys, scheduleKeys []string) []string {
+	total := len(serverKeys) + len(scheduleKeys)
+	if total == 0 {
+		return nil
+	}
+	merged := make([]string, 0, total)
+	seen := make(map[string]struct{}, total)
+	appendRaw := func(keys []string) {
+		for _, k := range keys {
+			trimmed := strings.TrimSpace(k)
+			if trimmed == "" {
+				merged = append(merged, k)
+				continue
+			}
+			dedupKey := strings.ToLower(trimmed)
+			if _, ok := seen[dedupKey]; ok {
+				continue
+			}
+			seen[dedupKey] = struct{}{}
+			merged = append(merged, trimmed)
+		}
+	}
+	appendRaw(serverKeys)
+	appendRaw(scheduleKeys)
+	return merged
+}
+
+// NormalizeAndValidateBackupAgeRecipients trims, deduplicates, and validates
+// admin-submitted age X25519 public keys. Private keys (AGE-SECRET-KEY-...) and
+// invalid public keys are rejected without echoing the input material.
+func NormalizeAndValidateBackupAgeRecipients(raw []string) ([]string, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	// Scan every entry for private key material before checking line format or
+	// input length limits so pasting a full `age-keygen` file always triggers the
+	// explicit private-key warning.
+	for _, entry := range raw {
+		if isAgePrivateKey(entry) {
+			return nil, ErrBackupAgePrivateKeyForbidden
+		}
+	}
+	if len(raw) > maxBackupAgeRecipients*4 {
+		return nil, infraerrors.BadRequest(
+			"BACKUP_AGE_RECIPIENTS_TOO_MANY",
+			fmt.Sprintf("at most %d age recipients are allowed", maxBackupAgeRecipients),
+		)
+	}
+	initCap := min(len(raw), maxBackupAgeRecipients)
+	normalized := make([]string, 0, initCap)
+	seen := make(map[string]struct{}, initCap)
+	for i, entry := range raw {
+		trimmed := strings.TrimSpace(entry)
+		if trimmed == "" {
+			continue
+		}
+		recipient, err := age.ParseX25519Recipient(trimmed)
+		if err != nil {
+			return nil, infraerrors.BadRequest(
+				"BACKUP_AGE_RECIPIENT_INVALID",
+				fmt.Sprintf("age recipient #%d is not a valid age X25519 public key (expected age1...)", i+1),
+			)
+		}
+		canonical := recipient.String()
+		if _, ok := seen[canonical]; ok {
+			continue
+		}
+		seen[canonical] = struct{}{}
+		normalized = append(normalized, canonical)
+		if len(normalized) > maxBackupAgeRecipients {
+			return nil, infraerrors.BadRequest(
+				"BACKUP_AGE_RECIPIENTS_TOO_MANY",
+				fmt.Sprintf("at most %d age recipients are allowed", maxBackupAgeRecipients),
+			)
+		}
+	}
+	if len(normalized) == 0 {
+		return nil, nil
+	}
+	return normalized, nil
+}
+
+func isAgePrivateKey(key string) bool {
+	return strings.Contains(strings.ToUpper(key), "AGE-SECRET-KEY-")
 }
 
 // backupScope is recorded on every backup: "critical" when table data is
@@ -509,13 +690,13 @@ func (s *BackupService) nonDefaultBackup() bool {
 
 // backupFileNameForScope names the archive; the .age suffix tells a human (and
 // the download link) that it is not plain gzip.
-func (s *BackupService) backupFileNameForScope(now time.Time, scope string) string {
+func (s *BackupService) backupFileNameForScope(now time.Time, scope string, encrypted bool) string {
 	suffix := ".sql.gz"
 	if scope == backupScopeCritical {
 		suffix = ".critical.sql.gz"
 	}
 	name := fmt.Sprintf("%s_%s%s", s.dbCfg.DBName, now.Format("20060102_150405"), suffix)
-	if s.backupEncrypted() {
+	if encrypted {
 		name += ".age"
 	}
 	return name
@@ -563,7 +744,7 @@ func (s *BackupService) Start() {
 		logger.LegacyPrintf("service.backup", "[Backup] 加载定时备份配置失败: %v", err)
 		return
 	}
-	if !s.nonDefaultBackup() && schedule.CriticalOnly {
+	if !s.nonDefaultBackup() && (schedule.CriticalOnly || len(schedule.AgeRecipients) > 0) {
 		s.sweepStaleBackupFiles(time.Now())
 	}
 	if schedule.Enabled && schedule.CronExpr != "" {
@@ -827,6 +1008,11 @@ func (s *BackupService) GetSchedule(ctx context.Context) (*BackupScheduleConfig,
 	if err := json.Unmarshal([]byte(raw), &cfg); err != nil {
 		return nil, ErrBackupScheduleCorrupt
 	}
+	for _, entry := range cfg.AgeRecipients {
+		if isAgePrivateKey(entry) {
+			return nil, ErrBackupScheduleCorrupt
+		}
+	}
 	return &cfg, nil
 }
 
@@ -847,6 +1033,14 @@ func (s *BackupService) UpdateSchedule(ctx context.Context, cfg BackupScheduleCo
 	if cfg.Enabled && cfg.RetainCount > maxBackupRetainCount {
 		return nil, infraerrors.BadRequest("INVALID_RETENTION", fmt.Sprintf("retain_count must be at most %d", maxBackupRetainCount))
 	}
+	if cfg.MaxRateMBps < 0 || cfg.MaxRateMBps > maxBackupRateMBps {
+		return nil, infraerrors.BadRequest("INVALID_BACKUP_RATE_LIMIT", fmt.Sprintf("max_rate_mbps must be between 0 and %d", maxBackupRateMBps))
+	}
+	normalizedRecipients, err := NormalizeAndValidateBackupAgeRecipients(cfg.AgeRecipients)
+	if err != nil {
+		return nil, err
+	}
+	cfg.AgeRecipients = normalizedRecipients
 
 	data, err := json.Marshal(cfg)
 	if err != nil {
@@ -892,7 +1086,12 @@ func (s *BackupService) applyCronSchedule(cfg *BackupScheduleConfig) error {
 		return infraerrors.BadRequest("INVALID_CRON", fmt.Sprintf("failed to schedule: %v", err))
 	}
 	s.cronEntryID = entryID
-	logger.LegacyPrintf("service.backup", "[Backup] 定时备份已启用: %s (仅关键表: %v)", cfg.CronExpr, cfg.CriticalOnly || s.ServerCriticalModeForced())
+	logger.LegacyPrintf("service.backup", "[Backup] 定时备份已启用: %s (仅关键表: %v, 加密: %v, 限速MB/s: %d)",
+		cfg.CronExpr,
+		cfg.CriticalOnly || s.ServerCriticalModeForced(),
+		s.AgeEncryptionEnabledForSchedule(cfg),
+		cfg.MaxRateMBps,
+	)
 	return nil
 }
 
@@ -1002,10 +1201,13 @@ func (s *BackupService) CreateBackupWithOptions(ctx context.Context, triggeredBy
 		return nil, fmt.Errorf("init object store: %w", err)
 	}
 
-	mode := s.resolveBackupMode(opts)
+	run, err := s.resolveBackupRun(ctx, opts)
+	if err != nil {
+		return nil, err
+	}
 	now := time.Now()
 	backupID := uuid.New().String()[:8]
-	fileName := s.backupFileNameForScope(now, mode.scope)
+	fileName := s.backupFileNameForScope(now, run.mode.scope, run.encrypted())
 	s3Key := s.buildS3Key(s3Cfg, fileName)
 
 	var expiresAt string
@@ -1017,8 +1219,8 @@ func (s *BackupService) CreateBackupWithOptions(ctx context.Context, triggeredBy
 		ID:          backupID,
 		Status:      "running",
 		BackupType:  "postgres",
-		Scope:       mode.scope,
-		Encrypted:   s.backupEncrypted(),
+		Scope:       run.mode.scope,
+		Encrypted:   run.encrypted(),
 		FileName:    fileName,
 		S3Key:       s3Key,
 		TriggeredBy: triggeredBy,
@@ -1026,7 +1228,7 @@ func (s *BackupService) CreateBackupWithOptions(ctx context.Context, triggeredBy
 		ExpiresAt:   expiresAt,
 	}
 
-	archivePath, sizeBytes, digest, err := s.createCompressedBackupFileWithOptions(ctx, opts)
+	archivePath, sizeBytes, digest, err := s.createCompressedBackupFileForRun(ctx, run)
 	if err != nil {
 		record.Status = "failed"
 		record.ErrorMsg = err.Error()
@@ -1036,7 +1238,7 @@ func (s *BackupService) CreateBackupWithOptions(ctx context.Context, triggeredBy
 	}
 	defer func() { _ = cleanupBackupFiles(archivePath) }()
 	record.SizeBytes = sizeBytes
-	record.SHA256 = recordedDigestForMode(mode, digest)
+	record.SHA256 = recordedDigestForMode(run.mode, digest)
 	if err := s.saveRecord(ctx, record); err != nil {
 		return nil, fmt.Errorf("save initial record: %w", err)
 	}
@@ -1100,10 +1302,21 @@ func (s *BackupService) StartBackupWithOptions(ctx context.Context, triggeredBy 
 		return nil, fmt.Errorf("init object store: %w", err)
 	}
 
-	mode := s.resolveBackupMode(opts)
+	run, err := s.resolveBackupRun(ctx, opts)
+	if err != nil {
+		return nil, err
+	}
+	recipients, err := parseAgeRecipients(run.ageRecipients)
+	if err != nil {
+		return nil, err
+	}
+	if run.mode.requireRecipient && len(recipients) == 0 {
+		return nil, ErrBackupCriticalNeedsRecipient
+	}
+
 	now := time.Now()
 	backupID := uuid.New().String()[:8]
-	fileName := s.backupFileNameForScope(now, mode.scope)
+	fileName := s.backupFileNameForScope(now, run.mode.scope, run.encrypted())
 	s3Key := s.buildS3Key(s3Cfg, fileName)
 
 	var expiresAt string
@@ -1115,8 +1328,8 @@ func (s *BackupService) StartBackupWithOptions(ctx context.Context, triggeredBy 
 		ID:          backupID,
 		Status:      "running",
 		BackupType:  "postgres",
-		Scope:       mode.scope,
-		Encrypted:   s.backupEncrypted(),
+		Scope:       run.mode.scope,
+		Encrypted:   run.encrypted(),
 		FileName:    fileName,
 		S3Key:       s3Key,
 		TriggeredBy: triggeredBy,
@@ -1151,23 +1364,21 @@ func (s *BackupService) StartBackupWithOptions(ctx context.Context, triggeredBy 
 				_ = s.saveRecord(context.Background(), record)
 			}
 		}()
-		s.executeBackup(record, objectStore, s3Cfg, opts)
+		s.executeBackup(record, objectStore, s3Cfg, run)
 	}()
 
 	return &result, nil
 }
 
 // executeBackup 后台执行备份（独立于 HTTP context）
-func (s *BackupService) executeBackup(record *BackupRecord, objectStore BackupObjectStore, s3Cfg *BackupS3Config, opts BackupOptions) {
+func (s *BackupService) executeBackup(record *BackupRecord, objectStore BackupObjectStore, s3Cfg *BackupS3Config, run resolvedBackupRun) {
 	ctx, cancel := context.WithTimeout(s.bgCtx, 30*time.Minute)
 	defer cancel()
 
-	mode := s.resolveBackupMode(opts)
-
-	// 阶段1: pg_dump -> gzip 临时文件
+	// 阶段1: pg_dump -> gzip -> (可选 age) 临时文件
 	record.Progress = "dumping"
 	_ = s.saveRecord(ctx, record)
-	archivePath, sizeBytes, digest, err := s.createCompressedBackupFileWithOptions(ctx, opts)
+	archivePath, sizeBytes, digest, err := s.createCompressedBackupFileForRun(ctx, run)
 	if err != nil {
 		record.Status = "failed"
 		record.ErrorMsg = err.Error()
@@ -1178,7 +1389,7 @@ func (s *BackupService) executeBackup(record *BackupRecord, objectStore BackupOb
 	}
 	defer func() { _ = cleanupBackupFiles(archivePath) }()
 	record.SizeBytes = sizeBytes
-	record.SHA256 = recordedDigestForMode(mode, digest)
+	record.SHA256 = recordedDigestForMode(run.mode, digest)
 
 	// 阶段2: 单对象或分卷上传
 	record.Progress = "uploading"
@@ -1201,15 +1412,12 @@ func (s *BackupService) executeBackup(record *BackupRecord, objectStore BackupOb
 	}
 }
 
-// createCompressedBackupFileWithOptions stages the archive on local disk and
-// returns its path, its size and the SHA-256 (hex) of the bytes written. The
-// digest is computed while writing, so the file is not read a second time.
-func (s *BackupService) createCompressedBackupFileWithOptions(ctx context.Context, opts BackupOptions) (string, int64, string, error) {
-	mode := s.resolveBackupMode(opts)
+func (s *BackupService) createCompressedBackupFileForRun(ctx context.Context, run resolvedBackupRun) (string, int64, string, error) {
+	mode := run.mode
 
 	// Resolve the recipients before pg_dump starts or anything touches the disk:
 	// a bad key must fail the backup, never degrade it into a plaintext archive.
-	recipients, err := parseAgeRecipients(s.backupCfg.AgeRecipients)
+	recipients, err := parseAgeRecipients(run.ageRecipients)
 	if err != nil {
 		return "", 0, "", err
 	}
@@ -1244,7 +1452,11 @@ func (s *BackupService) createCompressedBackupFileWithOptions(ctx context.Contex
 	limit, builtinLimit := s.archiveLimitForScope(mode.scope)
 	digest := sha256.New()
 	sink := &limitedArchiveWriter{w: io.MultiWriter(archive, digest), limit: limit, builtin: builtinLimit}
-	copyErr := s.writeBackupArchiveForScope(sink, dumpReader, recipients, mode.scope)
+	var src io.Reader = dumpReader
+	if run.maxRateMBps > 0 {
+		src = newRateLimitedReader(dumpCtx, dumpReader, int64(run.maxRateMBps)<<20)
+	}
+	copyErr := s.writeBackupArchiveForScope(sink, src, recipients, mode.scope)
 	if copyErr != nil {
 		cancelDump()
 	}
@@ -1346,15 +1558,84 @@ func (s *BackupService) writeBackupArchiveForScope(dst io.Writer, src io.Reader,
 // parseAgeRecipients turns configured age public keys into recipients. The key
 // text is left out of the error on purpose.
 func parseAgeRecipients(keys []string) ([]age.Recipient, error) {
+	for _, key := range keys {
+		if isAgePrivateKey(key) {
+			return nil, ErrBackupAgePrivateKeyForbidden
+		}
+	}
 	recipients := make([]age.Recipient, 0, len(keys))
 	for i, key := range keys {
-		recipient, err := age.ParseX25519Recipient(strings.TrimSpace(key))
+		trimmed := strings.TrimSpace(key)
+		recipient, err := age.ParseX25519Recipient(trimmed)
 		if err != nil {
-			return nil, fmt.Errorf("backup age recipient %d is not a valid age X25519 public key", i+1)
+			return nil, infraerrors.BadRequest(
+				"BACKUP_AGE_RECIPIENT_INVALID",
+				fmt.Sprintf("backup age recipient %d is not a valid age X25519 public key", i+1),
+			)
 		}
 		recipients = append(recipients, recipient)
 	}
 	return recipients, nil
+}
+
+// rateLimitedReader paces reads from r to at most bytesPerSec bytes/sec while
+// honouring ctx cancellation. Throttling pg_dump's stdout pipe backpressures
+// PostgreSQL reads, gzip/age CPU, and staged disk writes together.
+type rateLimitedReader struct {
+	ctx         context.Context
+	r           io.Reader
+	bytesPerSec int64
+	nextAllowed time.Time
+	now         func() time.Time
+}
+
+func newRateLimitedReader(ctx context.Context, r io.Reader, bytesPerSec int64) io.Reader {
+	if bytesPerSec <= 0 {
+		return r
+	}
+	return &rateLimitedReader{
+		ctx:         ctx,
+		r:           r,
+		bytesPerSec: bytesPerSec,
+		now:         time.Now,
+	}
+}
+
+func (rl *rateLimitedReader) Read(p []byte) (int, error) {
+	if err := rl.ctx.Err(); err != nil {
+		return 0, err
+	}
+	now := rl.now()
+	if !rl.nextAllowed.IsZero() {
+		if wait := rl.nextAllowed.Sub(now); wait >= time.Millisecond {
+			timer := time.NewTimer(wait)
+			select {
+			case <-rl.ctx.Done():
+				if !timer.Stop() {
+					select {
+					case <-timer.C:
+					default:
+					}
+				}
+				return 0, rl.ctx.Err()
+			case <-timer.C:
+			}
+			now = rl.now()
+		}
+	}
+	if len(p) > backupRateChunkBytes {
+		p = p[:backupRateChunkBytes]
+	}
+	n, err := rl.r.Read(p)
+	if n > 0 {
+		cost := time.Duration(float64(n) / float64(rl.bytesPerSec) * float64(time.Second))
+		if rl.nextAllowed.IsZero() || rl.nextAllowed.Before(now) {
+			rl.nextAllowed = now.Add(cost)
+		} else {
+			rl.nextAllowed = rl.nextAllowed.Add(cost)
+		}
+	}
+	return n, err
 }
 
 // limitedArchiveWriter counts the bytes that reach the archive on disk and fails

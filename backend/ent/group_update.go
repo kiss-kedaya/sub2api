@@ -680,6 +680,41 @@ func (_u *GroupUpdate) ClearWebSearchPricePerCall() *GroupUpdate {
 	return _u
 }
 
+// SetToolRateIndependent sets the "tool_rate_independent" field.
+func (_u *GroupUpdate) SetToolRateIndependent(v bool) *GroupUpdate {
+	_u.mutation.SetToolRateIndependent(v)
+	return _u
+}
+
+// SetNillableToolRateIndependent sets the "tool_rate_independent" field if the given value is not nil.
+func (_u *GroupUpdate) SetNillableToolRateIndependent(v *bool) *GroupUpdate {
+	if v != nil {
+		_u.SetToolRateIndependent(*v)
+	}
+	return _u
+}
+
+// SetToolRateMultiplier sets the "tool_rate_multiplier" field.
+func (_u *GroupUpdate) SetToolRateMultiplier(v float64) *GroupUpdate {
+	_u.mutation.ResetToolRateMultiplier()
+	_u.mutation.SetToolRateMultiplier(v)
+	return _u
+}
+
+// SetNillableToolRateMultiplier sets the "tool_rate_multiplier" field if the given value is not nil.
+func (_u *GroupUpdate) SetNillableToolRateMultiplier(v *float64) *GroupUpdate {
+	if v != nil {
+		_u.SetToolRateMultiplier(*v)
+	}
+	return _u
+}
+
+// AddToolRateMultiplier adds value to the "tool_rate_multiplier" field.
+func (_u *GroupUpdate) AddToolRateMultiplier(v float64) *GroupUpdate {
+	_u.mutation.AddToolRateMultiplier(v)
+	return _u
+}
+
 // SetSearchPricePer1k sets the "search_price_per_1k" field.
 func (_u *GroupUpdate) SetSearchPricePer1k(v float64) *GroupUpdate {
 	_u.mutation.ResetSearchPricePer1k()
@@ -704,6 +739,33 @@ func (_u *GroupUpdate) AddSearchPricePer1k(v float64) *GroupUpdate {
 // ClearSearchPricePer1k clears the value of the "search_price_per_1k" field.
 func (_u *GroupUpdate) ClearSearchPricePer1k() *GroupUpdate {
 	_u.mutation.ClearSearchPricePer1k()
+	return _u
+}
+
+// SetFetchPricePer1k sets the "fetch_price_per_1k" field.
+func (_u *GroupUpdate) SetFetchPricePer1k(v float64) *GroupUpdate {
+	_u.mutation.ResetFetchPricePer1k()
+	_u.mutation.SetFetchPricePer1k(v)
+	return _u
+}
+
+// SetNillableFetchPricePer1k sets the "fetch_price_per_1k" field if the given value is not nil.
+func (_u *GroupUpdate) SetNillableFetchPricePer1k(v *float64) *GroupUpdate {
+	if v != nil {
+		_u.SetFetchPricePer1k(*v)
+	}
+	return _u
+}
+
+// AddFetchPricePer1k adds value to the "fetch_price_per_1k" field.
+func (_u *GroupUpdate) AddFetchPricePer1k(v float64) *GroupUpdate {
+	_u.mutation.AddFetchPricePer1k(v)
+	return _u
+}
+
+// ClearFetchPricePer1k clears the value of the "fetch_price_per_1k" field.
+func (_u *GroupUpdate) ClearFetchPricePer1k() *GroupUpdate {
+	_u.mutation.ClearFetchPricePer1k()
 	return _u
 }
 
@@ -1093,6 +1155,20 @@ func (_u *GroupUpdate) SetReturnRequestedModel(v bool) *GroupUpdate {
 func (_u *GroupUpdate) SetNillableReturnRequestedModel(v *bool) *GroupUpdate {
 	if v != nil {
 		_u.SetReturnRequestedModel(*v)
+	}
+	return _u
+}
+
+// SetSaveResponseMsgID sets the "save_response_msg_id" field.
+func (_u *GroupUpdate) SetSaveResponseMsgID(v bool) *GroupUpdate {
+	_u.mutation.SetSaveResponseMsgID(v)
+	return _u
+}
+
+// SetNillableSaveResponseMsgID sets the "save_response_msg_id" field if the given value is not nil.
+func (_u *GroupUpdate) SetNillableSaveResponseMsgID(v *bool) *GroupUpdate {
+	if v != nil {
+		_u.SetSaveResponseMsgID(*v)
 	}
 	return _u
 }
@@ -1694,6 +1770,11 @@ func (_u *GroupUpdate) check() error {
 			return &ValidationError{Name: "search_price_per_1k", err: fmt.Errorf(`ent: validator failed for field "Group.search_price_per_1k": %w`, err)}
 		}
 	}
+	if v, ok := _u.mutation.FetchPricePer1k(); ok {
+		if err := group.FetchPricePer1kValidator(v); err != nil {
+			return &ValidationError{Name: "fetch_price_per_1k", err: fmt.Errorf(`ent: validator failed for field "Group.fetch_price_per_1k": %w`, err)}
+		}
+	}
 	if v, ok := _u.mutation.OcrPricePer1kPages(); ok {
 		if err := group.OcrPricePer1kPagesValidator(v); err != nil {
 			return &ValidationError{Name: "ocr_price_per_1k_pages", err: fmt.Errorf(`ent: validator failed for field "Group.ocr_price_per_1k_pages": %w`, err)}
@@ -1941,6 +2022,15 @@ func (_u *GroupUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	if _u.mutation.WebSearchPricePerCallCleared() {
 		_spec.ClearField(group.FieldWebSearchPricePerCall, field.TypeFloat64)
 	}
+	if value, ok := _u.mutation.ToolRateIndependent(); ok {
+		_spec.SetField(group.FieldToolRateIndependent, field.TypeBool, value)
+	}
+	if value, ok := _u.mutation.ToolRateMultiplier(); ok {
+		_spec.SetField(group.FieldToolRateMultiplier, field.TypeFloat64, value)
+	}
+	if value, ok := _u.mutation.AddedToolRateMultiplier(); ok {
+		_spec.AddField(group.FieldToolRateMultiplier, field.TypeFloat64, value)
+	}
 	if value, ok := _u.mutation.SearchPricePer1k(); ok {
 		_spec.SetField(group.FieldSearchPricePer1k, field.TypeFloat64, value)
 	}
@@ -1949,6 +2039,15 @@ func (_u *GroupUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	}
 	if _u.mutation.SearchPricePer1kCleared() {
 		_spec.ClearField(group.FieldSearchPricePer1k, field.TypeFloat64)
+	}
+	if value, ok := _u.mutation.FetchPricePer1k(); ok {
+		_spec.SetField(group.FieldFetchPricePer1k, field.TypeFloat64, value)
+	}
+	if value, ok := _u.mutation.AddedFetchPricePer1k(); ok {
+		_spec.AddField(group.FieldFetchPricePer1k, field.TypeFloat64, value)
+	}
+	if _u.mutation.FetchPricePer1kCleared() {
+		_spec.ClearField(group.FieldFetchPricePer1k, field.TypeFloat64)
 	}
 	if value, ok := _u.mutation.OcrPricePer1kPages(); ok {
 		_spec.SetField(group.FieldOcrPricePer1kPages, field.TypeFloat64, value)
@@ -2076,6 +2175,9 @@ func (_u *GroupUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	}
 	if value, ok := _u.mutation.ReturnRequestedModel(); ok {
 		_spec.SetField(group.FieldReturnRequestedModel, field.TypeBool, value)
+	}
+	if value, ok := _u.mutation.SaveResponseMsgID(); ok {
+		_spec.SetField(group.FieldSaveResponseMsgID, field.TypeBool, value)
 	}
 	if value, ok := _u.mutation.AllowLive(); ok {
 		_spec.SetField(group.FieldAllowLive, field.TypeBool, value)
@@ -3114,6 +3216,41 @@ func (_u *GroupUpdateOne) ClearWebSearchPricePerCall() *GroupUpdateOne {
 	return _u
 }
 
+// SetToolRateIndependent sets the "tool_rate_independent" field.
+func (_u *GroupUpdateOne) SetToolRateIndependent(v bool) *GroupUpdateOne {
+	_u.mutation.SetToolRateIndependent(v)
+	return _u
+}
+
+// SetNillableToolRateIndependent sets the "tool_rate_independent" field if the given value is not nil.
+func (_u *GroupUpdateOne) SetNillableToolRateIndependent(v *bool) *GroupUpdateOne {
+	if v != nil {
+		_u.SetToolRateIndependent(*v)
+	}
+	return _u
+}
+
+// SetToolRateMultiplier sets the "tool_rate_multiplier" field.
+func (_u *GroupUpdateOne) SetToolRateMultiplier(v float64) *GroupUpdateOne {
+	_u.mutation.ResetToolRateMultiplier()
+	_u.mutation.SetToolRateMultiplier(v)
+	return _u
+}
+
+// SetNillableToolRateMultiplier sets the "tool_rate_multiplier" field if the given value is not nil.
+func (_u *GroupUpdateOne) SetNillableToolRateMultiplier(v *float64) *GroupUpdateOne {
+	if v != nil {
+		_u.SetToolRateMultiplier(*v)
+	}
+	return _u
+}
+
+// AddToolRateMultiplier adds value to the "tool_rate_multiplier" field.
+func (_u *GroupUpdateOne) AddToolRateMultiplier(v float64) *GroupUpdateOne {
+	_u.mutation.AddToolRateMultiplier(v)
+	return _u
+}
+
 // SetSearchPricePer1k sets the "search_price_per_1k" field.
 func (_u *GroupUpdateOne) SetSearchPricePer1k(v float64) *GroupUpdateOne {
 	_u.mutation.ResetSearchPricePer1k()
@@ -3138,6 +3275,33 @@ func (_u *GroupUpdateOne) AddSearchPricePer1k(v float64) *GroupUpdateOne {
 // ClearSearchPricePer1k clears the value of the "search_price_per_1k" field.
 func (_u *GroupUpdateOne) ClearSearchPricePer1k() *GroupUpdateOne {
 	_u.mutation.ClearSearchPricePer1k()
+	return _u
+}
+
+// SetFetchPricePer1k sets the "fetch_price_per_1k" field.
+func (_u *GroupUpdateOne) SetFetchPricePer1k(v float64) *GroupUpdateOne {
+	_u.mutation.ResetFetchPricePer1k()
+	_u.mutation.SetFetchPricePer1k(v)
+	return _u
+}
+
+// SetNillableFetchPricePer1k sets the "fetch_price_per_1k" field if the given value is not nil.
+func (_u *GroupUpdateOne) SetNillableFetchPricePer1k(v *float64) *GroupUpdateOne {
+	if v != nil {
+		_u.SetFetchPricePer1k(*v)
+	}
+	return _u
+}
+
+// AddFetchPricePer1k adds value to the "fetch_price_per_1k" field.
+func (_u *GroupUpdateOne) AddFetchPricePer1k(v float64) *GroupUpdateOne {
+	_u.mutation.AddFetchPricePer1k(v)
+	return _u
+}
+
+// ClearFetchPricePer1k clears the value of the "fetch_price_per_1k" field.
+func (_u *GroupUpdateOne) ClearFetchPricePer1k() *GroupUpdateOne {
+	_u.mutation.ClearFetchPricePer1k()
 	return _u
 }
 
@@ -3527,6 +3691,20 @@ func (_u *GroupUpdateOne) SetReturnRequestedModel(v bool) *GroupUpdateOne {
 func (_u *GroupUpdateOne) SetNillableReturnRequestedModel(v *bool) *GroupUpdateOne {
 	if v != nil {
 		_u.SetReturnRequestedModel(*v)
+	}
+	return _u
+}
+
+// SetSaveResponseMsgID sets the "save_response_msg_id" field.
+func (_u *GroupUpdateOne) SetSaveResponseMsgID(v bool) *GroupUpdateOne {
+	_u.mutation.SetSaveResponseMsgID(v)
+	return _u
+}
+
+// SetNillableSaveResponseMsgID sets the "save_response_msg_id" field if the given value is not nil.
+func (_u *GroupUpdateOne) SetNillableSaveResponseMsgID(v *bool) *GroupUpdateOne {
+	if v != nil {
+		_u.SetSaveResponseMsgID(*v)
 	}
 	return _u
 }
@@ -4141,6 +4319,11 @@ func (_u *GroupUpdateOne) check() error {
 			return &ValidationError{Name: "search_price_per_1k", err: fmt.Errorf(`ent: validator failed for field "Group.search_price_per_1k": %w`, err)}
 		}
 	}
+	if v, ok := _u.mutation.FetchPricePer1k(); ok {
+		if err := group.FetchPricePer1kValidator(v); err != nil {
+			return &ValidationError{Name: "fetch_price_per_1k", err: fmt.Errorf(`ent: validator failed for field "Group.fetch_price_per_1k": %w`, err)}
+		}
+	}
 	if v, ok := _u.mutation.OcrPricePer1kPages(); ok {
 		if err := group.OcrPricePer1kPagesValidator(v); err != nil {
 			return &ValidationError{Name: "ocr_price_per_1k_pages", err: fmt.Errorf(`ent: validator failed for field "Group.ocr_price_per_1k_pages": %w`, err)}
@@ -4405,6 +4588,15 @@ func (_u *GroupUpdateOne) sqlSave(ctx context.Context) (_node *Group, err error)
 	if _u.mutation.WebSearchPricePerCallCleared() {
 		_spec.ClearField(group.FieldWebSearchPricePerCall, field.TypeFloat64)
 	}
+	if value, ok := _u.mutation.ToolRateIndependent(); ok {
+		_spec.SetField(group.FieldToolRateIndependent, field.TypeBool, value)
+	}
+	if value, ok := _u.mutation.ToolRateMultiplier(); ok {
+		_spec.SetField(group.FieldToolRateMultiplier, field.TypeFloat64, value)
+	}
+	if value, ok := _u.mutation.AddedToolRateMultiplier(); ok {
+		_spec.AddField(group.FieldToolRateMultiplier, field.TypeFloat64, value)
+	}
 	if value, ok := _u.mutation.SearchPricePer1k(); ok {
 		_spec.SetField(group.FieldSearchPricePer1k, field.TypeFloat64, value)
 	}
@@ -4413,6 +4605,15 @@ func (_u *GroupUpdateOne) sqlSave(ctx context.Context) (_node *Group, err error)
 	}
 	if _u.mutation.SearchPricePer1kCleared() {
 		_spec.ClearField(group.FieldSearchPricePer1k, field.TypeFloat64)
+	}
+	if value, ok := _u.mutation.FetchPricePer1k(); ok {
+		_spec.SetField(group.FieldFetchPricePer1k, field.TypeFloat64, value)
+	}
+	if value, ok := _u.mutation.AddedFetchPricePer1k(); ok {
+		_spec.AddField(group.FieldFetchPricePer1k, field.TypeFloat64, value)
+	}
+	if _u.mutation.FetchPricePer1kCleared() {
+		_spec.ClearField(group.FieldFetchPricePer1k, field.TypeFloat64)
 	}
 	if value, ok := _u.mutation.OcrPricePer1kPages(); ok {
 		_spec.SetField(group.FieldOcrPricePer1kPages, field.TypeFloat64, value)
@@ -4540,6 +4741,9 @@ func (_u *GroupUpdateOne) sqlSave(ctx context.Context) (_node *Group, err error)
 	}
 	if value, ok := _u.mutation.ReturnRequestedModel(); ok {
 		_spec.SetField(group.FieldReturnRequestedModel, field.TypeBool, value)
+	}
+	if value, ok := _u.mutation.SaveResponseMsgID(); ok {
+		_spec.SetField(group.FieldSaveResponseMsgID, field.TypeBool, value)
 	}
 	if value, ok := _u.mutation.AllowLive(); ok {
 		_spec.SetField(group.FieldAllowLive, field.TypeBool, value)

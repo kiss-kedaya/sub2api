@@ -62,6 +62,8 @@
         :image-rate-multiplier="group.image_rate_multiplier"
         :video-rate-independent="group.video_rate_independent"
         :video-rate-multiplier="group.video_rate_multiplier"
+        :tool-rate-independent="group.tool_rate_independent"
+        :tool-rate-multiplier="group.tool_rate_multiplier"
         :peak-window="peakWindow"
         :peak-rate-multiplier="group.peak_rate_multiplier"
       />

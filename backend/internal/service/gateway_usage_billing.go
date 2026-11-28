@@ -11,6 +11,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/timezone"
+	"github.com/Wei-Shaw/sub2api/internal/util/clientprivacy"
 )
 
 func (s *GatewayService) getUserGroupRateMultiplier(ctx context.Context, userID, groupID int64, groupDefaultMultiplier float64) float64 {
@@ -251,6 +252,86 @@ func resolveUsageBillingRequestID(ctx context.Context, upstreamRequestID string)
 		return requestID
 	}
 	return "generated:" + generateRequestID()
+}
+
+// resolveUsageResponseRequestID returns the X-Request-Id header returned to the
+// client, always captured regardless of group msgid settings.
+func resolveUsageResponseRequestID(ctx context.Context, resultRequestID string) *string {
+	if ctx != nil {
+		if v, ok := ctx.Value(ctxkey.ResponseRequestID).(string); ok {
+			if normalized := normalizeUsageTraceID(v); normalized != "" {
+				return &normalized
+			}
+			// Explicit empty value means usageRecordContext observed the live HTTP
+			// response headers and no X-Request-Id was sent (e.g. force_remove).
+			return nil
+		}
+		if ginCtx := OpsGinContextFrom(ctx); ginCtx != nil && ginCtx.Writer != nil {
+			if vals := ginCtx.Writer.Header().Values("X-Request-Id"); len(vals) > 0 {
+				for i := len(vals) - 1; i >= 0; i-- {
+					if normalized := normalizeUsageTraceID(vals[i]); normalized != "" {
+						return &normalized
+					}
+				}
+			}
+			// Live HTTP response had no X-Request-Id header (e.g. force_remove);
+			// do not leak un-sent upstream resultRequestID into a client-visible column.
+			return nil
+		}
+		if v, _ := ctx.Value(ctxkey.RequestID).(string); v != "" {
+			if normalized := normalizeUsageTraceID(v); normalized != "" {
+				return &normalized
+			}
+		}
+	}
+	if trimmed := strings.TrimSpace(resultRequestID); trimmed != "" && !isForcedUsageBillingRequestID(trimmed) {
+		if clientprivacy.Text(trimmed) == trimmed {
+			if normalized := normalizeUsageTraceID(trimmed); normalized != "" {
+				return &normalized
+			}
+		}
+	}
+	return nil
+}
+
+// resolveUsageClientRequestID returns the X-Client-Request-Id header returned to
+// the client, always captured regardless of group msgid settings.
+func resolveUsageClientRequestID(ctx context.Context) *string {
+	if ctx == nil {
+		return nil
+	}
+	if v, _ := ctx.Value(ctxkey.ClientRequestID).(string); v != "" {
+		if normalized := normalizeUsageTraceID(v); normalized != "" {
+			return &normalized
+		}
+	}
+	return nil
+}
+
+// resolveUsageResponseMsgID returns the Claude/Anthropic response message id
+// (e.g. msg_...) only when the effective Anthropic group enables SaveResponseMsgID.
+func resolveUsageResponseMsgID(ctx context.Context, apiKey *APIKey, rawMsgID string) *string {
+	enabled := false
+	hasOverride := false
+	if ctx != nil {
+		if flag, ok := ctx.Value(ctxkey.SaveResponseMsgID).(bool); ok {
+			enabled = flag
+			hasOverride = true
+		} else if g, ok := ctx.Value(ctxkey.Group).(*Group); ok && g != nil {
+			enabled = g.Platform == PlatformAnthropic && g.SaveResponseMsgID
+			hasOverride = true
+		}
+	}
+	if !hasOverride && apiKey != nil && apiKey.Group != nil {
+		enabled = apiKey.Group.Platform == PlatformAnthropic && apiKey.Group.SaveResponseMsgID
+	}
+	if !enabled {
+		return nil
+	}
+	if normalized := normalizeUsageTraceID(rawMsgID); normalized != "" {
+		return &normalized
+	}
+	return nil
 }
 
 func isForcedUsageBillingRequestID(requestID string) bool {
@@ -872,7 +953,9 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 	if pricingAt.IsZero() {
 		pricingAt = timezone.Now()
 	}
-	multiplier, imageMultiplier := computePeakAwareMultipliers(apiKey, multiplier, pricingAt)
+	baseMultiplier := multiplier
+	multiplier, imageMultiplier := computePeakAwareMultipliers(apiKey, baseMultiplier, pricingAt)
+	toolMultiplier := resolveToolRateMultiplier(apiKey, baseMultiplier)
 
 	// 确定计费模型
 	concreteBillingModel := forwardResultBillingModel(result.Model, result.UpstreamModel)
@@ -921,7 +1004,7 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 	}
 
 	// 计算费用
-	cost := s.calculateRecordUsageCost(billingCtx, result, apiKey, billingModel, multiplier, imageMultiplier, pricingAt)
+	cost := s.calculateRecordUsageCostWithToolMultiplier(billingCtx, result, apiKey, billingModel, multiplier, imageMultiplier, toolMultiplier, pricingAt)
 	if result.ForcedBillingCost > 0 {
 		cost = &CostBreakdown{
 			TotalCost:   result.ForcedBillingCost,
@@ -937,10 +1020,10 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 		input.BillingModelSource,
 		result.UpstreamResponseModel,
 		result.UpstreamResponseModelConflict,
-		result.ImageCount > 0 || result.AudioUsage != nil || result.OCRPages > 0 || result.SearchCount > 0 || result.CacheStorageTokenHours > 0,
+		result.ImageCount > 0 || result.AudioUsage != nil || result.OCRPages > 0 || result.SearchCount > 0 || result.FetchCount > 0 || result.CacheStorageTokenHours > 0,
 	); responseModel != "" && !strings.EqualFold(responseModel, strings.TrimSpace(billingModel)) {
 		if identified, responseChannelPriced := s.hasIdentifiedResponseModelPricing(billingCtx, responseModel, apiKey); identified {
-			responseCost := s.calculateRecordUsageCost(billingCtx, result, apiKey, responseModel, multiplier, imageMultiplier, pricingAt)
+			responseCost := s.calculateRecordUsageCostWithToolMultiplier(billingCtx, result, apiKey, responseModel, multiplier, imageMultiplier, toolMultiplier, pricingAt)
 			baselineChannelPriced := s.resolveChannelPricing(billingCtx, billingModel, apiKey) != nil
 			if responseModelBillingAdoptable(cost, responseCost, baselineChannelPriced, responseChannelPriced) {
 				// billingModel 到此为止只是定价查表的入参，后续流程只消费 cost，
@@ -974,7 +1057,7 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 	// 创建使用日志
 	accountRateMultiplier := account.BillingRateMultiplier()
 	usageLog := s.buildRecordUsageLog(ctx, input, result, apiKey, user, account, subscription,
-		requestedModel, multiplier, imageMultiplier, accountRateMultiplier, billingType, cacheTTLOverridden, cost)
+		requestedModel, multiplier, imageMultiplier, toolMultiplier, accountRateMultiplier, billingType, cacheTTLOverridden, cost)
 	if claudeRefusal {
 		// 用量页「类型」列显示「Claude违规拒答」；Stream 标志保持真实值（入库时 legacy 字段沿用）。
 		usageLog.RequestType = RequestTypeClaudeRefusal
@@ -1050,7 +1133,9 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 	return nil
 }
 
-// calculateRecordUsageCost 根据请求类型计算费用。
+// calculateRecordUsageCost 根据请求类型计算费用（保留给旧调用方/单测；
+// 注意此处 multiplier 若含高峰因子会透传给工具倍率，生产路径 recordUsageCore
+// 请使用 calculateRecordUsageCostWithToolMultiplier 显式传入不含高峰的 toolMultiplier）。
 func (s *GatewayService) calculateRecordUsageCost(
 	ctx context.Context,
 	result *ForwardResult,
@@ -1058,6 +1143,22 @@ func (s *GatewayService) calculateRecordUsageCost(
 	billingModel string,
 	multiplier float64,
 	imageMultiplier float64,
+	pricingAt time.Time,
+) *CostBreakdown {
+	return s.calculateRecordUsageCostWithToolMultiplier(
+		ctx, result, apiKey, billingModel, multiplier, imageMultiplier,
+		resolveToolRateMultiplier(apiKey, multiplier), pricingAt,
+	)
+}
+
+func (s *GatewayService) calculateRecordUsageCostWithToolMultiplier(
+	ctx context.Context,
+	result *ForwardResult,
+	apiKey *APIKey,
+	billingModel string,
+	multiplier float64,
+	imageMultiplier float64,
+	toolMultiplier float64,
 	pricingAt time.Time,
 ) *CostBreakdown {
 	// 图片生成：渠道定价为 token 计费时走 token 路径，否则走图片计费
@@ -1069,12 +1170,12 @@ func (s *GatewayService) calculateRecordUsageCost(
 	}
 
 	if result.OCRPages > 0 {
-		return s.billingService.CalculateOCRCost(result.OCRPages, groupOCRPriceFromAPIKey(apiKey), 1)
+		return CalculateDeepSeekToolCost(ctx, s.resolver, apiKeyGroup(apiKey), DeepSeekToolsLabelOCR, float64(result.OCRPages), toolMultiplier)
 	}
 	// Voice audio (TTS / STT / realtime) when present on the forward result.
 	if result.AudioUsage != nil {
 		if result.FixedToolBilling && isDeepSeekSpeechLabel(result.Model) {
-			return s.billingService.CalculateAudioCost(result.AudioUsage.Mode, result.AudioUsage.DurationOrUnits, deepSeekAudioPriceConfig(apiKey), 1)
+			return CalculateDeepSeekToolCost(ctx, s.resolver, apiKeyGroup(apiKey), result.Model, result.AudioUsage.DurationOrUnits, toolMultiplier)
 		}
 		if resolved := s.resolveChannelPricing(ctx, billingModel, apiKey); resolved != nil &&
 			resolved.Mode == BillingModePerRequest {
@@ -1092,29 +1193,52 @@ func (s *GatewayService) calculateRecordUsageCost(
 		return s.billingService.CalculateAudioCost(result.AudioUsage.Mode, result.AudioUsage.DurationOrUnits, cfg, multiplier)
 	}
 
-	// Token 计费；SearchCount 为叠加 surcharge（不替代 token）。
+	// Token 计费；SearchCount/FetchCount 为叠加 surcharge（不替代 token）。
 	var tokenCost *CostBreakdown
 	if isCacheStorageOnlyResult(result) {
 		tokenCost = &CostBreakdown{BillingMode: string(BillingModeToken)}
 	} else {
 		tokenCost = s.calculateTokenCost(ctx, result, apiKey, billingModel, multiplier, pricingAt)
 	}
-	if result.SearchCount > 0 {
-		price := groupSearchPricePer1kFromAPIKey(apiKey)
-		if price != nil && *price == 0 {
-			logger.LegacyPrintf("service.gateway", "[Billing] search_price_per_1k explicit 0; search free group_model=%s count=%d", billingModel, result.SearchCount)
-		}
-		toolMultiplier := multiplier
-		if result.FixedToolBilling {
-			toolMultiplier = 1
-		}
-		searchCost := s.billingService.CalculateSearchCost(result.SearchCount, price, toolMultiplier)
-		if searchCost != nil && (searchCost.TotalCost > 0 || searchCost.ActualCost > 0) {
-			if tokenCost == nil {
-				return searchCost
+	if result.SearchCount > 0 || result.FetchCount > 0 {
+		group := apiKeyGroup(apiKey)
+		isDeepSeekHosted := result.FixedToolBilling || (group != nil && group.Platform == PlatformDeepseek)
+		var surchargeTotal, surchargeActual float64
+		if result.SearchCount > 0 {
+			price := groupSearchPricePer1kFromAPIKey(apiKey)
+			var sc *CostBreakdown
+			if isDeepSeekHosted {
+				sc = CalculateDeepSeekToolCost(ctx, s.resolver, group, DeepSeekToolsLabelSearch, float64(result.SearchCount), toolMultiplier)
+				if price != nil && *price == 0 && (sc == nil || sc.TotalCost == 0) {
+					logger.LegacyPrintf("service.gateway", "[Billing] search_price_per_1k explicit 0; search free group_model=%s count=%d", billingModel, result.SearchCount)
+				}
+			} else if s.billingService != nil {
+				if price != nil && *price == 0 {
+					logger.LegacyPrintf("service.gateway", "[Billing] search_price_per_1k explicit 0; search free group_model=%s count=%d", billingModel, result.SearchCount)
+				}
+				sc = s.billingService.CalculateSearchCost(result.SearchCount, price, multiplier)
 			}
-			tokenCost.TotalCost += searchCost.TotalCost
-			tokenCost.ActualCost += searchCost.ActualCost
+			if sc != nil {
+				surchargeTotal += sc.TotalCost
+				surchargeActual += sc.ActualCost
+			}
+		}
+		if result.FetchCount > 0 {
+			if fc := CalculateDeepSeekToolCost(ctx, s.resolver, group, DeepSeekToolsLabelFetch, float64(result.FetchCount), toolMultiplier); fc != nil {
+				surchargeTotal += fc.TotalCost
+				surchargeActual += fc.ActualCost
+			}
+		}
+		if surchargeTotal > 0 || surchargeActual > 0 {
+			if tokenCost == nil {
+				return &CostBreakdown{
+					TotalCost:   surchargeTotal,
+					ActualCost:  surchargeActual,
+					BillingMode: string(BillingModePerRequest),
+				}
+			}
+			tokenCost.TotalCost += surchargeTotal
+			tokenCost.ActualCost += surchargeActual
 		}
 	}
 	if storageCost := s.cacheStorageCost(result, billingModel); storageCost > 0 {
@@ -1322,6 +1446,7 @@ func (s *GatewayService) buildRecordUsageLog(
 	requestedModel string,
 	multiplier float64,
 	imageMultiplier float64,
+	toolMultiplier float64,
 	accountRateMultiplier float64,
 	billingType int8,
 	cacheTTLOverridden bool,
@@ -1329,6 +1454,11 @@ func (s *GatewayService) buildRecordUsageLog(
 ) *UsageLog {
 	durationMs := int(result.Duration.Milliseconds())
 	requestID := resolveUsageBillingRequestID(ctx, result.RequestID)
+	if guard, ok := BalancePreauthorizationGuardFromContext(ctx); ok {
+		if guardReqID := strings.TrimSpace(guard.RequestID()); guardReqID != "" {
+			requestID = guardReqID
+		}
+	}
 	sentModel := upstreamSentModel(result.Model, result.UpstreamModel)
 	if result.UpstreamResponseModelConflict {
 		slog.Warn("upstream_response_model_conflict",
@@ -1344,6 +1474,9 @@ func (s *GatewayService) buildRecordUsageLog(
 		APIKeyID:                 apiKey.ID,
 		AccountID:                account.ID,
 		RequestID:                requestID,
+		ResponseRequestID:        resolveUsageResponseRequestID(ctx, result.RequestID),
+		ClientRequestID:          resolveUsageClientRequestID(ctx),
+		ResponseMsgID:            resolveUsageResponseMsgID(ctx, apiKey, result.ResponseMsgID),
 		UpstreamRequestID:        usageUpstreamRequestIDPtr(account, result.UpstreamHeaders, false),
 		Model:                    result.Model,
 		RequestedModel:           requestedModel,
@@ -1388,8 +1521,16 @@ func (s *GatewayService) buildRecordUsageLog(
 	if result.ImageCount > 0 && (cost == nil || cost.BillingMode != string(BillingModeToken)) {
 		usageLog.RateMultiplier = imageMultiplier
 	}
-	if result.FixedToolBilling && (result.OCRPages > 0 || result.AudioUsage != nil) {
-		usageLog.RateMultiplier = 1
+	isDeepSeekToolOnlyCharge := result.FixedToolBilling && (result.OCRPages > 0 ||
+		result.AudioUsage != nil ||
+		((result.SearchCount > 0 || result.FetchCount > 0) &&
+			result.Usage.InputTokens == 0 &&
+			result.Usage.OutputTokens == 0 &&
+			result.Usage.CacheCreationInputTokens == 0 &&
+			result.Usage.CacheReadInputTokens == 0 &&
+			result.Usage.ImageOutputTokens == 0))
+	if isDeepSeekToolOnlyCharge {
+		usageLog.RateMultiplier = toolMultiplier
 	}
 	if cost != nil {
 		usageLog.InputCost = cost.InputCost

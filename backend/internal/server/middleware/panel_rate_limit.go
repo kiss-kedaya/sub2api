@@ -153,7 +153,12 @@ func (p *PanelRateLimiter) fixedUserAllow(c *gin.Context, bucket string, limit i
 	if counts != nil && !counts(c) {
 		return true
 	}
-	key := "panel:" + bucket + ":user:" + strconv.FormatInt(subject.UserID, 10)
+	scopePrefix := ":user:"
+	if c.GetString("auth_method") == service.AuditAuthMethodUserAPIKey {
+		// 个人接口密钥独立计数，避免失控脚本占满同一账号交互式会话的校验配额（例如重置密钥）。
+		scopePrefix = ":personal-key:"
+	}
+	key := "panel:" + bucket + scopePrefix + strconv.FormatInt(subject.UserID, 10)
 	result, err := p.limiter.Allow(c.Request.Context(), key, limit, window)
 	if err != nil {
 		slog.Warn("panel fixed-tier rate limit check failed, allowing request", "bucket", bucket, "error", err)
@@ -196,12 +201,19 @@ func requestRegeneratesKey(c *gin.Context) bool {
 
 func (p *PanelRateLimiter) userScoped(scope string, limitOf func(service.PanelRateLimitSettings) int) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		if p == nil || p.limiter == nil || p.settingService == nil {
+		if p == nil || p.limiter == nil {
 			c.Next()
 			return
 		}
-		settings := p.settingService.GetPanelRateLimitSettingsCached(c.Request.Context())
-		if !settings.Enabled {
+		isUserAPIKey := c.GetString("auth_method") == service.AuditAuthMethodUserAPIKey
+		var settings service.PanelRateLimitSettings
+		if p.settingService != nil {
+			settings = p.settingService.GetPanelRateLimitSettingsCached(c.Request.Context())
+		} else if !isUserAPIKey {
+			c.Next()
+			return
+		}
+		if !settings.Enabled && !isUserAPIKey {
 			c.Next()
 			return
 		}
@@ -212,7 +224,8 @@ func (p *PanelRateLimiter) userScoped(scope string, limitOf func(service.PanelRa
 			return
 		}
 		principal := adminaccess.FromContext(c.Request.Context())
-		if settings.ExemptAdmin && principal == nil {
+		isMachineKey := principal != nil || isUserAPIKey
+		if settings.ExemptAdmin && !isMachineKey {
 			if role, hasRole := GetUserRoleFromContext(c); hasRole && role == service.RoleAdmin {
 				c.Next()
 				return
@@ -222,22 +235,50 @@ func (p *PanelRateLimiter) userScoped(scope string, limitOf func(service.PanelRa
 		identity := "user:" + strconv.FormatInt(subject.UserID, 10)
 		if principal != nil {
 			identity = "admin-key:" + principal.KeyID
+		} else if isUserAPIKey {
+			// 个人接口密钥使用独立限流桶，既保证自动化脚本无法饿死同一账号的浏览器交互，
+			// 也无法通过混用会话绕过机器密钥限流。
+			identity = "personal-key:" + strconv.FormatInt(subject.UserID, 10)
 		}
 		type rateLimitCheck struct {
 			scope string
 			limit int
 		}
-		checks := []rateLimitCheck{{scope, limitOf(settings)}}
-		if scope == "global" && principal != nil && c.Request.Method != http.MethodGet &&
+		primaryLimit := limitOf(settings)
+		heavyLimit := settings.HeavyRPM
+		if isUserAPIKey {
+			// 即使全局面板限流开关关闭，个人接口密钥也始终受保底限流约束。
+			effectiveRead := service.UserPersonalAPIKeyFallbackReadRPM
+			effectiveWrite := service.UserPersonalAPIKeyFallbackWriteRPM
+			if settings.Enabled {
+				if settings.UserRPM > 0 {
+					effectiveRead = settings.UserRPM
+				}
+				if settings.HeavyRPM > 0 {
+					effectiveWrite = settings.HeavyRPM
+				}
+			}
+			if effectiveWrite > effectiveRead {
+				effectiveWrite = effectiveRead
+			}
+			if scope == "heavy" {
+				primaryLimit = effectiveWrite
+			} else {
+				primaryLimit = effectiveRead
+			}
+			heavyLimit = effectiveWrite
+		}
+		checks := []rateLimitCheck{{scope, primaryLimit}}
+		if scope == "global" && isMachineKey && c.Request.Method != http.MethodGet &&
 			c.Request.Method != http.MethodHead && c.Request.Method != http.MethodOptions {
-			checks = append(checks, rateLimitCheck{"heavy", settings.HeavyRPM})
+			checks = append(checks, rateLimitCheck{"heavy", heavyLimit})
 		}
 		for _, check := range checks {
-			if check.limit <= 0 || (principal != nil && check.scope == "heavy" && c.GetBool(panelHeavyRateLimitChecked)) {
+			if check.limit <= 0 || (isMachineKey && check.scope == "heavy" && c.GetBool(panelHeavyRateLimitChecked)) {
 				continue
 			}
-			if principal != nil && check.scope == "heavy" {
-				// Global 已为受限密钥写入计数，路由再挂 Heavy 时不能重复消耗额度。
+			if isMachineKey && check.scope == "heavy" {
+				// Global 已为机器密钥写入计数，路由再挂 Heavy 时不能重复消耗额度。
 				c.Set(panelHeavyRateLimitChecked, true)
 			}
 			key := "panel:" + check.scope + ":" + identity

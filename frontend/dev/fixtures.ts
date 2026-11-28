@@ -64,7 +64,9 @@ export function createFixtures(now = new Date()) {
     image_price_1k: null, image_price_2k: null, image_price_4k: null,
     video_rate_independent: false, video_rate_multiplier: 1,
     video_price_480p: null, video_price_720p: null, video_price_1080p: null,
-    web_search_price_per_call: null, search_price_per_1k: null, grok_moderation_refusal_price: null,
+    web_search_price_per_call: null, tool_rate_independent: false, tool_rate_multiplier: 1,
+    search_price_per_1k: null, fetch_price_per_1k: null, ocr_price_per_1k_pages: null,
+    grok_moderation_refusal_price: null,
     audio_realtime_price_per_min: null, audio_tts_price_per_million_chars: null,
     audio_stt_price_per_hour: null, peak_rate_enabled: false, peak_start: '', peak_end: '',
     peak_rate_multiplier: 1, claude_code_only: false, fallback_group_id: null,
@@ -95,9 +97,19 @@ export function createFixtures(now = new Date()) {
       const cacheCreationCost = cacheCreation * 3.75 / 1_000_000
       const cost = inputCost + outputCost + cacheReadCost + cacheCreationCost
       const stream = j % 4 !== 0
+      const seqHex = String(usage.length + 1).padStart(12, '0')
+      const responseRequestId = `4276cee5-69e9-497a-9318-${seqHex}`
+      const clientRequestId = `564966d3-8995-44d3-bc78-${seqHex}`
+      const responseMsgId = group.platform === 'anthropic'
+        ? `msg_01Demo${String(usage.length + 1).padStart(8, '0')}`
+        : null
       usage.push({
         id: usage.length + 1, user_id: user.id, api_key_id: key.id, account_id: null,
-        request_id: `demo-request-${day}-${j}`, model: models[group.id - 1],
+        request_id: `client:${clientRequestId}`,
+        response_request_id: responseRequestId,
+        client_request_id: clientRequestId,
+        response_msg_id: responseMsgId,
+        model: models[group.id - 1],
         inbound_endpoint: group.platform === 'anthropic' ? '/v1/messages' : '/v1/responses',
         upstream_endpoint: null, group_id: group.id, subscription_id: null,
         input_tokens: input, output_tokens: output, cache_creation_tokens: cacheCreation,
@@ -113,6 +125,15 @@ export function createFixtures(now = new Date()) {
         ip_address: '192.0.2.10', cache_ttl_overridden: false, billing_mode: 'token',
         created_at: new Date(created).toISOString(), api_key: key, group,
       })
+    }
+  }
+  for (let i = usage.length - 1; i >= 0; i--) {
+    if (usage[i].group?.platform === 'anthropic') {
+      usage[i].response_request_id = '4276cee5-69e9-497a-9318-f99c84625bac'
+      usage[i].client_request_id = '564966d3-8995-44d3-bc78-b5730b19a922'
+      usage[i].request_id = 'client:564966d3-8995-44d3-bc78-b5730b19a922'
+      usage[i].response_msg_id = 'msg_011ChSwsWaLgTDX3Ay9jabZw'
+      break
     }
   }
   for (const key of keys) {
@@ -196,6 +217,7 @@ function createAdminFixtures(now: Date, groups: Group[], sourceKeys: ApiKey[], s
     profit_safety_buffer: 0.03,
     model_routing: null,
     model_routing_enabled: false,
+    save_response_msg_id: group.platform === 'anthropic',
     mcp_xml_inject: false,
     account_count: 3,
     active_account_count: index === 3 ? 2 : 3,
@@ -597,6 +619,8 @@ function createPageFixtures(now: Date, user: User, groups: Group[]) {
       image_rate_multiplier: index === 3 ? 2 : 1,
       video_rate_independent: index === 3,
       video_rate_multiplier: index === 3 ? 0.5 : 1,
+      tool_rate_independent: false,
+      tool_rate_multiplier: 1,
       long_context_pricing_enabled: index !== 4,
       models: [
         ...(plazaCatalog[group.platform] ?? []).map(model => ({
@@ -651,6 +675,28 @@ function createPageFixtures(now: Date, user: User, groups: Group[]) {
           },
           official_pricing: null,
         }] : []),
+        ...(group.platform === 'deepseek' ? [
+          { name: 'deepseek-tools-search', unitPrice: 0.005 },
+          { name: 'deepseek-tools-fetch', unitPrice: 0.005 },
+          { name: 'deepseek-tools-ocr', unitPrice: 0.0015 },
+          { name: 'deepseek-tools-tts', unitPrice: 300 },
+          { name: 'deepseek-tools-asr', unitPrice: 0.78 },
+        ].map(tool => ({
+          name: tool.name,
+          platform: 'deepseek',
+          pricing: {
+            billing_mode: 'per_request' as const,
+            input_price: null,
+            output_price: null,
+            cache_write_price: null,
+            cache_read_price: null,
+            image_input_price: null,
+            image_output_price: null,
+            per_request_price: tool.unitPrice,
+            intervals: [],
+          },
+          official_pricing: null,
+        })) : []),
       ],
     })),
   }

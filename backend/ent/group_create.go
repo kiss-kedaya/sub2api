@@ -504,6 +504,34 @@ func (_c *GroupCreate) SetNillableWebSearchPricePerCall(v *float64) *GroupCreate
 	return _c
 }
 
+// SetToolRateIndependent sets the "tool_rate_independent" field.
+func (_c *GroupCreate) SetToolRateIndependent(v bool) *GroupCreate {
+	_c.mutation.SetToolRateIndependent(v)
+	return _c
+}
+
+// SetNillableToolRateIndependent sets the "tool_rate_independent" field if the given value is not nil.
+func (_c *GroupCreate) SetNillableToolRateIndependent(v *bool) *GroupCreate {
+	if v != nil {
+		_c.SetToolRateIndependent(*v)
+	}
+	return _c
+}
+
+// SetToolRateMultiplier sets the "tool_rate_multiplier" field.
+func (_c *GroupCreate) SetToolRateMultiplier(v float64) *GroupCreate {
+	_c.mutation.SetToolRateMultiplier(v)
+	return _c
+}
+
+// SetNillableToolRateMultiplier sets the "tool_rate_multiplier" field if the given value is not nil.
+func (_c *GroupCreate) SetNillableToolRateMultiplier(v *float64) *GroupCreate {
+	if v != nil {
+		_c.SetToolRateMultiplier(*v)
+	}
+	return _c
+}
+
 // SetSearchPricePer1k sets the "search_price_per_1k" field.
 func (_c *GroupCreate) SetSearchPricePer1k(v float64) *GroupCreate {
 	_c.mutation.SetSearchPricePer1k(v)
@@ -514,6 +542,20 @@ func (_c *GroupCreate) SetSearchPricePer1k(v float64) *GroupCreate {
 func (_c *GroupCreate) SetNillableSearchPricePer1k(v *float64) *GroupCreate {
 	if v != nil {
 		_c.SetSearchPricePer1k(*v)
+	}
+	return _c
+}
+
+// SetFetchPricePer1k sets the "fetch_price_per_1k" field.
+func (_c *GroupCreate) SetFetchPricePer1k(v float64) *GroupCreate {
+	_c.mutation.SetFetchPricePer1k(v)
+	return _c
+}
+
+// SetNillableFetchPricePer1k sets the "fetch_price_per_1k" field if the given value is not nil.
+func (_c *GroupCreate) SetNillableFetchPricePer1k(v *float64) *GroupCreate {
+	if v != nil {
+		_c.SetFetchPricePer1k(*v)
 	}
 	return _c
 }
@@ -770,6 +812,20 @@ func (_c *GroupCreate) SetReturnRequestedModel(v bool) *GroupCreate {
 func (_c *GroupCreate) SetNillableReturnRequestedModel(v *bool) *GroupCreate {
 	if v != nil {
 		_c.SetReturnRequestedModel(*v)
+	}
+	return _c
+}
+
+// SetSaveResponseMsgID sets the "save_response_msg_id" field.
+func (_c *GroupCreate) SetSaveResponseMsgID(v bool) *GroupCreate {
+	_c.mutation.SetSaveResponseMsgID(v)
+	return _c
+}
+
+// SetNillableSaveResponseMsgID sets the "save_response_msg_id" field if the given value is not nil.
+func (_c *GroupCreate) SetNillableSaveResponseMsgID(v *bool) *GroupCreate {
+	if v != nil {
+		_c.SetSaveResponseMsgID(*v)
 	}
 	return _c
 }
@@ -1231,6 +1287,14 @@ func (_c *GroupCreate) defaults() error {
 		v := group.DefaultVideoRateMultiplier
 		_c.mutation.SetVideoRateMultiplier(v)
 	}
+	if _, ok := _c.mutation.ToolRateIndependent(); !ok {
+		v := group.DefaultToolRateIndependent
+		_c.mutation.SetToolRateIndependent(v)
+	}
+	if _, ok := _c.mutation.ToolRateMultiplier(); !ok {
+		v := group.DefaultToolRateMultiplier
+		_c.mutation.SetToolRateMultiplier(v)
+	}
 	if _, ok := _c.mutation.LongContextPricingEnabled(); !ok {
 		v := group.DefaultLongContextPricingEnabled
 		_c.mutation.SetLongContextPricingEnabled(v)
@@ -1266,6 +1330,10 @@ func (_c *GroupCreate) defaults() error {
 	if _, ok := _c.mutation.ReturnRequestedModel(); !ok {
 		v := group.DefaultReturnRequestedModel
 		_c.mutation.SetReturnRequestedModel(v)
+	}
+	if _, ok := _c.mutation.SaveResponseMsgID(); !ok {
+		v := group.DefaultSaveResponseMsgID
+		_c.mutation.SetSaveResponseMsgID(v)
 	}
 	if _, ok := _c.mutation.AllowLive(); !ok {
 		v := group.DefaultAllowLive
@@ -1434,9 +1502,20 @@ func (_c *GroupCreate) check() error {
 	if _, ok := _c.mutation.VideoRateMultiplier(); !ok {
 		return &ValidationError{Name: "video_rate_multiplier", err: errors.New(`ent: missing required field "Group.video_rate_multiplier"`)}
 	}
+	if _, ok := _c.mutation.ToolRateIndependent(); !ok {
+		return &ValidationError{Name: "tool_rate_independent", err: errors.New(`ent: missing required field "Group.tool_rate_independent"`)}
+	}
+	if _, ok := _c.mutation.ToolRateMultiplier(); !ok {
+		return &ValidationError{Name: "tool_rate_multiplier", err: errors.New(`ent: missing required field "Group.tool_rate_multiplier"`)}
+	}
 	if v, ok := _c.mutation.SearchPricePer1k(); ok {
 		if err := group.SearchPricePer1kValidator(v); err != nil {
 			return &ValidationError{Name: "search_price_per_1k", err: fmt.Errorf(`ent: validator failed for field "Group.search_price_per_1k": %w`, err)}
+		}
+	}
+	if v, ok := _c.mutation.FetchPricePer1k(); ok {
+		if err := group.FetchPricePer1kValidator(v); err != nil {
+			return &ValidationError{Name: "fetch_price_per_1k", err: fmt.Errorf(`ent: validator failed for field "Group.fetch_price_per_1k": %w`, err)}
 		}
 	}
 	if v, ok := _c.mutation.OcrPricePer1kPages(); ok {
@@ -1490,6 +1569,9 @@ func (_c *GroupCreate) check() error {
 	}
 	if _, ok := _c.mutation.ReturnRequestedModel(); !ok {
 		return &ValidationError{Name: "return_requested_model", err: errors.New(`ent: missing required field "Group.return_requested_model"`)}
+	}
+	if _, ok := _c.mutation.SaveResponseMsgID(); !ok {
+		return &ValidationError{Name: "save_response_msg_id", err: errors.New(`ent: missing required field "Group.save_response_msg_id"`)}
 	}
 	if _, ok := _c.mutation.AllowLive(); !ok {
 		return &ValidationError{Name: "allow_live", err: errors.New(`ent: missing required field "Group.allow_live"`)}
@@ -1721,9 +1803,21 @@ func (_c *GroupCreate) createSpec() (*Group, *sqlgraph.CreateSpec) {
 		_spec.SetField(group.FieldWebSearchPricePerCall, field.TypeFloat64, value)
 		_node.WebSearchPricePerCall = &value
 	}
+	if value, ok := _c.mutation.ToolRateIndependent(); ok {
+		_spec.SetField(group.FieldToolRateIndependent, field.TypeBool, value)
+		_node.ToolRateIndependent = value
+	}
+	if value, ok := _c.mutation.ToolRateMultiplier(); ok {
+		_spec.SetField(group.FieldToolRateMultiplier, field.TypeFloat64, value)
+		_node.ToolRateMultiplier = value
+	}
 	if value, ok := _c.mutation.SearchPricePer1k(); ok {
 		_spec.SetField(group.FieldSearchPricePer1k, field.TypeFloat64, value)
 		_node.SearchPricePer1k = &value
+	}
+	if value, ok := _c.mutation.FetchPricePer1k(); ok {
+		_spec.SetField(group.FieldFetchPricePer1k, field.TypeFloat64, value)
+		_node.FetchPricePer1k = &value
 	}
 	if value, ok := _c.mutation.OcrPricePer1kPages(); ok {
 		_spec.SetField(group.FieldOcrPricePer1kPages, field.TypeFloat64, value)
@@ -1804,6 +1898,10 @@ func (_c *GroupCreate) createSpec() (*Group, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.ReturnRequestedModel(); ok {
 		_spec.SetField(group.FieldReturnRequestedModel, field.TypeBool, value)
 		_node.ReturnRequestedModel = value
+	}
+	if value, ok := _c.mutation.SaveResponseMsgID(); ok {
+		_spec.SetField(group.FieldSaveResponseMsgID, field.TypeBool, value)
+		_node.SaveResponseMsgID = value
 	}
 	if value, ok := _c.mutation.AllowLive(); ok {
 		_spec.SetField(group.FieldAllowLive, field.TypeBool, value)
@@ -2609,6 +2707,36 @@ func (u *GroupUpsert) ClearWebSearchPricePerCall() *GroupUpsert {
 	return u
 }
 
+// SetToolRateIndependent sets the "tool_rate_independent" field.
+func (u *GroupUpsert) SetToolRateIndependent(v bool) *GroupUpsert {
+	u.Set(group.FieldToolRateIndependent, v)
+	return u
+}
+
+// UpdateToolRateIndependent sets the "tool_rate_independent" field to the value that was provided on create.
+func (u *GroupUpsert) UpdateToolRateIndependent() *GroupUpsert {
+	u.SetExcluded(group.FieldToolRateIndependent)
+	return u
+}
+
+// SetToolRateMultiplier sets the "tool_rate_multiplier" field.
+func (u *GroupUpsert) SetToolRateMultiplier(v float64) *GroupUpsert {
+	u.Set(group.FieldToolRateMultiplier, v)
+	return u
+}
+
+// UpdateToolRateMultiplier sets the "tool_rate_multiplier" field to the value that was provided on create.
+func (u *GroupUpsert) UpdateToolRateMultiplier() *GroupUpsert {
+	u.SetExcluded(group.FieldToolRateMultiplier)
+	return u
+}
+
+// AddToolRateMultiplier adds v to the "tool_rate_multiplier" field.
+func (u *GroupUpsert) AddToolRateMultiplier(v float64) *GroupUpsert {
+	u.Add(group.FieldToolRateMultiplier, v)
+	return u
+}
+
 // SetSearchPricePer1k sets the "search_price_per_1k" field.
 func (u *GroupUpsert) SetSearchPricePer1k(v float64) *GroupUpsert {
 	u.Set(group.FieldSearchPricePer1k, v)
@@ -2630,6 +2758,30 @@ func (u *GroupUpsert) AddSearchPricePer1k(v float64) *GroupUpsert {
 // ClearSearchPricePer1k clears the value of the "search_price_per_1k" field.
 func (u *GroupUpsert) ClearSearchPricePer1k() *GroupUpsert {
 	u.SetNull(group.FieldSearchPricePer1k)
+	return u
+}
+
+// SetFetchPricePer1k sets the "fetch_price_per_1k" field.
+func (u *GroupUpsert) SetFetchPricePer1k(v float64) *GroupUpsert {
+	u.Set(group.FieldFetchPricePer1k, v)
+	return u
+}
+
+// UpdateFetchPricePer1k sets the "fetch_price_per_1k" field to the value that was provided on create.
+func (u *GroupUpsert) UpdateFetchPricePer1k() *GroupUpsert {
+	u.SetExcluded(group.FieldFetchPricePer1k)
+	return u
+}
+
+// AddFetchPricePer1k adds v to the "fetch_price_per_1k" field.
+func (u *GroupUpsert) AddFetchPricePer1k(v float64) *GroupUpsert {
+	u.Add(group.FieldFetchPricePer1k, v)
+	return u
+}
+
+// ClearFetchPricePer1k clears the value of the "fetch_price_per_1k" field.
+func (u *GroupUpsert) ClearFetchPricePer1k() *GroupUpsert {
+	u.SetNull(group.FieldFetchPricePer1k)
 	return u
 }
 
@@ -2984,6 +3136,18 @@ func (u *GroupUpsert) SetReturnRequestedModel(v bool) *GroupUpsert {
 // UpdateReturnRequestedModel sets the "return_requested_model" field to the value that was provided on create.
 func (u *GroupUpsert) UpdateReturnRequestedModel() *GroupUpsert {
 	u.SetExcluded(group.FieldReturnRequestedModel)
+	return u
+}
+
+// SetSaveResponseMsgID sets the "save_response_msg_id" field.
+func (u *GroupUpsert) SetSaveResponseMsgID(v bool) *GroupUpsert {
+	u.Set(group.FieldSaveResponseMsgID, v)
+	return u
+}
+
+// UpdateSaveResponseMsgID sets the "save_response_msg_id" field to the value that was provided on create.
+func (u *GroupUpsert) UpdateSaveResponseMsgID() *GroupUpsert {
+	u.SetExcluded(group.FieldSaveResponseMsgID)
 	return u
 }
 
@@ -3965,6 +4129,41 @@ func (u *GroupUpsertOne) ClearWebSearchPricePerCall() *GroupUpsertOne {
 	})
 }
 
+// SetToolRateIndependent sets the "tool_rate_independent" field.
+func (u *GroupUpsertOne) SetToolRateIndependent(v bool) *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetToolRateIndependent(v)
+	})
+}
+
+// UpdateToolRateIndependent sets the "tool_rate_independent" field to the value that was provided on create.
+func (u *GroupUpsertOne) UpdateToolRateIndependent() *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateToolRateIndependent()
+	})
+}
+
+// SetToolRateMultiplier sets the "tool_rate_multiplier" field.
+func (u *GroupUpsertOne) SetToolRateMultiplier(v float64) *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetToolRateMultiplier(v)
+	})
+}
+
+// AddToolRateMultiplier adds v to the "tool_rate_multiplier" field.
+func (u *GroupUpsertOne) AddToolRateMultiplier(v float64) *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.AddToolRateMultiplier(v)
+	})
+}
+
+// UpdateToolRateMultiplier sets the "tool_rate_multiplier" field to the value that was provided on create.
+func (u *GroupUpsertOne) UpdateToolRateMultiplier() *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateToolRateMultiplier()
+	})
+}
+
 // SetSearchPricePer1k sets the "search_price_per_1k" field.
 func (u *GroupUpsertOne) SetSearchPricePer1k(v float64) *GroupUpsertOne {
 	return u.Update(func(s *GroupUpsert) {
@@ -3990,6 +4189,34 @@ func (u *GroupUpsertOne) UpdateSearchPricePer1k() *GroupUpsertOne {
 func (u *GroupUpsertOne) ClearSearchPricePer1k() *GroupUpsertOne {
 	return u.Update(func(s *GroupUpsert) {
 		s.ClearSearchPricePer1k()
+	})
+}
+
+// SetFetchPricePer1k sets the "fetch_price_per_1k" field.
+func (u *GroupUpsertOne) SetFetchPricePer1k(v float64) *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetFetchPricePer1k(v)
+	})
+}
+
+// AddFetchPricePer1k adds v to the "fetch_price_per_1k" field.
+func (u *GroupUpsertOne) AddFetchPricePer1k(v float64) *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.AddFetchPricePer1k(v)
+	})
+}
+
+// UpdateFetchPricePer1k sets the "fetch_price_per_1k" field to the value that was provided on create.
+func (u *GroupUpsertOne) UpdateFetchPricePer1k() *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateFetchPricePer1k()
+	})
+}
+
+// ClearFetchPricePer1k clears the value of the "fetch_price_per_1k" field.
+func (u *GroupUpsertOne) ClearFetchPricePer1k() *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.ClearFetchPricePer1k()
 	})
 }
 
@@ -4403,6 +4630,20 @@ func (u *GroupUpsertOne) SetReturnRequestedModel(v bool) *GroupUpsertOne {
 func (u *GroupUpsertOne) UpdateReturnRequestedModel() *GroupUpsertOne {
 	return u.Update(func(s *GroupUpsert) {
 		s.UpdateReturnRequestedModel()
+	})
+}
+
+// SetSaveResponseMsgID sets the "save_response_msg_id" field.
+func (u *GroupUpsertOne) SetSaveResponseMsgID(v bool) *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetSaveResponseMsgID(v)
+	})
+}
+
+// UpdateSaveResponseMsgID sets the "save_response_msg_id" field to the value that was provided on create.
+func (u *GroupUpsertOne) UpdateSaveResponseMsgID() *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateSaveResponseMsgID()
 	})
 }
 
@@ -5593,6 +5834,41 @@ func (u *GroupUpsertBulk) ClearWebSearchPricePerCall() *GroupUpsertBulk {
 	})
 }
 
+// SetToolRateIndependent sets the "tool_rate_independent" field.
+func (u *GroupUpsertBulk) SetToolRateIndependent(v bool) *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetToolRateIndependent(v)
+	})
+}
+
+// UpdateToolRateIndependent sets the "tool_rate_independent" field to the value that was provided on create.
+func (u *GroupUpsertBulk) UpdateToolRateIndependent() *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateToolRateIndependent()
+	})
+}
+
+// SetToolRateMultiplier sets the "tool_rate_multiplier" field.
+func (u *GroupUpsertBulk) SetToolRateMultiplier(v float64) *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetToolRateMultiplier(v)
+	})
+}
+
+// AddToolRateMultiplier adds v to the "tool_rate_multiplier" field.
+func (u *GroupUpsertBulk) AddToolRateMultiplier(v float64) *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.AddToolRateMultiplier(v)
+	})
+}
+
+// UpdateToolRateMultiplier sets the "tool_rate_multiplier" field to the value that was provided on create.
+func (u *GroupUpsertBulk) UpdateToolRateMultiplier() *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateToolRateMultiplier()
+	})
+}
+
 // SetSearchPricePer1k sets the "search_price_per_1k" field.
 func (u *GroupUpsertBulk) SetSearchPricePer1k(v float64) *GroupUpsertBulk {
 	return u.Update(func(s *GroupUpsert) {
@@ -5618,6 +5894,34 @@ func (u *GroupUpsertBulk) UpdateSearchPricePer1k() *GroupUpsertBulk {
 func (u *GroupUpsertBulk) ClearSearchPricePer1k() *GroupUpsertBulk {
 	return u.Update(func(s *GroupUpsert) {
 		s.ClearSearchPricePer1k()
+	})
+}
+
+// SetFetchPricePer1k sets the "fetch_price_per_1k" field.
+func (u *GroupUpsertBulk) SetFetchPricePer1k(v float64) *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetFetchPricePer1k(v)
+	})
+}
+
+// AddFetchPricePer1k adds v to the "fetch_price_per_1k" field.
+func (u *GroupUpsertBulk) AddFetchPricePer1k(v float64) *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.AddFetchPricePer1k(v)
+	})
+}
+
+// UpdateFetchPricePer1k sets the "fetch_price_per_1k" field to the value that was provided on create.
+func (u *GroupUpsertBulk) UpdateFetchPricePer1k() *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateFetchPricePer1k()
+	})
+}
+
+// ClearFetchPricePer1k clears the value of the "fetch_price_per_1k" field.
+func (u *GroupUpsertBulk) ClearFetchPricePer1k() *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.ClearFetchPricePer1k()
 	})
 }
 
@@ -6031,6 +6335,20 @@ func (u *GroupUpsertBulk) SetReturnRequestedModel(v bool) *GroupUpsertBulk {
 func (u *GroupUpsertBulk) UpdateReturnRequestedModel() *GroupUpsertBulk {
 	return u.Update(func(s *GroupUpsert) {
 		s.UpdateReturnRequestedModel()
+	})
+}
+
+// SetSaveResponseMsgID sets the "save_response_msg_id" field.
+func (u *GroupUpsertBulk) SetSaveResponseMsgID(v bool) *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetSaveResponseMsgID(v)
+	})
+}
+
+// UpdateSaveResponseMsgID sets the "save_response_msg_id" field to the value that was provided on create.
+func (u *GroupUpsertBulk) UpdateSaveResponseMsgID() *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateSaveResponseMsgID()
 	})
 }
 

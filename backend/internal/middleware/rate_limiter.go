@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"sync/atomic"
 	"time"
 
 	ippkg "github.com/Wei-Shaw/sub2api/internal/pkg/ip"
@@ -207,6 +208,8 @@ func (r *RateLimiter) LimitWithOptions(key string, limit int, window time.Durati
 	}
 }
 
+var slidingMemberSeq uint64
+
 // AllowSliding 对给定 key 执行滑动窗口计数判定：任意 window 时长内最多 limit 次。
 // 超限时 RetryAfter 为最早一次尝试离开窗口还剩的时间；Redis 错误由调用方决定
 // fail-open / fail-close。与固定窗口的 Allow 共用 RateLimiter 实例与前缀。
@@ -219,7 +222,8 @@ func (r *RateLimiter) AllowSliding(ctx context.Context, key string, limit int, w
 	}
 	redisKey := r.prefix + key
 	windowMillis := windowTTLMillis(window)
-	member := strconv.FormatInt(time.Now().UnixNano(), 10)
+	seq := atomic.AddUint64(&slidingMemberSeq, 1)
+	member := strconv.FormatInt(time.Now().UnixNano(), 10) + ":" + strconv.FormatUint(seq, 36)
 
 	count, retryMillis, allowed, err := rateLimitSlidingRun(ctx, r.redis, redisKey, windowMillis, int64(limit), member)
 	if err != nil {

@@ -864,3 +864,94 @@ func TestListGroups_ChannelWildcardPerRequestOnAccountListedModel(t *testing.T) 
 	require.NotNil(t, m.Pricing.PerRequestPrice)
 	require.InDelta(t, 1.5, *m.Pricing.PerRequestPrice, 1e-12)
 }
+
+func TestListGroups_DeepSeekToolPricingAndOverrides(t *testing.T) {
+	// DeepSeek 分组自动暴露 5 个工具端点：
+	// - 分组显式列 / per_request 价卡 > 渠道 per_request > 官方默认价；
+	// - Fetch 未配时回落 Search（再回落官方默认），显式 0 表示免费不回落；
+	// - 渠道通配 token 价卡 deepseek-* 不可劫持工具的按次定价；
+	// - ToolRateIndependent / ToolRateMultiplier 透传至 PlazaGroup。
+	channels := []Channel{{
+		ID: 1, Name: "ds-ch", Status: StatusActive, GroupIDs: []int64{10, 20},
+		ModelPricing: []ChannelModelPricing{
+			{
+				Platform:    PlatformDeepseek,
+				Models:      []string{"deepseek-*"},
+				BillingMode: BillingModeToken,
+				InputPrice:  testPtrFloat64(0.28e-6),
+				OutputPrice: testPtrFloat64(0.42e-6),
+			},
+			{
+				Platform:    PlatformDeepseek,
+				Models:      []string{"deepseek-chat"},
+				BillingMode: BillingModeToken,
+				InputPrice:  testPtrFloat64(0.28e-6),
+				OutputPrice: testPtrFloat64(0.42e-6),
+			},
+			{
+				Platform:        PlatformDeepseek,
+				Models:          []string{DeepSeekToolsLabelOCR},
+				BillingMode:     BillingModePerRequest,
+				PerRequestPrice: testPtrFloat64(0.002),
+			},
+		},
+	}}
+	groups := []Group{
+		{
+			ID: 10, Name: "ds-custom", Platform: PlatformDeepseek, RateMultiplier: 0.3,
+			ToolRateIndependent: true, ToolRateMultiplier: 1.0,
+			SearchPricePer1k:             testPtrFloat64(4.0),
+			FetchPricePer1k:              testPtrFloat64(0), // 显式免费
+			OCRPricePer1kPages:           testPtrFloat64(1.2),
+			AudioTTSPricePerMillionChars: testPtrFloat64(200),
+			ModelPricing: []ChannelModelPricing{{
+				Platform:        PlatformDeepseek,
+				Models:          []string{DeepSeekToolsLabelASR},
+				BillingMode:     BillingModePerRequest,
+				PerRequestPrice: testPtrFloat64(0.5),
+			}},
+		},
+		{
+			ID: 20, Name: "ds-default", Platform: PlatformDeepseek, RateMultiplier: 0.05,
+			SearchPricePer1k: testPtrFloat64(6.0), // Fetch 未配置，应继承 Search=6/1k=0.006
+		},
+	}
+
+	svc := newPlazaServiceWithBilling(channels, groups,
+		map[int64]string{10: PlatformDeepseek, 20: PlatformDeepseek}, nil)
+	out, err := svc.ListGroups(context.Background())
+	require.NoError(t, err)
+	require.Len(t, out, 2)
+
+	byGroup := map[int64]PlazaGroup{}
+	for _, g := range out {
+		byGroup[g.ID] = g
+	}
+
+	g10 := byGroup[10]
+	require.True(t, g10.ToolRateIndependent)
+	require.InDelta(t, 1.0, g10.ToolRateMultiplier, 1e-12)
+	m10 := plazaModelsByName(g10.Models)
+	for _, toolName := range DeepSeekToolCatalogOrder {
+		tm, ok := m10[toolName]
+		require.Truef(t, ok, "DeepSeek group must expose %s", toolName)
+		require.NotNil(t, tm.Pricing)
+		require.Equal(t, BillingModePerRequest, tm.Pricing.BillingMode)
+		require.Nil(t, tm.Pricing.InputPrice, "wildcard token card must not hijack tool %s", toolName)
+		require.NotNil(t, tm.Pricing.PerRequestPrice)
+	}
+	require.InDelta(t, 0.004, *m10[DeepSeekToolsLabelSearch].Pricing.PerRequestPrice, 1e-12)
+	require.InDelta(t, 0.0, *m10[DeepSeekToolsLabelFetch].Pricing.PerRequestPrice, 1e-12, "explicit 0 fetch must stay free")
+	require.InDelta(t, 0.0012, *m10[DeepSeekToolsLabelOCR].Pricing.PerRequestPrice, 1e-12, "group OCR column overrides channel OCR card")
+	require.InDelta(t, 200.0, *m10[DeepSeekToolsLabelTTS].Pricing.PerRequestPrice, 1e-12)
+	require.InDelta(t, 0.5, *m10[DeepSeekToolsLabelASR].Pricing.PerRequestPrice, 1e-12, "group per_request card overrides official ASR")
+
+	g20 := byGroup[20]
+	require.False(t, g20.ToolRateIndependent)
+	m20 := plazaModelsByName(g20.Models)
+	require.InDelta(t, 0.006, *m20[DeepSeekToolsLabelSearch].Pricing.PerRequestPrice, 1e-12)
+	require.InDelta(t, 0.006, *m20[DeepSeekToolsLabelFetch].Pricing.PerRequestPrice, 1e-12, "unset fetch inherits search")
+	require.InDelta(t, 0.002, *m20[DeepSeekToolsLabelOCR].Pricing.PerRequestPrice, 1e-12, "channel OCR card overrides official default")
+	require.InDelta(t, 300.0, *m20[DeepSeekToolsLabelTTS].Pricing.PerRequestPrice, 1e-12)
+	require.InDelta(t, 0.78, *m20[DeepSeekToolsLabelASR].Pricing.PerRequestPrice, 1e-12)
+}

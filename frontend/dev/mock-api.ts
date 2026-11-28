@@ -48,7 +48,7 @@ import { createUsageDraft, supportsCustomUsage, usagePayload, usageTemplate, val
 import type { CustomUsageConfig, CustomUsageResult, CustomUsageTemplate } from '../src/api/admin/customUsage'
 
 export class PreviewError extends Error {
-  constructor(public status: number, message: string) { super(message) }
+  constructor(public status: number, message: string, public reason?: string) { super(message) }
 }
 
 function integer(value: string | null, fallback: number, max: number) {
@@ -216,6 +216,21 @@ export function createMockApi(now = new Date()) {
   const usedDemoCodes = new Set<string>()
   let createVerificationMode: 'auto' | 'on' | 'off' = 'auto'
   const demoBarkSettings = { configured: false, enabled: false }
+  let demoPersonalKeySeq = 1
+  let demoPersonalApiKey: {
+    exists: boolean
+    key_prefix?: string
+    created_at?: string | null
+    updated_at?: string | null
+    last_used_at?: string | null
+    last_used_ip?: string
+    rate_limit_rpm: number
+    write_rate_limit_rpm: number
+  } = {
+    exists: false,
+    rate_limit_rpm: 240,
+    write_rate_limit_rpm: 60,
+  }
   const verificationFactors = () => {
     const defaultRequired = false
     const required = createVerificationMode === 'on'
@@ -241,6 +256,36 @@ export function createMockApi(now = new Date()) {
     try { new Intl.DateTimeFormat('en', { timeZone: timezone }) } catch { throw new PreviewError(400, '无效的时区') }
     return timezone
   }
+  const matchesUsageRequestId = (
+    row: { request_id?: string | null; response_request_id?: string | null; client_request_id?: string | null; response_msg_id?: string | null; upstream_request_id?: string | null },
+    rawInput: string | null,
+    includeUpstream: boolean,
+  ): boolean => {
+    const input = rawInput?.trim() ?? ''
+    if (!input) return true
+    const candidates = [
+      row.request_id,
+      row.response_request_id,
+      row.client_request_id,
+      row.response_msg_id,
+      ...(includeUpstream ? [row.upstream_request_id] : []),
+    ].filter((val): val is string => typeof val === 'string' && val.trim().length > 0)
+    if (input.startsWith('=')) {
+      const target = input.slice(1).trim()
+      const base = target.replace(/^(?:client:|local:)/, '')
+      return candidates.some(val => val === target || val === base || val === `client:${base}` || val === `local:${base}`)
+    }
+    if (input.startsWith('^')) {
+      const target = input.slice(1).trim().toLowerCase()
+      const base = target.replace(/^(?:client:|local:)/, '')
+      return candidates.some(val => {
+        const lower = val.toLowerCase()
+        return lower.startsWith(target) || lower.startsWith(base) || lower.startsWith(`client:${base}`) || lower.startsWith(`local:${base}`)
+      })
+    }
+    const needle = input.toLowerCase()
+    return candidates.some(val => val.toLowerCase().includes(needle))
+  }
   function filteredUsage(query: URLSearchParams) {
     const timezone = timezoneOf(query)
     const start = query.get('start_date'), end = query.get('end_date')
@@ -255,6 +300,7 @@ export function createMockApi(now = new Date()) {
         const filter = query.get(field)
         if (filter !== null && filter !== '' && String(row[field]) !== filter) return false
       }
+      if (!matchesUsageRequestId(row, query.get('request_id'), false)) return false
       const model = query.get('model')?.toLowerCase()
       if (model && !row.model.toLowerCase().includes(model)) return false
       if (start || end) {
@@ -294,6 +340,7 @@ export function createMockApi(now = new Date()) {
         const filter = query.get(field)
         if (filter !== null && filter !== '' && String(row[field]) !== filter) return false
       }
+      if (!matchesUsageRequestId(row, query.get('request_id'), true)) return false
       const model = query.get('model')?.toLowerCase()
       if (model && !row.model.toLowerCase().includes(model)) return false
       if (start || end) {
@@ -545,8 +592,12 @@ export function createMockApi(now = new Date()) {
     retain_days: 7,
     retain_count: 5,
     critical_only: true,
+    age_recipients: [] as string[],
+    max_rate_mbps: 10,
     server_critical_forced: false,
     age_encryption_enabled: false,
+    server_age_encryption_forced: false,
+    server_age_recipient_count: 0,
   }
   const demoBackups: Array<Record<string, unknown>> = [
     {
@@ -915,6 +966,12 @@ export function createMockApi(now = new Date()) {
         if (path === '/api/v1/admin/backups/image-storage') return { config: { enabled: false, reuse_backup_s3: false, bucket: '', prefix: '', public_base_url: '', presign_expiry_hours: 24, max_download_bytes: 10485760, endpoint: '', region: '', access_key_id: '', force_path_style: false }, secret_configured: false }
         if (path === '/api/v1/admin/backups/schedule') return copy(demoBackupSchedule)
         if (path === '/api/v1/admin/backups') return { items: copy(demoBackups) }
+        const getBackupMatch = path.match(/^\/api\/v1\/admin\/backups\/([^/]+)$/)
+        if (getBackupMatch) {
+          const found = demoBackups.find(item => item.id === getBackupMatch[1])
+          if (!found) throw new PreviewError(404, 'backup not found')
+          return copy(found)
+        }
         if (path === '/api/v1/admin/payment/config') return { enabled: true }
         if (path === '/api/v1/admin/payment/orders') return page(data.paymentOrders, query)
         if (path === '/api/v1/admin/payment/plans') return data.paymentPlans
@@ -1283,6 +1340,7 @@ export function createMockApi(now = new Date()) {
         if (path === '/api/v1/user/passkeys') return []
         if (path === '/api/v1/user/bark') return { data: { ...demoBarkSettings } }
         if (path === '/api/v1/user/security/verification-factors') return verificationFactors()
+        if (path === '/api/v1/user/personal-api-key') return copy(demoPersonalApiKey)
         if (path === '/v1/models') {
           const ids = modelsForBearer(headers.authorization)
           return { object: 'list', data: ids.map(id => ({ id, object: 'model', owned_by: 'local-demo' })) }
@@ -1535,6 +1593,33 @@ export function createMockApi(now = new Date()) {
         return { transferred_quota: amount, balance: data.user.balance }
       }
       if (method === 'PUT' && path === '/api/v1/admin/backups/schedule') {
+        const rawRecipients = Array.isArray(body.age_recipients) ? body.age_recipients : []
+        for (const item of rawRecipients) {
+          if (typeof item === 'string' && /age-secret-key-/i.test(item)) {
+            throw new PreviewError(400, 'age private keys must never be stored on the server')
+          }
+        }
+        const recipients: string[] = []
+        const seen = new Set<string>()
+        for (const item of rawRecipients) {
+          if (typeof item !== 'string') continue
+          const trimmed = item.trim()
+          if (!trimmed) continue
+          if (!/^age1[02-9ac-hj-np-z]{58}$/.test(trimmed)) {
+            throw new PreviewError(400, 'invalid age X25519 public key')
+          }
+          if (!seen.has(trimmed)) {
+            seen.add(trimmed)
+            recipients.push(trimmed)
+          }
+        }
+        if (recipients.length > 16) {
+          throw new PreviewError(400, 'at most 16 age recipients are allowed')
+        }
+        const rawRate = body.max_rate_mbps === undefined ? demoBackupSchedule.max_rate_mbps : Number(body.max_rate_mbps)
+        if (!Number.isInteger(rawRate) || rawRate < 0 || rawRate > 500) {
+          throw new PreviewError(400, 'max_rate_mbps must be between 0 and 500')
+        }
         demoBackupSchedule = {
           ...demoBackupSchedule,
           enabled: Boolean(body.enabled),
@@ -1542,21 +1627,26 @@ export function createMockApi(now = new Date()) {
           retain_days: Number.isFinite(Number(body.retain_days)) ? Number(body.retain_days) : demoBackupSchedule.retain_days,
           retain_count: Number.isFinite(Number(body.retain_count)) ? Number(body.retain_count) : demoBackupSchedule.retain_count,
           critical_only: Boolean(body.critical_only),
+          age_recipients: recipients,
+          max_rate_mbps: rawRate,
+          age_encryption_enabled: demoBackupSchedule.server_age_encryption_forced || recipients.length > 0,
         }
         return copy(demoBackupSchedule)
       }
       if (method === 'POST' && path === '/api/v1/admin/backups') {
         const critical = Boolean(body.critical_only)
+        const encrypted = Boolean(demoBackupSchedule.age_encryption_enabled)
         const expireDays = Number.isFinite(Number(body.expire_days)) ? Number(body.expire_days) : 14
         const id = `bk-demo-${nextBackupSeq++}`
         const stamp = now.toISOString().slice(0, 10).replaceAll('-', '')
-        const fileName = `sub2api_${stamp}_${id}${critical ? '.critical.sql.gz' : '.sql.gz'}`
+        const baseSuffix = critical ? '.critical.sql.gz' : '.sql.gz'
+        const fileName = `sub2api_${stamp}_${id}${baseSuffix}${encrypted ? '.age' : ''}`
         const rec = {
           id,
           status: 'completed',
           backup_type: 'postgres',
           scope: critical ? 'critical' : '',
-          encrypted: false,
+          encrypted,
           file_name: fileName,
           s3_key: `backups/2026/11/26/${fileName}`,
           size_bytes: critical ? 19_120_000 : 655_000_000,
@@ -1783,6 +1873,47 @@ export function createMockApi(now = new Date()) {
         }
         createVerificationMode = mode
         return verificationFactors()
+      }
+      if (method === 'POST' && path === '/api/v1/user/personal-api-key') {
+        const verification = body.verification as Record<string, unknown> | undefined
+        const hasVerification = Boolean(
+          verification &&
+            typeof verification === 'object' &&
+            typeof verification.method === 'string' &&
+            verification.method.trim(),
+        )
+        if (!hasVerification) {
+          throw new PreviewError(400, '请先完成身份验证', 'VERIFY_REQUIRED')
+        }
+        const regenerated = demoPersonalApiKey.exists
+        const suffix = String(demoPersonalKeySeq++).padStart(8, '0')
+        const hexBody = `${suffix}${'a1b2c3d4e5f60718'.repeat(3)}${suffix}`.slice(0, 64)
+        const plaintext = `uak_${hexBody}`
+        const nowIso = new Date().toISOString()
+        demoPersonalApiKey = {
+          exists: true,
+          key_prefix: `${plaintext.slice(0, 12)}...${plaintext.slice(-4)}`,
+          created_at: nowIso,
+          updated_at: nowIso,
+          last_used_at: null,
+          last_used_ip: '',
+          rate_limit_rpm: 240,
+          write_rate_limit_rpm: 60,
+        }
+        return {
+          key: plaintext,
+          regenerated,
+          status: copy(demoPersonalApiKey),
+        }
+      }
+      if (method === 'DELETE' && path === '/api/v1/user/personal-api-key') {
+        const deleted = demoPersonalApiKey.exists
+        demoPersonalApiKey = {
+          exists: false,
+          rate_limit_rpm: 240,
+          write_rate_limit_rpm: 60,
+        }
+        return { deleted, message: 'Personal API key deleted successfully' }
       }
       const revealAuthPath = path.match(/^\/api\/v1\/user\/api-keys\/(\d+)\/reveal-authorize$/)
       if (revealAuthPath && method === 'POST') {

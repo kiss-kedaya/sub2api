@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/servertiming"
+	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
 )
 
@@ -97,7 +98,9 @@ func ServerTimingHeaderValue(c *gin.Context) string {
 	if !ok || role == "" {
 		return ""
 	}
-	if role != "admin" && !isUserTimingPath(c.Request.URL.Path) {
+	// 用户个人接口密钥（uak_）即使归属于管理员，也不得在任意路径享有管理员级 Server-Timing 权限。
+	isAdminScope := role == "admin" && c.GetString("auth_method") != service.AuditAuthMethodUserAPIKey
+	if !isAdminScope && !isUserTimingPath(c.Request.URL.Path) {
 		return ""
 	}
 	return servertiming.HeaderValue(c.Request.Context(), time.Now(), responseCacheStatus(c.Writer.Header()))

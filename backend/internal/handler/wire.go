@@ -142,6 +142,7 @@ func ProvideGatewayHandler(
 	// Public model discovery merges catalogue metadata (description, limits,
 	// modalities, capabilities, prices) through the gateway service.
 	if gatewayService != nil {
+		gatewayService.SetAuthCacheInvalidator(apiKeyService)
 		h.modelMetadata = gatewayService
 	}
 	return h
@@ -163,6 +164,9 @@ func ProvideOpenAIGatewayHandler(
 	coordinator *securityaudit.Coordinator,
 ) *OpenAIGatewayHandler {
 	gatewayService.SetPluginManager(pluginManager)
+	if gatewayService != nil {
+		gatewayService.SetAuthCacheInvalidator(apiKeyService)
+	}
 	h := NewOpenAIGatewayHandler(gatewayService, concurrencyService, billingCacheService, apiKeyService,
 		usageRecordWorkerPool, errorPassthroughService, contentModerationService, opsService, cfg)
 	h.balancePreauthorizer = balancePreauthorizationService
@@ -371,9 +375,36 @@ func ProvideAPIKeyHandler(
 	apiKeyService *service.APIKeyService,
 	secretService *service.APIKeySecretService,
 	verificationService *service.APIKeyVerificationService,
+	personalAPIKeyService *service.UserPersonalAPIKeyService,
 ) *APIKeyHandler {
 	h := NewAPIKeyHandler(apiKeyService, secretService)
 	h.SetVerificationService(verificationService)
+	h.SetPersonalAPIKeyService(personalAPIKeyService)
+	return h
+}
+
+// ProvidePaymentHandler attaches runtime server config (trusted proxy policy)
+// while keeping NewPaymentHandler's constructor signature unchanged for tests.
+func ProvidePaymentHandler(
+	paymentService *service.PaymentService,
+	configService *service.PaymentConfigService,
+	cfg *config.Config,
+) *PaymentHandler {
+	h := NewPaymentHandler(paymentService, configService)
+	h.SetConfig(cfg)
+	return h
+}
+
+// ProvideGeminiOAuthHandler attaches server config and settings so OAuth
+// callback origin resolution prefers server-authoritative configuration.
+func ProvideGeminiOAuthHandler(
+	geminiOAuthService *service.GeminiOAuthService,
+	cfg *config.Config,
+	settingService *service.SettingService,
+) *admin.GeminiOAuthHandler {
+	h := admin.NewGeminiOAuthHandler(geminiOAuthService)
+	h.SetConfig(cfg)
+	h.SetSettingService(settingService)
 	return h
 }
 
@@ -395,7 +426,7 @@ var ProviderSet = wire.NewSet(
 	NewTotpHandler,
 	ProvidePasskeyHandler,
 	ProvideSettingHandler,
-	NewPaymentHandler,
+	ProvidePaymentHandler,
 	NewPaymentWebhookHandler,
 	NewUserBarkHandler,
 	NewKeyRotationHandler,
@@ -415,7 +446,7 @@ var ProviderSet = wire.NewSet(
 	admin.NewBackupHandler,
 	admin.NewOAuthHandler,
 	admin.NewOpenAIOAuthHandler,
-	admin.NewGeminiOAuthHandler,
+	ProvideGeminiOAuthHandler,
 	admin.NewAntigravityOAuthHandler,
 	admin.NewGrokOAuthHandler,
 	admin.NewCNProviderHandler,

@@ -637,9 +637,14 @@ export interface Group {
   video_model_prices?: VideoModelPrices
   // Codex 网页搜索单次价格（USD/次）；null 表示使用默认价 0.01
   web_search_price_per_call: number | null
-  // Grok Voice 显式定价（分组级）
+  // DeepSeek 工具独立倍率配置（Search/Fetch/OCR/TTS/ASR）
+  tool_rate_independent?: boolean
+  tool_rate_multiplier?: number
+  // 搜索每千次基准价（Grok/DeepSeek）；null = 默认价，0 = 免费
   search_price_per_1k: number | null
-  // DeepSeek OCR（USD/千页）；null = 默认 0.225，0 = 免费
+  // DeepSeek Fetch 每千次基准价；null = 继承搜索价（再回落默认 5），0 = 免费
+  fetch_price_per_1k?: number | null
+  // DeepSeek OCR 每千页基准价；null = 默认 1.5，0 = 免费
   ocr_price_per_1k_pages?: number | null
   // Grok 安全拒绝单次扣费（USD/次）；null = 默认 0.1，0 = 不扣费
   grok_moderation_refusal_price: number | null
@@ -709,6 +714,9 @@ export interface AdminGroup extends Group {
   // 模型路由配置（仅管理员可见，内部信息）
   model_routing: Record<string, number[]> | null
   model_routing_enabled: boolean
+
+  // Claude 分组保存响应消息 ID（仅 anthropic 平台使用）
+  save_response_msg_id?: boolean
 
   // MCP XML 协议注入（仅 antigravity 平台使用）
   mcp_xml_inject: boolean
@@ -928,6 +936,23 @@ export interface ApiKeyPasskeyVerificationTicket {
   expires_in: number
 }
 
+export interface UserPersonalApiKeyStatus {
+  exists: boolean
+  key_prefix?: string
+  created_at?: string | null
+  updated_at?: string | null
+  last_used_at?: string | null
+  last_used_ip?: string
+  rate_limit_rpm: number
+  write_rate_limit_rpm: number
+}
+
+export interface CreateUserPersonalApiKeyResponse {
+  key: string
+  regenerated: boolean
+  status: UserPersonalApiKeyStatus
+}
+
 /** 二次查看授权回执：grant 只回一次，5 分钟一次性，随 GET secret-seal 头发送。 */
 export interface ApiKeyRevealGrant {
   grant: string
@@ -1041,7 +1066,10 @@ export interface CreateGroupRequest {
   video_price_1080p?: number | null
   video_model_prices?: VideoModelPrices
   web_search_price_per_call?: number | null
+  tool_rate_independent?: boolean
+  tool_rate_multiplier?: number
   search_price_per_1k?: number | null
+  fetch_price_per_1k?: number | null
   ocr_price_per_1k_pages?: number | null
   // Grok 安全拒绝单次扣费（USD/次）；null = 默认 0.1，0 = 不扣费
   grok_moderation_refusal_price?: number | null
@@ -1060,6 +1088,7 @@ export interface CreateGroupRequest {
   profit_min_margin?: number
   profit_safety_buffer?: number
   claude_code_only?: boolean
+  save_response_msg_id?: boolean
   fallback_group_id?: number | null
   fallback_group_id_on_invalid_request?: number | null
   mcp_xml_inject?: boolean
@@ -1118,7 +1147,10 @@ export interface UpdateGroupRequest {
   video_price_1080p?: number | null
   video_model_prices?: VideoModelPrices
   web_search_price_per_call?: number | null
+  tool_rate_independent?: boolean
+  tool_rate_multiplier?: number
   search_price_per_1k?: number | null
+  fetch_price_per_1k?: number | null
   ocr_price_per_1k_pages?: number | null
   // Grok 安全拒绝单次扣费（USD/次）；null = 默认 0.1，0 = 不扣费
   grok_moderation_refusal_price?: number | null
@@ -1137,6 +1169,7 @@ export interface UpdateGroupRequest {
   profit_min_margin?: number
   profit_safety_buffer?: number
   claude_code_only?: boolean
+  save_response_msg_id?: boolean
   fallback_group_id?: number | null
   fallback_group_id_on_invalid_request?: number | null
   mcp_xml_inject?: boolean
@@ -2000,6 +2033,9 @@ export interface UsageLog {
   api_key_id: number
   account_id: number | null
   request_id: string
+  response_request_id?: string | null
+  client_request_id?: string | null
+  response_msg_id?: string | null
   model: string
   /** Conservatively associated semantic error; not a durable delivery outcome or wire status. */
   failure_status_code?: number | null

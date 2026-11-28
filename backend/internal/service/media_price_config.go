@@ -45,28 +45,6 @@ func groupSearchPricePer1kFromAPIKey(apiKey *APIKey) *float64 {
 	return apiKey.Group.GetSearchPricePer1k()
 }
 
-func groupOCRPriceFromAPIKey(apiKey *APIKey) *float64 {
-	if apiKey == nil || apiKey.Group == nil {
-		return nil
-	}
-	return apiKey.Group.OCRPricePer1kPages
-}
-
-// deepSeekAudioPriceConfig supplies DeepSeek defaults without changing xAI prices.
-func deepSeekAudioPriceConfig(apiKey *APIKey) *audioPriceConfig {
-	tts, asr := defaultDeepSeekTTSPricePerMillionChars, defaultDeepSeekASRPricePerHour
-	cfg := &audioPriceConfig{TTSPerMChars: &tts, STTPerHour: &asr}
-	if group := groupAudioPriceConfigFromAPIKey(apiKey); group != nil {
-		if group.TTSPerMChars != nil {
-			cfg.TTSPerMChars = group.TTSPerMChars
-		}
-		if group.STTPerHour != nil {
-			cfg.STTPerHour = group.STTPerHour
-		}
-	}
-	return cfg
-}
-
 func groupAudioPriceConfigFromAPIKey(apiKey *APIKey) *audioPriceConfig {
 	if apiKey == nil || apiKey.Group == nil {
 		return nil

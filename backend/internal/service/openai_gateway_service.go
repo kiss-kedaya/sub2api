@@ -253,9 +253,10 @@ type OpenAIForwardResult struct {
 	// VideoStatus is the normalized task state observed in a video status
 	// response. It lets durable billing resolve a previously unknown failure
 	// before returning the response, without storing media URLs or bodies.
-	VideoStatus string
-	RequestID   string
-	ResponseID  string
+	VideoStatus   string
+	RequestID     string
+	ResponseID    string
+	ResponseMsgID string
 	// UpstreamHeaders 是直接上游的响应头，用于按账户配置解析上游请求标识。
 	UpstreamHeaders http.Header
 	Usage           OpenAIUsage
@@ -331,10 +332,13 @@ type OpenAIForwardResult struct {
 	// WebSearchCalls 是 Codex alpha/search 网页搜索调用次数（每次成功请求为 1）。
 	// 上游不返回 usage 字段，>0 时走按次计费（分组单价 × 次数 × 倍率）。
 	WebSearchCalls int
-	// SearchCount is Grok-native web_search / tool search call count (per 1k pricing).
+	// SearchCount is web_search / hosted search call count (per 1k pricing).
 	SearchCount int
-	// FixedToolBilling marks provider-hosted tools whose configured per-call
-	// fee is final. Model tokens retain their usual group/user multiplier.
+	// FetchCount is hosted web_fetch call count (per 1k pricing; falls back to
+	// Search pricing when FetchPricePer1k / channel fetch pricing is unset).
+	FetchCount int
+	// FixedToolBilling marks DeepSeek standalone/hosted tool billing so
+	// tool charges use resolveToolRateMultiplier + DeepSeek tool pricing.
 	FixedToolBilling bool
 	// AudioUsage carries Voice billing units when present.
 	AudioUsage *AudioUsage
@@ -472,39 +476,41 @@ var ErrNoAvailableCompactAccounts = errors.New("no available accounts support /r
 
 // OpenAIGatewayService handles OpenAI API gateway operations
 type OpenAIGatewayService struct {
-	excelBPSChannel       *ExcelBPSChannel
-	opsAutomation         *OpsAutomationService
-	accountRepo           AccountRepository
-	usageLogRepo          UsageLogRepository
-	usageBillingRepo      UsageBillingRepository
-	mediaBillingJobs      MediaBillingJobRepository
-	mediaBillingCancel    context.CancelFunc
-	mediaBillingDone      chan struct{}
-	userRepo              UserRepository
-	userSubRepo           UserSubscriptionRepository
-	cache                 GatewayCache
-	cfg                   *config.Config
-	codexDetector         CodexClientRestrictionDetector
-	schedulerSnapshot     *SchedulerSnapshotService
-	concurrencyService    *ConcurrencyService
-	billingService        *BillingService
-	rateLimitService      *RateLimitService
-	billingCacheService   *BillingCacheService
-	userGroupRateResolver *userGroupRateResolver
-	httpUpstream          HTTPUpstream
-	pluginManager         *PluginManager
-	deferredService       *DeferredService
-	openAITokenProvider   *OpenAITokenProvider
-	grokTokenProvider     *GrokTokenProvider
-	toolCorrector         *CodexToolCorrector
-	openaiWSResolver      OpenAIWSProtocolResolver
-	resolver              *ModelPricingResolver
-	channelService        *ChannelService
-	balanceNotifyService  *BalanceNotifyService
-	settingService        *SettingService
-	userPlatformQuotaRepo UserPlatformQuotaRepository
-	liveAttestation       liveattestation.Provider
-	liveAttestationCipher SecretEncryptor
+	excelBPSChannel         *ExcelBPSChannel
+	opsAutomation           *OpsAutomationService
+	accountRepo             AccountRepository
+	usageLogRepo            UsageLogRepository
+	usageBillingRepo        UsageBillingRepository
+	mediaBillingJobs        MediaBillingJobRepository
+	mediaBillingCancel      context.CancelFunc
+	mediaBillingDone        chan struct{}
+	userRepo                UserRepository
+	userSubRepo             UserSubscriptionRepository
+	cache                   GatewayCache
+	cfg                     *config.Config
+	codexDetector           CodexClientRestrictionDetector
+	schedulerSnapshot       *SchedulerSnapshotService
+	concurrencyService      *ConcurrencyService
+	billingService          *BillingService
+	rateLimitService        *RateLimitService
+	billingCacheService     *BillingCacheService
+	balancePreauthorization *BalancePreauthorizationService
+	authCacheInvalidator    atomic.Pointer[APIKeyAuthCacheInvalidator]
+	userGroupRateResolver   *userGroupRateResolver
+	httpUpstream            HTTPUpstream
+	pluginManager           *PluginManager
+	deferredService         *DeferredService
+	openAITokenProvider     *OpenAITokenProvider
+	grokTokenProvider       *GrokTokenProvider
+	toolCorrector           *CodexToolCorrector
+	openaiWSResolver        OpenAIWSProtocolResolver
+	resolver                *ModelPricingResolver
+	channelService          *ChannelService
+	balanceNotifyService    *BalanceNotifyService
+	settingService          *SettingService
+	userPlatformQuotaRepo   UserPlatformQuotaRepository
+	liveAttestation         liveattestation.Provider
+	liveAttestationCipher   SecretEncryptor
 
 	openaiWSPoolOnce                    sync.Once
 	openaiWSStateStoreOnce              sync.Once

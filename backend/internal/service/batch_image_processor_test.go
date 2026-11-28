@@ -386,6 +386,7 @@ type fakeBatchImageRepository struct {
 	transitions   map[string][]string
 	events        map[string][]string
 	transitionErr error
+	sumHoldErr    error
 	replaceCalls  int
 }
 
@@ -531,6 +532,34 @@ func (r *fakeBatchImageRepository) ListBatchImageJobsForOwner(_ context.Context,
 		}
 	}
 	return jobs, nil
+}
+
+func (r *fakeBatchImageRepository) SumOutstandingHoldByAPIKey(_ context.Context, userID, apiKeyID int64) (float64, error) {
+	if r.sumHoldErr != nil {
+		return 0, r.sumHoldErr
+	}
+	var total float64
+	for _, job := range r.jobs {
+		if job == nil || job.UserID != userID || job.APIKeyID == nil || *job.APIKeyID != apiKeyID {
+			continue
+		}
+		switch job.Status {
+		case BatchImageJobStatusCreated,
+			BatchImageJobStatusUploading,
+			BatchImageJobStatusSubmitted,
+			BatchImageJobStatusRunning,
+			BatchImageJobStatusIndexing,
+			BatchImageJobStatusSettling:
+			hold := job.EstimatedCost
+			if job.HoldAmount != nil {
+				hold = *job.HoldAmount
+			}
+			if hold > 0 {
+				total += hold
+			}
+		}
+	}
+	return total, nil
 }
 
 func (r *fakeBatchImageRepository) GetBatchImageJobByID(_ context.Context, id int64) (*BatchImageJob, error) {

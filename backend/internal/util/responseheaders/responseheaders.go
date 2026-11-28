@@ -137,11 +137,25 @@ func FilterHeaders(src http.Header, filter *CompiledHeaderFilter) http.Header {
 	return filtered
 }
 
-func WriteFilteredHeaders(dst http.Header, src http.Header, filter *CompiledHeaderFilter) {
-	filtered := FilterHeaders(src, filter)
+func WritePreparedHeaders(dst http.Header, filtered http.Header) {
 	for key, values := range filtered {
+		if strings.EqualFold(key, "x-request-id") {
+			// Replace RequestLogger's default X-Request-Id cleanly and collapse
+			// duplicate upstream values so clients receive strictly one X-Request-Id.
+			for _, value := range values {
+				if v := strings.TrimSpace(value); v != "" {
+					dst.Set(key, v)
+					break
+				}
+			}
+			continue
+		}
 		for _, value := range values {
 			dst.Add(key, value)
 		}
 	}
+}
+
+func WriteFilteredHeaders(dst http.Header, src http.Header, filter *CompiledHeaderFilter) {
+	WritePreparedHeaders(dst, FilterHeaders(src, filter))
 }

@@ -2229,7 +2229,8 @@ func openAICompatOpsEvents(t *testing.T, c *gin.Context) []*OpsUpstreamErrorEven
 	return events
 }
 
-func TestForwardAsAnthropic_UpstreamRequestIgnoresClientCancel(t *testing.T) {
+// Stage 1A: 客户端在请求发出前已取消时，不再向上游派发请求、也不计费。
+func TestForwardAsAnthropic_ClientCanceledBeforeDispatchSkipsUpstream(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	rec := httptest.NewRecorder()
@@ -2266,10 +2267,9 @@ func TestForwardAsAnthropic_UpstreamRequestIgnoresClientCancel(t *testing.T) {
 	}
 
 	result, err := svc.ForwardAsAnthropic(reqCtx, c, account, body, "", "gpt-5.1")
-	require.NoError(t, err)
-	require.NotNil(t, result)
-	require.NotNil(t, upstream.lastReq)
-	require.NoError(t, upstream.lastReq.Context().Err())
+	require.ErrorIs(t, err, context.Canceled)
+	require.Nil(t, result)
+	require.Nil(t, upstream.lastReq, "pre-canceled client must not dispatch upstream")
 }
 
 func TestForwardAsAnthropic_AstraContinuationRestoresHistoryAndDisablesUnsupportedSession(t *testing.T) {

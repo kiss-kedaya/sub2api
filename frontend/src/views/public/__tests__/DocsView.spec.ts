@@ -27,7 +27,13 @@ vi.mock('vue-i18n', async (importOriginal) => ({
   ...await importOriginal<typeof import('vue-i18n')>(),
   useI18n: () => ({
     locale: { value: 'en' },
-    t: (key: string) => key === 'nav.docs' ? 'Docs' : key.split('.').reduce<unknown>((value, part) => (value as Record<string, unknown>)?.[part], english) || key,
+    t: (key: string, params?: Record<string, unknown>) => {
+      const raw = key === 'nav.docs'
+        ? 'Docs'
+        : key.split('.').reduce<unknown>((value, part) => (value as Record<string, unknown>)?.[part], english) || key
+      if (typeof raw !== 'string' || !params) return String(raw)
+      return raw.replace(/\{(\w+)\}/g, (_, name: string) => String(params[name] ?? ''))
+    },
   }),
 }))
 
@@ -97,6 +103,7 @@ async function openDocs(query = 'quick-start', options: { attachTo?: boolean } =
 
 describe('public API documentation page', () => {
   beforeEach(() => {
+    localStorage.clear()
     mocks.copy.mockClear()
     mocks.docs = null
     mocks.auth.isAuthenticated = false
@@ -537,5 +544,65 @@ describe('public API documentation page', () => {
     expect(authed.wrapper.get('[data-testid="docs-quick-manage-keys"]').attributes('href')).toBe('/keys')
     expect(authed.wrapper.get('[data-testid="docs-section-action-console-create"]').attributes('href')).toBe('/keys?action=create')
     authed.wrapper.unmount()
+  })
+
+  it('opens the Cmd/Ctrl+K full-text search modal, highlights matches, and navigates to matched sections via keyboard', async () => {
+    const { wrapper, router } = await openDocs('quick-start', { attachTo: true })
+
+    // Open with Ctrl+K shortcut
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', ctrlKey: true, bubbles: true }))
+    await flushPromises()
+    const modal = document.body.querySelector('[data-testid="docs-search-modal"]')
+    expect(modal).not.toBeNull()
+
+    const input = document.body.querySelector('[data-testid="docs-search-modal-input"]') as HTMLInputElement
+    input.value = 'previous_response_id'
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+    await flushPromises()
+
+    const firstHit = document.body.querySelector('[data-testid="docs-search-result-0"]') as HTMLButtonElement
+    expect(firstHit).not.toBeNull()
+    expect(firstHit.textContent).toContain('Responses')
+
+    // Press Enter to navigate straight to the matched page/section and close modal
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    await flushPromises()
+    expect(router.currentRoute.value.query.page).toBe('responses')
+    expect(document.body.querySelector('[data-testid="docs-search-modal"]')).toBeNull()
+    wrapper.unmount()
+  })
+
+  it('syncs selected HTTP code tab preference across sections and pages (Starlight/Docusaurus syncKey pattern)', async () => {
+    const { wrapper, router } = await openDocs('quick-start')
+    const firstReq = wrapper.get('section#first-request')
+    const pythonBtn = firstReq.findAll('button').find((b) => b.text() === 'Python')!
+    await pythonBtn.trigger('click')
+    await flushPromises()
+
+    // Navigate to another multi-language API page and verify Python is already active
+    await router.push('/docs?page=image-generation')
+    await flushPromises()
+    const imgReq = wrapper.get('section#image-request')
+    const activeTab = imgReq.find('button[role="tab"][aria-selected="true"]')
+    expect(activeTab.text()).toBe('Python')
+    wrapper.unmount()
+  })
+
+  it('renders breadcrumbs, semantic callouts, stepped quick-start guide, and collapsible mobile TOC', async () => {
+    const { wrapper, router } = await openDocs('quick-start')
+    expect(wrapper.find('[data-testid="docs-breadcrumbs"]').exists()).toBe(true)
+    expect(wrapper.get('[data-testid="docs-breadcrumb-category"]').text()).toBe('Get started')
+    expect(wrapper.find('[data-testid="docs-callout-connection"]').exists()).toBe(true)
+    expect(wrapper.find('.docs-steps').exists()).toBe(true)
+
+    const mobileTocBtn = wrapper.get('[data-testid="docs-mobile-toc-toggle"]')
+    expect(mobileTocBtn.attributes('aria-expanded')).toBe('false')
+    await mobileTocBtn.trigger('click')
+    expect(mobileTocBtn.attributes('aria-expanded')).toBe('true')
+    await wrapper.get('#docs-mobile-toc-list a[href="#read-response"]').trigger('click')
+    await flushPromises()
+    expect(router.currentRoute.value.hash).toBe('#read-response')
+    expect(mobileTocBtn.attributes('aria-expanded')).toBe('false')
+    wrapper.unmount()
   })
 })

@@ -290,6 +290,7 @@ func (s *GatewayService) handleCCBufferedFromAnthropic(
 	var usage ClaudeUsage
 	progress := &anthropicStreamProgress{}
 	sawStop, sawError := false, false
+	guardCtx, streamBalanceGuard := balancePreauthorizationGuardForRequest(context.Background(), c)
 	// 客户端一走就关上游，不再读完整个应答。
 	clientWatch := newAnthropicClientWatch(context.Background(), c, resp.Body)
 	defer clientWatch.stop()
@@ -367,6 +368,32 @@ func (s *GatewayService) handleCCBufferedFromAnthropic(
 				}
 			}
 		}
+		if observedBytes := anthropicEventOutputBytes(&event); observedBytes > 0 {
+			if topUpErr := streamBalanceGuard.ObserveStreamingOutput(guardCtx, observedBytes); topUpErr != nil {
+				_ = resp.Body.Close()
+				if !sawStop {
+					estimate.fill(&usage, progress, requestID, false, topUpErr)
+				}
+				status, errType, msg := balanceHoldAbortClientError(topUpErr)
+				writeGatewayCCError(c, status, errType, msg)
+				responseMsgID := ""
+				if finalResp != nil {
+					responseMsgID = normalizeUsageTraceID(finalResp.ID)
+				}
+				return &ForwardResult{
+					RequestID:       requestID,
+					ResponseMsgID:   responseMsgID,
+					UpstreamHeaders: resp.Header,
+					Usage:           usage,
+					Model:           originalModel,
+					UpstreamModel:   mappedModel,
+					ReasoningEffort: reasoningEffort,
+					Stream:          false,
+					Duration:        time.Since(startTime),
+					SearchCount:     usage.WebSearchRequests,
+				}, wrapStreamOutputHoldTopUpFailure(topUpErr)
+			}
+		}
 	}
 
 	scanErr := scanner.Err()
@@ -375,8 +402,13 @@ func (s *GatewayService) handleCCBufferedFromAnthropic(
 	if !sawStop && clientWatch.isGone() {
 		clientWatch.markGone()
 		estimate.fill(&usage, progress, requestID, true, scanErr)
+		responseMsgID := ""
+		if finalResp != nil {
+			responseMsgID = finalResp.ID
+		}
 		return &ForwardResult{
 			RequestID:                requestID,
+			ResponseMsgID:            responseMsgID,
 			UpstreamHeaders:          resp.Header,
 			Usage:                    usage,
 			Model:                    originalModel,
@@ -439,8 +471,13 @@ func (s *GatewayService) handleCCBufferedFromAnthropic(
 	if sawStop && !sawError && scanErr == nil {
 		s.rateLimitService.observeModelTransientSuccess(context.Background(), c, estimate.account, mappedModel)
 	}
+	var responseMsgID string
+	if finalResp != nil {
+		responseMsgID = normalizeUsageTraceID(finalResp.ID)
+	}
 	return &ForwardResult{
 		RequestID:                requestID,
+		ResponseMsgID:            responseMsgID,
 		UpstreamHeaders:          resp.Header,
 		Usage:                    billedUsage,
 		NonBillableUpstreamError: sawError && !sawStop,
@@ -487,10 +524,13 @@ func (s *GatewayService) handleCCStreamingFromAnthropic(
 
 	var usage ClaudeUsage
 	var firstTokenMs *int
+	var responseMsgID string
 	firstChunk := true
 	clientDisconnected := false
 	sawStop, sawError := false, false
 	progress := &anthropicStreamProgress{}
+	guardCtx, streamBalanceGuard := balancePreauthorizationGuardForRequest(context.Background(), c)
+	var balanceAbortErr error
 
 	scanner := bufio.NewScanner(newUpstreamErrorFrameReader(resp.Body, resolveUpstreamResponseReadLimit(s.cfg)))
 	maxLineSize := defaultMaxLineSize
@@ -523,6 +563,7 @@ func (s *GatewayService) handleCCStreamingFromAnthropic(
 	resultWithUsage := func() *ForwardResult {
 		return &ForwardResult{
 			RequestID:                requestID,
+			ResponseMsgID:            responseMsgID,
 			UpstreamHeaders:          resp.Header,
 			Usage:                    usage,
 			Model:                    originalModel,
@@ -590,6 +631,9 @@ func (s *GatewayService) handleCCStreamingFromAnthropic(
 		}
 		// Also capture usage from message_start (carries cache fields)
 		if event.Type == "message_start" && event.Message != nil {
+			if responseMsgID == "" && event.Message.ID != "" {
+				responseMsgID = normalizeUsageTraceID(event.Message.ID)
+			}
 			mergeAnthropicUsage(&usage, event.Message.Usage)
 		}
 		if clientDisconnected {
@@ -608,6 +652,13 @@ func (s *GatewayService) handleCCStreamingFromAnthropic(
 		}
 		if !clientDisconnected {
 			c.Writer.Flush()
+		}
+		if observedBytes := anthropicEventOutputBytes(event); observedBytes > 0 {
+			if topUpErr := streamBalanceGuard.ObserveStreamingOutput(guardCtx, observedBytes); topUpErr != nil {
+				_ = resp.Body.Close()
+				balanceAbortErr = wrapStreamOutputHoldTopUpFailure(topUpErr)
+				return true
+			}
 		}
 		return false
 	}
@@ -652,6 +703,12 @@ func (s *GatewayService) handleCCStreamingFromAnthropic(
 		}
 
 		if processAnthropicEvent(&event) {
+			if balanceAbortErr != nil {
+				if !sawStop {
+					estimate.fill(&usage, progress, requestID, clientDisconnected, balanceAbortErr)
+				}
+				return resultWithUsage(), balanceAbortErr
+			}
 			return resultWithUsage(), nil
 		}
 		if event.Type == "message_stop" {

@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ip"
@@ -16,8 +18,34 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	coderws "github.com/coder/websocket"
 	"github.com/gin-gonic/gin"
+	"github.com/tidwall/gjson"
 	"go.uber.org/zap"
 )
+
+var (
+	grokRealtimePreauthTopUpInterval = 10 * time.Second
+	grokRealtimePreauthTopUpLead     = 15 * time.Second
+	grokRealtimeNow                  = time.Now
+)
+
+func resolveConcurrencyUserSubject(c *gin.Context, apiKey *service.APIKey) (userID int64, concurrency int) {
+	if subject, ok := middleware2.GetAuthSubjectFromContext(c); ok {
+		userID = subject.UserID
+		concurrency = subject.Concurrency
+	}
+	if apiKey != nil {
+		if userID <= 0 {
+			userID = apiKey.UserID
+		}
+		if userID <= 0 && apiKey.User != nil {
+			userID = apiKey.User.ID
+		}
+		if concurrency <= 0 && apiKey.User != nil {
+			concurrency = apiKey.User.Concurrency
+		}
+	}
+	return userID, concurrency
+}
 
 // GrokRealtime exposes xAI's native Voice Realtime WebSocket.
 // Only Grok-platform API keys may use this endpoint.
@@ -32,16 +60,29 @@ func (h *OpenAIGatewayHandler) GrokRealtime(c *gin.Context) {
 		h.errorResponse(c, http.StatusNotFound, "not_found_error", "Realtime API is not supported for this platform")
 		return
 	}
-	keyRelease, keyErr := h.concurrencyHelper.AcquireAPIKeySlot(c.Request.Context(), apiKey.ID, apiKey.ConcurrencyLimit)
-	if keyErr != nil {
-		h.handleConcurrencyError(c, keyErr, "API key", false)
+	reqLog := requestLogger(c, "handler.openai_gateway.grok_realtime")
+	if !h.ensureResponsesDependencies(c, reqLog) {
 		return
 	}
-	if keyRelease != nil {
-		defer keyRelease()
-	}
-	if !h.ensureResponsesDependencies(c, nil) {
-		return
+	userID, userConcurrency := resolveConcurrencyUserSubject(c, apiKey)
+	if userID > 0 {
+		var streamStarted bool
+		userRelease, acquired := h.acquireResponsesUserSlot(c, userID, userConcurrency, false, &streamStarted, reqLog)
+		if !acquired {
+			return
+		}
+		if userRelease != nil {
+			defer userRelease()
+		}
+	} else {
+		keyRelease, keyErr := h.concurrencyHelper.AcquireAPIKeySlot(c.Request.Context(), apiKey.ID, apiKey.ConcurrencyLimit)
+		if keyErr != nil {
+			h.handleConcurrencyError(c, keyErr, "API key", false)
+			return
+		}
+		if keyRelease != nil {
+			defer keyRelease()
+		}
 	}
 	subscription, _ := middleware2.GetSubscriptionFromContext(c)
 	if err := h.billingCacheService.CheckBillingEligibility(c.Request.Context(), apiKey.User, apiKey, apiKey.Group, subscription, service.QuotaPlatform(c.Request.Context(), apiKey)); err != nil {
@@ -53,7 +94,6 @@ func (h *OpenAIGatewayHandler) GrokRealtime(c *gin.Context) {
 		return
 	}
 
-	reqLog := requestLogger(c, "handler.openai_gateway.grok_realtime")
 	model := c.Query("model")
 	if strings.TrimSpace(model) == "" {
 		model = "grok-voice-latest"
@@ -69,6 +109,22 @@ func (h *OpenAIGatewayHandler) GrokRealtime(c *gin.Context) {
 		return
 	}
 	defer inflightDone()
+
+	realtimeRequestID := service.StableGrokRealtimeBillingRequestID("")
+	estimateRealtimeHold := func(routeCtx context.Context, key *service.APIKey) (float64, error) {
+		return h.gatewayService.EstimateAudioPreauthorizationCost(routeCtx, key, model, "realtime", 1.0), nil
+	}
+	initialRealtimeHold, _ := estimateRealtimeHold(c.Request.Context(), apiKey)
+	balanceGuard, preauthErr := preauthorizeFixedAmountGatewayRequest(
+		c.Request.Context(), h.balancePreauthorizer, apiKey, subscription, realtimeRequestID, []byte(model), initialRealtimeHold,
+	)
+	if h.handlePreauthorizationError(c, preauthErr, false) {
+		return
+	}
+	defer func() { deferBalancePreauthorizationRefund(reqLog, balanceGuard) }()
+	if balanceGuard != nil {
+		c.Request = c.Request.WithContext(service.ContextWithBalancePreauthorizationGuard(c.Request.Context(), balanceGuard))
+	}
 
 	// Keep the HTTP response uncommitted while selecting and probing an account.
 	// Realtime is not an HTTP streaming response; using reqStream=true here would
@@ -94,7 +150,11 @@ func (h *OpenAIGatewayHandler) GrokRealtime(c *gin.Context) {
 			false, false, false, service.PlatformGrok,
 		)
 		if selectErr == nil && routedKey != nil {
-			if bindErr := h.bindSelectedKeyRoute(c, keyRouteBinding{Previous: apiKey, Selected: routedKey, Subscription: &subscription}); bindErr != nil {
+			if bindErr := h.bindSelectedKeyRoute(c, keyRouteBinding{
+				Previous: apiKey, Selected: routedKey, Subscription: &subscription,
+				Guard: &balanceGuard, Body: []byte(model), Model: model,
+				FixedRequestID: realtimeRequestID, FixedAmount: estimateRealtimeHold,
+			}); bindErr != nil {
 				releaseRejectedKeyRouteSelection(candidate)
 				h.handlePreauthorizationError(c, bindErr, false)
 				return
@@ -161,17 +221,81 @@ func (h *OpenAIGatewayHandler) GrokRealtime(c *gin.Context) {
 	}
 	defer func() { _ = conn.CloseNow() }()
 
-	started := time.Now()
-	audioObserved, proxyErr := h.gatewayService.ProxyGrokRealtimeConn(c.Request.Context(), c, conn, upstream, model)
-	elapsed := time.Since(started)
-	if proxyErr != nil {
+	started := grokRealtimeNow()
+	proxyCtx, proxyCancel := context.WithCancel(c.Request.Context())
+	var topUpAbortErr atomic.Pointer[error]
+	topUpDone := make(chan struct{})
+	perMinCost := h.gatewayService.EstimateAudioPreauthorizationCost(c.Request.Context(), apiKey, model, "realtime", 1.0)
+	if balanceGuard != nil &&
+		service.BalancePreauthorizationBillingType(apiKey, subscription) == service.BillingTypeBalance &&
+		perMinCost > 0 &&
+		grokRealtimePreauthTopUpInterval > 0 {
+		go func() {
+			defer close(topUpDone)
+			ticker := time.NewTicker(grokRealtimePreauthTopUpInterval)
+			defer ticker.Stop()
+			lead := grokRealtimePreauthTopUpLead
+			if lead < 0 {
+				lead = 0
+			}
+			for {
+				select {
+				case <-proxyCtx.Done():
+					return
+				case <-ticker.C:
+					if proxyCtx.Err() != nil {
+						return
+					}
+					effectiveElapsed := grokRealtimeNow().Sub(started) + lead
+					if effectiveElapsed < 0 {
+						effectiveElapsed = 0
+					}
+					neededMinutes := math.Max(1.0, math.Floor(effectiveElapsed.Minutes())+1.0)
+					target := perMinCost * neededMinutes
+					if target <= balanceGuard.HoldAmount() {
+						continue
+					}
+					topUpCtx, cancelTopUp := context.WithTimeout(context.WithoutCancel(proxyCtx), 5*time.Second)
+					err := balanceGuard.TopUpFixedAmount(topUpCtx, target)
+					cancelTopUp()
+					if err != nil {
+						if proxyCtx.Err() != nil {
+							return
+						}
+						errCopy := err
+						topUpAbortErr.Store(&errCopy)
+						// Send the explicit WebSocket Close frame BEFORE canceling proxyCtx;
+						// canceling the context of an active coder/websocket Read tears down
+						// the underlying TCP connection immediately and delivers raw EOF.
+						closeStatus, closeReason := openAIWSPreauthorizationCloseStatusAndReason(err)
+						_ = conn.Close(closeStatus, closeReason)
+						proxyCancel()
+						return
+					}
+				}
+			}
+		}()
+	} else {
+		close(topUpDone)
+	}
+	billableObserved, proxyErr := h.gatewayService.ProxyGrokRealtimeConn(proxyCtx, c, conn, upstream, model)
+	elapsed := grokRealtimeNow().Sub(started)
+	proxyCancel()
+	<-topUpDone
+	if abortErrPtr := topUpAbortErr.Load(); abortErrPtr != nil && *abortErrPtr != nil {
+		reqLog.Info("grok_realtime.preauth_topup_aborted", zap.Error(*abortErrPtr))
+		closeStatus, closeReason := openAIWSPreauthorizationCloseStatusAndReason(*abortErrPtr)
+		_ = conn.Close(closeStatus, closeReason)
+	} else if proxyErr != nil {
 		reqLog.Info("grok_realtime.proxy_failed", zap.Error(proxyErr))
 		if !isExpectedGrokRealtimeClose(proxyErr) {
 			_ = conn.Close(coderws.StatusInternalError, "upstream realtime websocket failed")
-			return
 		}
 	}
-	if result := grokRealtimeBillingResult(model, elapsed, audioObserved); result != nil {
+	if result := grokRealtimeBillingResult(model, elapsed, billableObserved); result != nil {
+		if realtimeRequestID != "" {
+			result.RequestID = service.StableGrokRealtimeBillingRequestID(realtimeRequestID)
+		}
 		h.recordGrokVoiceUsage(c, apiKey, selection.Account, subscription, "realtime", nil, result)
 	}
 }
@@ -209,16 +333,29 @@ func (h *OpenAIGatewayHandler) GrokVoice(c *gin.Context, endpoint string) {
 		h.errorResponse(c, http.StatusNotFound, "not_found_error", "Voice API is not supported for this platform")
 		return
 	}
-	keyRelease, keyErr := h.concurrencyHelper.AcquireAPIKeySlot(c.Request.Context(), apiKey.ID, apiKey.ConcurrencyLimit)
-	if keyErr != nil {
-		h.handleConcurrencyError(c, keyErr, "API key", false)
+	reqLog := requestLogger(c, "handler.openai_gateway.grok_voice", zap.String("endpoint", endpoint))
+	if !h.ensureResponsesDependencies(c, reqLog) {
 		return
 	}
-	if keyRelease != nil {
-		defer keyRelease()
-	}
-	if !h.ensureResponsesDependencies(c, nil) {
-		return
+	userID, userConcurrency := resolveConcurrencyUserSubject(c, apiKey)
+	if userID > 0 {
+		var streamStarted bool
+		userRelease, acquired := h.acquireResponsesUserSlot(c, userID, userConcurrency, false, &streamStarted, reqLog)
+		if !acquired {
+			return
+		}
+		if userRelease != nil {
+			defer userRelease()
+		}
+	} else {
+		keyRelease, keyErr := h.concurrencyHelper.AcquireAPIKeySlot(c.Request.Context(), apiKey.ID, apiKey.ConcurrencyLimit)
+		if keyErr != nil {
+			h.handleConcurrencyError(c, keyErr, "API key", false)
+			return
+		}
+		if keyRelease != nil {
+			defer keyRelease()
+		}
 	}
 	subscription, _ := middleware2.GetSubscriptionFromContext(c)
 	if err := h.billingCacheService.CheckBillingEligibility(c.Request.Context(), apiKey.User, apiKey, apiKey.Group, subscription, service.QuotaPlatform(c.Request.Context(), apiKey)); err != nil {
@@ -237,7 +374,6 @@ func (h *OpenAIGatewayHandler) GrokVoice(c *gin.Context, endpoint string) {
 	}
 	if endpoint == "tts" {
 		subject, _ := middleware2.GetAuthSubjectFromContext(c)
-		reqLog := requestLogger(c, "handler.openai_gateway.grok_voice", zap.String("endpoint", endpoint))
 		// TTS bodies use {"input":"..."} (and variants). Normalize to chat messages so
 		// content moderation extractors see the spoken text.
 		auditBody := body
@@ -265,6 +401,28 @@ func (h *OpenAIGatewayHandler) GrokVoice(c *gin.Context, endpoint string) {
 	}
 	defer inflightDone()
 
+	var balanceGuard *service.BalancePreauthorizationGuard
+	var voiceRequestID string
+	var estimateVoiceHold func(context.Context, *service.APIKey) (float64, error)
+	if voiceUnits := grokVoicePreauthUnits(endpoint, body); voiceUnits > 0 {
+		voiceRequestID = service.StableGrokAudioBillingRequestID("")
+		estimateVoiceHold = func(routeCtx context.Context, key *service.APIKey) (float64, error) {
+			return h.gatewayService.EstimateAudioPreauthorizationCost(routeCtx, key, endpoint, endpoint, voiceUnits), nil
+		}
+		voiceHoldAmount, _ := estimateVoiceHold(c.Request.Context(), apiKey)
+		var preauthErr error
+		balanceGuard, preauthErr = preauthorizeFixedAmountGatewayRequest(
+			c.Request.Context(), h.balancePreauthorizer, apiKey, subscription, voiceRequestID, body, voiceHoldAmount,
+		)
+		if h.handlePreauthorizationError(c, preauthErr, false) {
+			return
+		}
+		if balanceGuard != nil {
+			c.Request = c.Request.WithContext(service.ContextWithBalancePreauthorizationGuard(c.Request.Context(), balanceGuard))
+		}
+	}
+	defer func() { deferBalancePreauthorizationRefund(reqLog, balanceGuard) }()
+
 	contentType := c.GetHeader("Content-Type")
 	if strings.TrimSpace(contentType) == "" {
 		contentType = "application/json"
@@ -274,7 +432,6 @@ func (h *OpenAIGatewayHandler) GrokVoice(c *gin.Context, endpoint string) {
 	var last *service.UpstreamFailoverError
 	profitVetoCount := 0
 	accountSlotBusySeen := false
-	reqLog := requestLogger(c, "handler.openai_gateway.grok_voice", zap.String("endpoint", endpoint))
 	selectionModel := "grok-4.5"
 
 	for attempts := 0; attempts < 4; attempts++ {
@@ -293,7 +450,15 @@ func (h *OpenAIGatewayHandler) GrokVoice(c *gin.Context, endpoint string) {
 			service.PlatformGrok,
 		)
 		if selectErr == nil && routedKey != nil {
-			if bindErr := h.bindSelectedKeyRoute(c, keyRouteBinding{Previous: apiKey, Selected: routedKey, Subscription: &subscription}); bindErr != nil {
+			binding := keyRouteBinding{Previous: apiKey, Selected: routedKey, Subscription: &subscription}
+			if estimateVoiceHold != nil {
+				binding.Guard = &balanceGuard
+				binding.Body = body
+				binding.Model = endpoint
+				binding.FixedRequestID = voiceRequestID
+				binding.FixedAmount = estimateVoiceHold
+			}
+			if bindErr := h.bindSelectedKeyRoute(c, binding); bindErr != nil {
 				releaseRejectedKeyRouteSelection(selection)
 				h.handlePreauthorizationError(c, bindErr, false)
 				return
@@ -427,4 +592,43 @@ func readGrokVoiceGatewayBody(c *gin.Context) ([]byte, error) {
 // body, so moderation and in-flight reservation use the same field as billing.
 func extractGrokTTSInputText(body []byte) string {
 	return service.GrokTTSText(body)
+}
+
+// grokVoicePreauthUnits mirrors service.estimateGrokVoiceAudioUsage so TTS and
+// STT preauthorization holds match post-usage billing units. Non-billable
+// endpoints (custom-voices) return 0 and skip preauthorization.
+func grokVoicePreauthUnits(endpoint string, body []byte) float64 {
+	switch strings.TrimSpace(endpoint) {
+	case "tts":
+		chars := len([]rune(extractGrokTTSInputText(body)))
+		if chars <= 0 {
+			chars = len(body)
+		}
+		if chars <= 0 {
+			return 0
+		}
+		return float64(chars) / 1_000_000.0
+	case "stt":
+		secs := 0.0
+		if len(body) > 0 {
+			secs = float64(len(body)) / grokVoiceSTTBytesPerSecond
+		}
+		if gjson.ValidBytes(body) {
+			if v := gjson.GetBytes(body, "duration_seconds"); v.Exists() && v.Type == gjson.Number {
+				if clientSecs := v.Float(); !math.IsNaN(clientSecs) && !math.IsInf(clientSecs, 0) && clientSecs > secs {
+					secs = clientSecs
+				}
+			}
+		}
+		const maxFallbackSeconds = 24 * 3600.0
+		if secs > maxFallbackSeconds {
+			secs = maxFallbackSeconds
+		}
+		if secs <= 0 {
+			return 0
+		}
+		return secs / 3600.0
+	default:
+		return 0
+	}
 }

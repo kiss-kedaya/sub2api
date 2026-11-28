@@ -332,9 +332,12 @@ func (s *APIKeyService) applyAuthCacheEntry(key string, entry *APIKeyAuthCacheEn
 	if entry.Snapshot.Version != apiKeyAuthSnapshotVersion {
 		return nil, false, nil
 	}
-	// Even a current-version DeepSeek entry must have its provider loaded;
-	// otherwise search requests could silently use the model account instead.
-	if group := entry.Snapshot.Group; group != nil && group.Platform == PlatformDeepseek && !group.SearchProviderConfigLoaded {
+	// Even a current-version DeepSeek entry must have its provider and tool
+	// pricing fields loaded; otherwise rolling deployment against shared Redis
+	// could read legacy snapshots with zeroed ToolRateIndependent/FetchPricePer1k
+	// or missing search provider credentials.
+	if group := entry.Snapshot.Group; group != nil && group.Platform == PlatformDeepseek &&
+		(!group.SearchProviderConfigLoaded || !group.ToolPricingConfigLoaded) {
 		return nil, false, nil
 	}
 	return s.snapshotToAPIKey(key, entry.Snapshot), true, nil
@@ -428,8 +431,12 @@ func (s *APIKeyService) snapshotFromAPIKey(ctx context.Context, apiKey *APIKey) 
 			VideoPrice1080P:                 apiKey.Group.VideoPrice1080P,
 			VideoModelPrices:                NormalizeVideoModelPrices(apiKey.Group.VideoModelPrices),
 			WebSearchPricePerCall:           apiKey.Group.WebSearchPricePerCall,
-			SearchPricePer1k:                apiKey.Group.SearchPricePer1k,
-			OCRPricePer1kPages:              apiKey.Group.OCRPricePer1kPages,
+			ToolRateIndependent:             apiKey.Group.ToolRateIndependent,
+			ToolRateMultiplier:              apiKey.Group.ToolRateMultiplier,
+			SearchPricePer1k:                cloneGroupValuePointer(apiKey.Group.SearchPricePer1k),
+			FetchPricePer1k:                 cloneGroupValuePointer(apiKey.Group.FetchPricePer1k),
+			OCRPricePer1kPages:              cloneGroupValuePointer(apiKey.Group.OCRPricePer1kPages),
+			ToolPricingConfigLoaded:         true,
 			SearchProviderBaseURL:           apiKey.Group.SearchProviderBaseURL,
 			SearchProviderAPIKey:            apiKey.Group.SearchProviderAPIKey,
 			SearchProviderConfigLoaded:      true,
@@ -448,6 +455,7 @@ func (s *APIKeyService) snapshotFromAPIKey(ctx context.Context, apiKey *APIKey) 
 			AllowMessagesDispatch:           apiKey.Group.AllowMessagesDispatch,
 			CrossProtocolConversionEnabled:  boolPtr(apiKey.Group.CrossProtocolConversionEnabled),
 			ReturnRequestedModel:            apiKey.Group.ReturnRequestedModel,
+			SaveResponseMsgID:               apiKey.Group.SaveResponseMsgID,
 			AllowLive:                       apiKey.Group.AllowLive,
 			ForceOpenAIFast:                 apiKey.Group.ForceOpenAIFast,
 			FreeOpenAIFast:                  apiKey.Group.FreeOpenAIFast,
@@ -549,8 +557,11 @@ func (s *APIKeyService) snapshotToAPIKey(key string, snapshot *APIKeyAuthSnapsho
 			VideoPrice1080P:                 snapshot.Group.VideoPrice1080P,
 			VideoModelPrices:                NormalizeVideoModelPrices(snapshot.Group.VideoModelPrices),
 			WebSearchPricePerCall:           snapshot.Group.WebSearchPricePerCall,
-			SearchPricePer1k:                snapshot.Group.SearchPricePer1k,
-			OCRPricePer1kPages:              snapshot.Group.OCRPricePer1kPages,
+			ToolRateIndependent:             snapshot.Group.ToolRateIndependent,
+			ToolRateMultiplier:              snapshot.Group.ToolRateMultiplier,
+			SearchPricePer1k:                cloneGroupValuePointer(snapshot.Group.SearchPricePer1k),
+			FetchPricePer1k:                 cloneGroupValuePointer(snapshot.Group.FetchPricePer1k),
+			OCRPricePer1kPages:              cloneGroupValuePointer(snapshot.Group.OCRPricePer1kPages),
 			SearchProviderBaseURL:           snapshot.Group.SearchProviderBaseURL,
 			SearchProviderAPIKey:            snapshot.Group.SearchProviderAPIKey,
 			AudioRealtimePricePerMin:        snapshot.Group.AudioRealtimePricePerMin,
@@ -568,6 +579,7 @@ func (s *APIKeyService) snapshotToAPIKey(key string, snapshot *APIKeyAuthSnapsho
 			AllowMessagesDispatch:           snapshot.Group.AllowMessagesDispatch,
 			CrossProtocolConversionEnabled:  snapshotCrossProtocolEnabled(snapshot.Group.CrossProtocolConversionEnabled),
 			ReturnRequestedModel:            snapshot.Group.ReturnRequestedModel,
+			SaveResponseMsgID:               snapshot.Group.SaveResponseMsgID,
 			AllowLive:                       snapshot.Group.AllowLive,
 			ForceOpenAIFast:                 snapshot.Group.ForceOpenAIFast,
 			FreeOpenAIFast:                  snapshot.Group.FreeOpenAIFast,

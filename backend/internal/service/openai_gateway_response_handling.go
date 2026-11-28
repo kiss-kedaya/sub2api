@@ -56,6 +56,9 @@ type openaiStreamingResult struct {
 	// produced in that case. It is 0 when the stream reached a terminal frame or
 	// produced nothing.
 	incompleteOutputTokens int
+	// hasFinalOutput is true once a terminal frame reported an authoritative
+	// OutputTokens figure; incomplete-stream estimation preserves it verbatim.
+	hasFinalOutput bool
 }
 
 type openaiNonStreamingResult struct {
@@ -66,6 +69,8 @@ type openaiNonStreamingResult struct {
 	imageOutputSizes         []string
 	searchCount              int
 	nonBillableUpstreamError bool
+	incompleteOutputTokens   int
+	balanceAborted           bool
 }
 
 func (s *OpenAIGatewayService) handleStreamingResponse(ctx context.Context, resp *http.Response, c *gin.Context, account *Account, startTime time.Time, originalModel, mappedModel string) (*openaiStreamingResult, error) {
@@ -172,11 +177,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 		if !stageFirstOutput || len(attemptResponseHeaders) == 0 || c.Writer.Written() {
 			return
 		}
-		for key, values := range attemptResponseHeaders {
-			for _, value := range values {
-				c.Writer.Header().Add(key, value)
-			}
-		}
+		responseheaders.WritePreparedHeaders(c.Writer.Header(), attemptResponseHeaders)
 		// 暂存头此刻才真正写给客户端：turn-state 溯源在这里记录（见
 		// noteStagedOpenAICodexTurnStateCommitted 的 failover 说明）。
 		s.noteStagedOpenAICodexTurnStateCommitted(c, account, attemptResponseHeaders)
@@ -244,7 +245,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 	responseID := ""
 	// 流式预扣补扣：仅当请求持有带 tracker 的活动预扣 guard 时非空；逐帧仅整数
 	// 累加，跨输出窗口时才原子补扣一次，补扣失败中止上游流。
-	streamBalanceGuard, _ := BalancePreauthorizationGuardFromContext(ctx)
+	streamBalanceGuardCtx, streamBalanceGuard := balancePreauthorizationGuardForRequest(ctx, c)
 	var firstOutputScanGuard atomic.Bool
 	firstOutputScanGuard.Store(stageFirstOutput)
 	scanner := bufio.NewScanner(resp.Body)
@@ -453,7 +454,8 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 	var streamSearchSeen = make(map[string]struct{})
 	searchSkipFunctionTools := openAINativeSearchSkipFunctionTools(c)
 	resultWithUsage := func() *openaiStreamingResult {
-		incompleteStream := !sawTerminalEvent && !nonBillableUpstreamError
+		balanceAborted := isBalanceHoldTopUpError(streamEarlyErr)
+		incompleteStream := (!sawTerminalEvent && !nonBillableUpstreamError) || balanceAborted
 		incompleteOutputTokens := 0
 		if incompleteStream {
 			// No terminal frame means no real usage can arrive. Keep a lower-bound
@@ -471,6 +473,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			clientDisconnect:         clientDisconnected,
 			incompleteStream:         incompleteStream,
 			incompleteOutputTokens:   incompleteOutputTokens,
+			hasFinalOutput:           sawTerminalEvent && terminalEventType != "error" && usage.OutputTokens > 0,
 		}
 	}
 	flushPending := func(disconnectMessage string) {
@@ -987,14 +990,23 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 					handlePendingWriteError(err)
 				} else {
 					eventInProgress = true
-					// 可见输出帧计量：累加已承诺字节作 token 上界，跨预扣窗口时补扣。
-					// 补扣失败通过 streamEarlyErr 中止：后续行被 processSSELine 顶部的
-					// 守卫跳过，scanner 循环结束后按该错误返回并关闭上游连接。
+					// 语义输出增量计量：仅提取真实输出 delta 字节（不计 JSON 信封、.done、
+					// output_item.done、response.completed 或 [DONE]），跨预扣窗口时补扣。
+					// 补扣失败通过 streamEarlyErr 中止：补齐当前 SSE 事件空行分隔符并刷出，
+					// 后续行被 processSSELine 顶部守卫跳过，scanner 循环结束后返回并关闭上游连接。
 					// tracker 为 nil 时整体零开销。
-					if startsVisibleOutput && streamEarlyErr == nil {
-						if topUpErr := streamBalanceGuard.ObserveStreamingOutput(ctx, len(line)); topUpErr != nil {
-							streamEarlyErr = wrapStreamOutputHoldTopUpFailure(topUpErr)
-							s.reportOpenAIStreamOutputHoldTopUpFailure(c, account, "OpenAI responses", topUpErr)
+					if streamEarlyErr == nil {
+						if observedBytes := responsesSSEDataOutputBytes(eventType, dataBytes); observedBytes > 0 {
+							if topUpErr := streamBalanceGuard.ObserveStreamingOutput(streamBalanceGuardCtx, observedBytes); topUpErr != nil {
+								terminateOpenEvent()
+								if !clientDisconnected {
+									_ = flushBuffered()
+								}
+								nonBillableUpstreamError = false
+								sawTerminalEvent = false
+								streamEarlyErr = wrapStreamOutputHoldTopUpFailure(topUpErr)
+								s.reportOpenAIStreamOutputHoldTopUpFailure(c, account, "OpenAI responses", topUpErr)
+							}
 						}
 					}
 				}
@@ -1947,11 +1959,28 @@ func openAICacheCreationTTLTokensFromUsage(value gjson.Result, aggregate int) (i
 }
 
 func (s *OpenAIGatewayService) handleNonStreamingResponse(ctx context.Context, resp *http.Response, c *gin.Context, account *Account, originalModel, mappedModel string) (*openaiNonStreamingResult, error) {
-	body, err := ReadUpstreamResponseBody(resp.Body, s.cfg, c, openAITooLargeError)
+	inspectSSE := isEventStreamResponse(resp.Header) || (account != nil && account.Type == AccountTypeOAuth)
+	body, partialUsage, incompleteOutputTokens, err := readUpstreamResponseBodyWithBalanceGuard(ctx, resp, s.cfg, c, openAITooLargeError, inspectSSE)
 	if errors.Is(err, errOpenAIUpstreamWaitLimit) && openAIStreamSilenceHasCompletedJSON(body) {
 		err = nil
 	}
 	if err != nil {
+		if isBalanceHoldTopUpError(err) {
+			s.reportOpenAIStreamOutputHoldTopUpFailure(c, account, "OpenAI responses buffered", err)
+			if c != nil && c.Writer != nil && !c.Writer.Written() {
+				status, errType, message := balanceHoldAbortClientError(err)
+				writeResponsesError(c, status, errType, message)
+			}
+			if partialUsage == nil {
+				partialUsage = &OpenAIUsage{}
+			}
+			return &openaiNonStreamingResult{
+				OpenAIUsage:            partialUsage,
+				usage:                  partialUsage,
+				incompleteOutputTokens: incompleteOutputTokens,
+				balanceAborted:         true,
+			}, err
+		}
 		if errors.Is(err, errOpenAIUpstreamWaitLimit) {
 			if openAIStreamSilenceHasSuccessfulTerminal(body) {
 				return s.handleSSEToJSON(resp, c, account, body, originalModel, mappedModel)
@@ -2698,15 +2727,7 @@ func normalizeResponsesStreamingTerminalFrameOutput(frame openAISSEDataFrame, ac
 }
 
 func responsesStreamEventMayContributeToOutput(eventType string) bool {
-	switch eventType {
-	case "response.output_text.delta",
-		"response.output_item.added",
-		"response.function_call_arguments.delta",
-		"response.reasoning_summary_text.delta":
-		return true
-	default:
-		return false
-	}
+	return passthroughStreamEventContributesOutput(eventType)
 }
 
 // collectRawResponsesOutputItemsFromSSE 按到达顺序收集 SSE 流中

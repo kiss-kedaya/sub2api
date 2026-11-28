@@ -87,3 +87,48 @@ func (s *APIKeyService) deleteAuthCacheByHashes(ctx context.Context, hashes []st
 		s.InvalidateAuthCacheByHash(ctx, hash)
 	}
 }
+
+// InvalidateAuthCacheByAPIKeyID 按 API Key ID 查询凭据标识并立即逐出认证缓存。
+// 返回 true 表示已精准触发该 Key 的失效；查不到或仓储不可用时返回 false，供调用方降级按 userID 失效。
+func (s *APIKeyService) InvalidateAuthCacheByAPIKeyID(ctx context.Context, apiKeyID int64) bool {
+	if s == nil || s.apiKeyRepo == nil || apiKeyID <= 0 {
+		return false
+	}
+	credential, _, err := s.apiKeyRepo.GetKeyHashAndOwnerID(ctx, apiKeyID)
+	if err != nil || credential == "" {
+		return false
+	}
+	s.InvalidateAuthCacheByCredential(ctx, credential)
+	return true
+}
+
+type apiKeyIDAuthCacheInvalidator interface {
+	InvalidateAuthCacheByAPIKeyID(ctx context.Context, apiKeyID int64) bool
+}
+
+// invalidateExhaustedAPIKeyAuthCache 在异步/缓存内容结算发现 API Key 配额已打满时
+// 立即逐出认证缓存，避免等待 500ms outbox 或 10 分钟 TTL。
+func invalidateExhaustedAPIKeyAuthCache(ctx context.Context, invalidator APIKeyAuthCacheInvalidator, userID, apiKeyID int64) {
+	if invalidator == nil {
+		return
+	}
+	baseCtx := context.Background()
+	if ctx != nil {
+		baseCtx = context.WithoutCancel(ctx)
+	}
+	if apiKeyID > 0 {
+		if byID, ok := invalidator.(apiKeyIDAuthCacheInvalidator); ok {
+			evictCtx, cancel := context.WithTimeout(baseCtx, cacheWriteTimeout)
+			evicted := byID.InvalidateAuthCacheByAPIKeyID(evictCtx, apiKeyID)
+			cancel()
+			if evicted {
+				return
+			}
+		}
+	}
+	if userID > 0 {
+		fallbackCtx, cancel := context.WithTimeout(baseCtx, cacheWriteTimeout)
+		invalidator.InvalidateAuthCacheByUserID(fallbackCtx, userID)
+		cancel()
+	}
+}

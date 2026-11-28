@@ -31,6 +31,8 @@ type APIKeyHandler struct {
 	// 由 ProvideAPIKeyHandler 注入；nil 时旧测试与嵌入方行为不变（不强制校验），
 	// 生产装配必定非 nil。
 	verificationService *service.APIKeyVerificationService
+	// personalAPIKeyService 管理用户个人接口密钥（/api/v1/user/personal-api-key）。
+	personalAPIKeyService *service.UserPersonalAPIKeyService
 }
 
 // SetVerificationService 注入身份校验服务（wire 装配使用）。

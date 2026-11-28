@@ -23026,8 +23026,13 @@ type GroupMutation struct {
 	video_model_prices                      *map[string]map[string]float64
 	web_search_price_per_call               *float64
 	addweb_search_price_per_call            *float64
+	tool_rate_independent                   *bool
+	tool_rate_multiplier                    *float64
+	addtool_rate_multiplier                 *float64
 	search_price_per_1k                     *float64
 	addsearch_price_per_1k                  *float64
+	fetch_price_per_1k                      *float64
+	addfetch_price_per_1k                   *float64
 	ocr_price_per_1k_pages                  *float64
 	addocr_price_per_1k_pages               *float64
 	search_provider_base_url                *string
@@ -23058,6 +23063,7 @@ type GroupMutation struct {
 	allow_messages_dispatch                 *bool
 	cross_protocol_conversion_enabled       *bool
 	return_requested_model                  *bool
+	save_response_msg_id                    *bool
 	allow_live                              *bool
 	force_openai_fast                       *bool
 	free_openai_fast                        *bool
@@ -24996,6 +25002,98 @@ func (m *GroupMutation) ResetWebSearchPricePerCall() {
 	delete(m.clearedFields, group.FieldWebSearchPricePerCall)
 }
 
+// SetToolRateIndependent sets the "tool_rate_independent" field.
+func (m *GroupMutation) SetToolRateIndependent(b bool) {
+	m.tool_rate_independent = &b
+}
+
+// ToolRateIndependent returns the value of the "tool_rate_independent" field in the mutation.
+func (m *GroupMutation) ToolRateIndependent() (r bool, exists bool) {
+	v := m.tool_rate_independent
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldToolRateIndependent returns the old "tool_rate_independent" field's value of the Group entity.
+// If the Group object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *GroupMutation) OldToolRateIndependent(ctx context.Context) (v bool, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldToolRateIndependent is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldToolRateIndependent requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldToolRateIndependent: %w", err)
+	}
+	return oldValue.ToolRateIndependent, nil
+}
+
+// ResetToolRateIndependent resets all changes to the "tool_rate_independent" field.
+func (m *GroupMutation) ResetToolRateIndependent() {
+	m.tool_rate_independent = nil
+}
+
+// SetToolRateMultiplier sets the "tool_rate_multiplier" field.
+func (m *GroupMutation) SetToolRateMultiplier(f float64) {
+	m.tool_rate_multiplier = &f
+	m.addtool_rate_multiplier = nil
+}
+
+// ToolRateMultiplier returns the value of the "tool_rate_multiplier" field in the mutation.
+func (m *GroupMutation) ToolRateMultiplier() (r float64, exists bool) {
+	v := m.tool_rate_multiplier
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldToolRateMultiplier returns the old "tool_rate_multiplier" field's value of the Group entity.
+// If the Group object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *GroupMutation) OldToolRateMultiplier(ctx context.Context) (v float64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldToolRateMultiplier is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldToolRateMultiplier requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldToolRateMultiplier: %w", err)
+	}
+	return oldValue.ToolRateMultiplier, nil
+}
+
+// AddToolRateMultiplier adds f to the "tool_rate_multiplier" field.
+func (m *GroupMutation) AddToolRateMultiplier(f float64) {
+	if m.addtool_rate_multiplier != nil {
+		*m.addtool_rate_multiplier += f
+	} else {
+		m.addtool_rate_multiplier = &f
+	}
+}
+
+// AddedToolRateMultiplier returns the value that was added to the "tool_rate_multiplier" field in this mutation.
+func (m *GroupMutation) AddedToolRateMultiplier() (r float64, exists bool) {
+	v := m.addtool_rate_multiplier
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetToolRateMultiplier resets all changes to the "tool_rate_multiplier" field.
+func (m *GroupMutation) ResetToolRateMultiplier() {
+	m.tool_rate_multiplier = nil
+	m.addtool_rate_multiplier = nil
+}
+
 // SetSearchPricePer1k sets the "search_price_per_1k" field.
 func (m *GroupMutation) SetSearchPricePer1k(f float64) {
 	m.search_price_per_1k = &f
@@ -25064,6 +25162,76 @@ func (m *GroupMutation) ResetSearchPricePer1k() {
 	m.search_price_per_1k = nil
 	m.addsearch_price_per_1k = nil
 	delete(m.clearedFields, group.FieldSearchPricePer1k)
+}
+
+// SetFetchPricePer1k sets the "fetch_price_per_1k" field.
+func (m *GroupMutation) SetFetchPricePer1k(f float64) {
+	m.fetch_price_per_1k = &f
+	m.addfetch_price_per_1k = nil
+}
+
+// FetchPricePer1k returns the value of the "fetch_price_per_1k" field in the mutation.
+func (m *GroupMutation) FetchPricePer1k() (r float64, exists bool) {
+	v := m.fetch_price_per_1k
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldFetchPricePer1k returns the old "fetch_price_per_1k" field's value of the Group entity.
+// If the Group object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *GroupMutation) OldFetchPricePer1k(ctx context.Context) (v *float64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldFetchPricePer1k is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldFetchPricePer1k requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldFetchPricePer1k: %w", err)
+	}
+	return oldValue.FetchPricePer1k, nil
+}
+
+// AddFetchPricePer1k adds f to the "fetch_price_per_1k" field.
+func (m *GroupMutation) AddFetchPricePer1k(f float64) {
+	if m.addfetch_price_per_1k != nil {
+		*m.addfetch_price_per_1k += f
+	} else {
+		m.addfetch_price_per_1k = &f
+	}
+}
+
+// AddedFetchPricePer1k returns the value that was added to the "fetch_price_per_1k" field in this mutation.
+func (m *GroupMutation) AddedFetchPricePer1k() (r float64, exists bool) {
+	v := m.addfetch_price_per_1k
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ClearFetchPricePer1k clears the value of the "fetch_price_per_1k" field.
+func (m *GroupMutation) ClearFetchPricePer1k() {
+	m.fetch_price_per_1k = nil
+	m.addfetch_price_per_1k = nil
+	m.clearedFields[group.FieldFetchPricePer1k] = struct{}{}
+}
+
+// FetchPricePer1kCleared returns if the "fetch_price_per_1k" field was cleared in this mutation.
+func (m *GroupMutation) FetchPricePer1kCleared() bool {
+	_, ok := m.clearedFields[group.FieldFetchPricePer1k]
+	return ok
+}
+
+// ResetFetchPricePer1k resets all changes to the "fetch_price_per_1k" field.
+func (m *GroupMutation) ResetFetchPricePer1k() {
+	m.fetch_price_per_1k = nil
+	m.addfetch_price_per_1k = nil
+	delete(m.clearedFields, group.FieldFetchPricePer1k)
 }
 
 // SetOcrPricePer1kPages sets the "ocr_price_per_1k_pages" field.
@@ -26125,6 +26293,42 @@ func (m *GroupMutation) OldReturnRequestedModel(ctx context.Context) (v bool, er
 // ResetReturnRequestedModel resets all changes to the "return_requested_model" field.
 func (m *GroupMutation) ResetReturnRequestedModel() {
 	m.return_requested_model = nil
+}
+
+// SetSaveResponseMsgID sets the "save_response_msg_id" field.
+func (m *GroupMutation) SetSaveResponseMsgID(b bool) {
+	m.save_response_msg_id = &b
+}
+
+// SaveResponseMsgID returns the value of the "save_response_msg_id" field in the mutation.
+func (m *GroupMutation) SaveResponseMsgID() (r bool, exists bool) {
+	v := m.save_response_msg_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldSaveResponseMsgID returns the old "save_response_msg_id" field's value of the Group entity.
+// If the Group object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *GroupMutation) OldSaveResponseMsgID(ctx context.Context) (v bool, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldSaveResponseMsgID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldSaveResponseMsgID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldSaveResponseMsgID: %w", err)
+	}
+	return oldValue.SaveResponseMsgID, nil
+}
+
+// ResetSaveResponseMsgID resets all changes to the "save_response_msg_id" field.
+func (m *GroupMutation) ResetSaveResponseMsgID() {
+	m.save_response_msg_id = nil
 }
 
 // SetAllowLive sets the "allow_live" field.
@@ -27276,7 +27480,7 @@ func (m *GroupMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *GroupMutation) Fields() []string {
-	fields := make([]string, 0, 74)
+	fields := make([]string, 0, 78)
 	if m.created_at != nil {
 		fields = append(fields, group.FieldCreatedAt)
 	}
@@ -27382,8 +27586,17 @@ func (m *GroupMutation) Fields() []string {
 	if m.web_search_price_per_call != nil {
 		fields = append(fields, group.FieldWebSearchPricePerCall)
 	}
+	if m.tool_rate_independent != nil {
+		fields = append(fields, group.FieldToolRateIndependent)
+	}
+	if m.tool_rate_multiplier != nil {
+		fields = append(fields, group.FieldToolRateMultiplier)
+	}
 	if m.search_price_per_1k != nil {
 		fields = append(fields, group.FieldSearchPricePer1k)
+	}
+	if m.fetch_price_per_1k != nil {
+		fields = append(fields, group.FieldFetchPricePer1k)
 	}
 	if m.ocr_price_per_1k_pages != nil {
 		fields = append(fields, group.FieldOcrPricePer1kPages)
@@ -27444,6 +27657,9 @@ func (m *GroupMutation) Fields() []string {
 	}
 	if m.return_requested_model != nil {
 		fields = append(fields, group.FieldReturnRequestedModel)
+	}
+	if m.save_response_msg_id != nil {
+		fields = append(fields, group.FieldSaveResponseMsgID)
 	}
 	if m.allow_live != nil {
 		fields = append(fields, group.FieldAllowLive)
@@ -27577,8 +27793,14 @@ func (m *GroupMutation) Field(name string) (ent.Value, bool) {
 		return m.VideoModelPrices()
 	case group.FieldWebSearchPricePerCall:
 		return m.WebSearchPricePerCall()
+	case group.FieldToolRateIndependent:
+		return m.ToolRateIndependent()
+	case group.FieldToolRateMultiplier:
+		return m.ToolRateMultiplier()
 	case group.FieldSearchPricePer1k:
 		return m.SearchPricePer1k()
+	case group.FieldFetchPricePer1k:
+		return m.FetchPricePer1k()
 	case group.FieldOcrPricePer1kPages:
 		return m.OcrPricePer1kPages()
 	case group.FieldSearchProviderBaseURL:
@@ -27619,6 +27841,8 @@ func (m *GroupMutation) Field(name string) (ent.Value, bool) {
 		return m.CrossProtocolConversionEnabled()
 	case group.FieldReturnRequestedModel:
 		return m.ReturnRequestedModel()
+	case group.FieldSaveResponseMsgID:
+		return m.SaveResponseMsgID()
 	case group.FieldAllowLive:
 		return m.AllowLive()
 	case group.FieldForceOpenaiFast:
@@ -27734,8 +27958,14 @@ func (m *GroupMutation) OldField(ctx context.Context, name string) (ent.Value, e
 		return m.OldVideoModelPrices(ctx)
 	case group.FieldWebSearchPricePerCall:
 		return m.OldWebSearchPricePerCall(ctx)
+	case group.FieldToolRateIndependent:
+		return m.OldToolRateIndependent(ctx)
+	case group.FieldToolRateMultiplier:
+		return m.OldToolRateMultiplier(ctx)
 	case group.FieldSearchPricePer1k:
 		return m.OldSearchPricePer1k(ctx)
+	case group.FieldFetchPricePer1k:
+		return m.OldFetchPricePer1k(ctx)
 	case group.FieldOcrPricePer1kPages:
 		return m.OldOcrPricePer1kPages(ctx)
 	case group.FieldSearchProviderBaseURL:
@@ -27776,6 +28006,8 @@ func (m *GroupMutation) OldField(ctx context.Context, name string) (ent.Value, e
 		return m.OldCrossProtocolConversionEnabled(ctx)
 	case group.FieldReturnRequestedModel:
 		return m.OldReturnRequestedModel(ctx)
+	case group.FieldSaveResponseMsgID:
+		return m.OldSaveResponseMsgID(ctx)
 	case group.FieldAllowLive:
 		return m.OldAllowLive(ctx)
 	case group.FieldForceOpenaiFast:
@@ -28066,12 +28298,33 @@ func (m *GroupMutation) SetField(name string, value ent.Value) error {
 		}
 		m.SetWebSearchPricePerCall(v)
 		return nil
+	case group.FieldToolRateIndependent:
+		v, ok := value.(bool)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetToolRateIndependent(v)
+		return nil
+	case group.FieldToolRateMultiplier:
+		v, ok := value.(float64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetToolRateMultiplier(v)
+		return nil
 	case group.FieldSearchPricePer1k:
 		v, ok := value.(float64)
 		if !ok {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetSearchPricePer1k(v)
+		return nil
+	case group.FieldFetchPricePer1k:
+		v, ok := value.(float64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetFetchPricePer1k(v)
 		return nil
 	case group.FieldOcrPricePer1kPages:
 		v, ok := value.(float64)
@@ -28212,6 +28465,13 @@ func (m *GroupMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetReturnRequestedModel(v)
+		return nil
+	case group.FieldSaveResponseMsgID:
+		v, ok := value.(bool)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetSaveResponseMsgID(v)
 		return nil
 	case group.FieldAllowLive:
 		v, ok := value.(bool)
@@ -28398,8 +28658,14 @@ func (m *GroupMutation) AddedFields() []string {
 	if m.addweb_search_price_per_call != nil {
 		fields = append(fields, group.FieldWebSearchPricePerCall)
 	}
+	if m.addtool_rate_multiplier != nil {
+		fields = append(fields, group.FieldToolRateMultiplier)
+	}
 	if m.addsearch_price_per_1k != nil {
 		fields = append(fields, group.FieldSearchPricePer1k)
+	}
+	if m.addfetch_price_per_1k != nil {
+		fields = append(fields, group.FieldFetchPricePer1k)
 	}
 	if m.addocr_price_per_1k_pages != nil {
 		fields = append(fields, group.FieldOcrPricePer1kPages)
@@ -28482,8 +28748,12 @@ func (m *GroupMutation) AddedField(name string) (ent.Value, bool) {
 		return m.AddedVideoPrice1080p()
 	case group.FieldWebSearchPricePerCall:
 		return m.AddedWebSearchPricePerCall()
+	case group.FieldToolRateMultiplier:
+		return m.AddedToolRateMultiplier()
 	case group.FieldSearchPricePer1k:
 		return m.AddedSearchPricePer1k()
+	case group.FieldFetchPricePer1k:
+		return m.AddedFetchPricePer1k()
 	case group.FieldOcrPricePer1kPages:
 		return m.AddedOcrPricePer1kPages()
 	case group.FieldGrokModerationRefusalPrice:
@@ -28638,12 +28908,26 @@ func (m *GroupMutation) AddField(name string, value ent.Value) error {
 		}
 		m.AddWebSearchPricePerCall(v)
 		return nil
+	case group.FieldToolRateMultiplier:
+		v, ok := value.(float64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddToolRateMultiplier(v)
+		return nil
 	case group.FieldSearchPricePer1k:
 		v, ok := value.(float64)
 		if !ok {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.AddSearchPricePer1k(v)
+		return nil
+	case group.FieldFetchPricePer1k:
+		v, ok := value.(float64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddFetchPricePer1k(v)
 		return nil
 	case group.FieldOcrPricePer1kPages:
 		v, ok := value.(float64)
@@ -28789,6 +29073,9 @@ func (m *GroupMutation) ClearedFields() []string {
 	if m.FieldCleared(group.FieldSearchPricePer1k) {
 		fields = append(fields, group.FieldSearchPricePer1k)
 	}
+	if m.FieldCleared(group.FieldFetchPricePer1k) {
+		fields = append(fields, group.FieldFetchPricePer1k)
+	}
 	if m.FieldCleared(group.FieldOcrPricePer1kPages) {
 		fields = append(fields, group.FieldOcrPricePer1kPages)
 	}
@@ -28886,6 +29173,9 @@ func (m *GroupMutation) ClearField(name string) error {
 		return nil
 	case group.FieldSearchPricePer1k:
 		m.ClearSearchPricePer1k()
+		return nil
+	case group.FieldFetchPricePer1k:
+		m.ClearFetchPricePer1k()
 		return nil
 	case group.FieldOcrPricePer1kPages:
 		m.ClearOcrPricePer1kPages()
@@ -29039,8 +29329,17 @@ func (m *GroupMutation) ResetField(name string) error {
 	case group.FieldWebSearchPricePerCall:
 		m.ResetWebSearchPricePerCall()
 		return nil
+	case group.FieldToolRateIndependent:
+		m.ResetToolRateIndependent()
+		return nil
+	case group.FieldToolRateMultiplier:
+		m.ResetToolRateMultiplier()
+		return nil
 	case group.FieldSearchPricePer1k:
 		m.ResetSearchPricePer1k()
+		return nil
+	case group.FieldFetchPricePer1k:
+		m.ResetFetchPricePer1k()
 		return nil
 	case group.FieldOcrPricePer1kPages:
 		m.ResetOcrPricePer1kPages()
@@ -29101,6 +29400,9 @@ func (m *GroupMutation) ResetField(name string) error {
 		return nil
 	case group.FieldReturnRequestedModel:
 		m.ResetReturnRequestedModel()
+		return nil
+	case group.FieldSaveResponseMsgID:
+		m.ResetSaveResponseMsgID()
 		return nil
 	case group.FieldAllowLive:
 		m.ResetAllowLive()

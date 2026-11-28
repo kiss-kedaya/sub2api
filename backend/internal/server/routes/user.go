@@ -65,6 +65,11 @@ func RegisterUserRoutes(
 			user.PUT("/security/api-key-create-verification", panelRateLimiter.KeyVerification(), h.APIKey.SetAPIKeyCreateVerification)
 			user.POST("/security/passkey/verify/begin", panelRateLimiter.KeyVerification(), h.APIKey.BeginKeyPasskeyVerification)
 			user.POST("/security/passkey/verify/finish", panelRateLimiter.KeyVerification(), h.APIKey.FinishKeyPasskeyVerification)
+			// 用户个人接口密钥（Personal API Key）：仅限交互式 JWT 会话管理，
+			// 创建/重置强制走三选一身份校验并与 KeyVerification 共用 10 次/分钟限流桶。
+			user.GET("/personal-api-key", h.APIKey.GetPersonalAPIKey)
+			user.POST("/personal-api-key", panelRateLimiter.KeyVerification(), h.APIKey.CreateOrRegeneratePersonalAPIKey)
+			user.DELETE("/personal-api-key", h.APIKey.DeletePersonalAPIKey)
 			user.POST("/api-keys/:id/reveal-authorize", panelRateLimiter.KeyVerification(), h.APIKey.AuthorizeReveal)
 			// 浏览器端封存 API Key 密文：服务端只存取、不解密；封存请求会带登录密码，只用于 bcrypt 校验
 			// （见 api_key_secret_handler.go），不落库、不进日志、不进审计。

@@ -510,6 +510,13 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 	// reservation here (after eligibility and before account selection) closes
 	// the race where concurrent low-balance Gemini requests all pass the legacy
 	// snapshot check and incur upstream cost before asynchronous settlement.
+	// Gemini distinguishes streaming (:streamGenerateContent) from non-streaming
+	// (:generateContent) via URL action rather than JSON "stream". Always attach
+	// the transport-level stream hint so EstimateBalancePreauthorizationTokensForContext
+	// selects the right default output window (256 for streaming, 4096 for
+	// non-streaming, including when thinkingBudget is set without maxOutputTokens)
+	// while never clobbering an explicit output limit.
+	c.Request = c.Request.WithContext(service.WithBalancePreauthorizationStreamHint(c.Request.Context(), stream))
 	balanceGuard, err := preauthorizeTextGatewayRequest(
 		c.Request.Context(), h.balancePreauthorizer, h.gatewayService,
 		apiKey, subscription, body,
@@ -894,6 +901,20 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 			})
 		}
 		if err != nil {
+			if service.IsBalanceHoldTopUpError(err) {
+				if !service.IsResponseCommitted(c) && !c.Writer.Written() && !failoverClientGone(c) {
+					status, _, message, retryAfter := billingErrorDetails(err)
+					if retryAfter > 0 {
+						c.Header("Retry-After", strconv.Itoa(retryAfter))
+					}
+					googleError(c, status, message)
+				}
+				reqLog.Warn("gemini.balance_hold_topup_aborted",
+					zap.Int64("account_id", account.ID),
+					zap.Error(err),
+				)
+				return
+			}
 			h.gatewayService.InvalidateUpstreamAffinity(c.Request.Context(), apiKey.GroupID, sessionKey, account, err)
 			var failoverErr *service.UpstreamFailoverError
 			if result == nil && errors.As(err, &failoverErr) {
@@ -1041,6 +1062,15 @@ func writeUpstreamResponse(c *gin.Context, res *service.UpstreamHTTPResult) {
 	for k, vv := range res.Headers {
 		// Avoid overriding content-length and hop-by-hop headers.
 		if strings.EqualFold(k, "Content-Length") || strings.EqualFold(k, "Transfer-Encoding") || strings.EqualFold(k, "Connection") {
+			continue
+		}
+		if strings.EqualFold(k, "X-Request-Id") {
+			for _, v := range vv {
+				if trimmed := strings.TrimSpace(v); trimmed != "" {
+					c.Writer.Header().Set(k, trimmed)
+					break
+				}
+			}
 			continue
 		}
 		for _, v := range vv {

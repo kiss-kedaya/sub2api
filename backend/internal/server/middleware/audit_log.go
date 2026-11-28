@@ -186,6 +186,8 @@ var auditExtraAllowedKeys = map[string]struct{}{
 	// 和这次修改是否降低了保护强度（on > auto > off）；校验用到的因子名走上面的 api_key_auth_factor，凭据一律不入库。
 	"api_key_create_verification_from": {}, "api_key_create_verification_to": {},
 	"api_key_create_verification_relaxed": {},
+	// 用户个人接口密钥生命周期只记脱敏前缀与是否重置，明文密钥永不入库。
+	"personal_api_key_prefix": {}, "personal_api_key_regenerated": {},
 }
 
 // SetAuditExtra adds allowlisted, scalar details to the current audit entry.
@@ -317,6 +319,9 @@ var auditActionOverrides = map[string]string{
 	"POST /api/v1/user/api-keys/:id/reveal-authorize":  service.AuditActionAPIKeyRevealAuthorize,
 	// 用户自己决定「创建 API Key 时是否需要验证身份」：固定动作名，便于检索谁在什么时候把保护关了。
 	"PUT /api/v1/user/security/api-key-create-verification": service.AuditActionAPIKeyCreateVerificationSet,
+	// 用户个人接口密钥（Personal API Key）创建/重置/删除。
+	"POST /api/v1/user/personal-api-key":   service.AuditActionUserPersonalAPIKeyCreate,
+	"DELETE /api/v1/user/personal-api-key": service.AuditActionUserPersonalAPIKeyDelete,
 }
 
 // auditAuthEventMeta 第三方登录 / 2FA 认证事件的审计元数据。
@@ -538,6 +543,12 @@ var auditBodyOmittedRoutes = map[string]struct{}{
 	// 修改「创建 API Key 时是否需要验证身份」的请求体可能带 verification（密码 / 动态码 / 通行密钥票据）：
 	// 键级脱敏之外再整体不入库，审计只靠 extra 里的因子名与改前 / 改后标签。
 	"PUT /api/v1/user/security/api-key-create-verification": {},
+	// 备份计划接口允许管理员粘贴 age 公钥；若有人误把 AGE-SECRET-KEY-... 私钥粘进请求体，
+	// 即使 handler 返回 400 拒绝，审计中间件也会在进入 handler 前抓包落库且 audit_logs
+	// 会被关键表备份打包，因此整条路由不记录原始请求体。
+	"PUT /api/v1/admin/backups/schedule": {},
+	// 创建/重置用户个人接口密钥的请求体可能带三选一身份校验凭据，整体不入库。
+	"POST /api/v1/user/personal-api-key": {},
 }
 
 // NewAuditLogMiddleware 创建审计中间件。
@@ -676,6 +687,13 @@ func NewAuditLogMiddleware(auditService *service.AuditLogService) AuditLogMiddle
 				}
 			}
 		}
+		if entry.AuthMethod == service.AuditAuthMethodUserAPIKey {
+			if prefix := c.GetString(ContextKeyPersonalAPIKeyPrefix); prefix != "" {
+				if _, exists := extra["personal_api_key_prefix"]; !exists {
+					extra["personal_api_key_prefix"] = prefix
+				}
+			}
+		}
 		if len(c.Params) > 0 {
 			params := make(map[string]string, len(c.Params))
 			for _, p := range c.Params {
@@ -728,7 +746,11 @@ func MaskedRequestCredential(c *gin.Context) string {
 		return "x-crypto-totp <redacted>"
 	}
 	if apiKey := strings.TrimSpace(c.GetHeader("x-api-key")); apiKey != "" {
-		return "x-api-key " + service.MaskAuditCredential(apiKey)
+		// 个人接口密钥场景下若请求通过 Authorization: Bearer uak_... 认证且夹带无关 X-API-Key，
+		// 跳过诱饵 X-API-Key，保证审计记录的是实际生效的凭证掩码。
+		if c.GetString("auth_method") != service.AuditAuthMethodUserAPIKey || service.IsUserPersonalAPIKeyPrefix(apiKey) {
+			return "x-api-key " + service.MaskAuditCredential(apiKey)
+		}
 	}
 	authHeader := strings.TrimSpace(c.GetHeader("Authorization"))
 	if authHeader == "" {

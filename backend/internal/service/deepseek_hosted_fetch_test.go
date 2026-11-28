@@ -59,7 +59,8 @@ func TestDeepSeekHostedFetchSearchThenPageThenSummary(t *testing.T) {
 			require.Len(t, upstream.fetchRequests, 1)
 			require.JSONEq(t, `{"url":"`+pageURL+`"}`, string(upstream.fetchRequests[0]), "Fetch accepts only its URL, never search query/count")
 			require.Equal(t, "Full page content beyond the search snippet.", hostedFetchOutput(t, upstream.modelRequests[2], "open_docs").Get("content").String())
-			require.Equal(t, 2, result.SearchCount)
+			require.Equal(t, 1, result.SearchCount)
+			require.Equal(t, 1, result.FetchCount)
 			require.Zero(t, result.WebSearchCalls, "tool surcharges must not bypass model token billing")
 			require.Equal(t, 60, result.Usage.InputTokens)
 			require.Equal(t, 9, result.Usage.OutputTokens)
@@ -106,7 +107,8 @@ func TestDeepSeekHostedFetchDirectURLNeedsNoSearchCall(t *testing.T) {
 			require.Len(t, upstream.fetchRequests, 1)
 			require.Len(t, upstream.modelRequests, 2)
 			require.Equal(t, "Public page requested directly.", hostedFetchOutput(t, upstream.modelRequests[1], "open_direct").Get("content").String())
-			require.Equal(t, 1, result.SearchCount)
+			require.Zero(t, result.SearchCount)
+			require.Equal(t, 1, result.FetchCount)
 			require.Equal(t, 32, result.Usage.InputTokens)
 			final := hostedSearchFinal(t, recorder, stream)
 			require.Equal(t, "open_page", final.Get("output.0.action.type").String())
@@ -142,6 +144,7 @@ func TestDeepSeekHostedFetchProviderFailureAndEmptyAreNotBilled(t *testing.T) {
 				require.Len(t, upstream.fetchRequests, 1)
 				require.Len(t, upstream.modelRequests, 2)
 				require.Zero(t, result.SearchCount)
+				require.Zero(t, result.FetchCount)
 				require.Zero(t, result.WebSearchCalls)
 				require.Equal(t, 30, result.Usage.InputTokens, "provider failure must not discard successful model usage")
 				require.NotEmpty(t, hostedFetchOutput(t, upstream.modelRequests[1], "open_failed").Get("error").String())
@@ -205,11 +208,13 @@ func TestDeepSeekHostedFetchHonorsAllowedDomains(t *testing.T) {
 			require.NotNil(t, result)
 			if tc.allowed {
 				require.Len(t, upstream.fetchRequests, 1)
-				require.Equal(t, 1, result.SearchCount)
+				require.Zero(t, result.SearchCount)
+				require.Equal(t, 1, result.FetchCount)
 				require.False(t, hostedFetchOutput(t, upstream.modelRequests[1], "open_filtered").Get("error").Exists())
 			} else {
 				require.Empty(t, upstream.fetchRequests)
 				require.Zero(t, result.SearchCount)
+				require.Zero(t, result.FetchCount)
 				require.Contains(t, hostedFetchOutput(t, upstream.modelRequests[1], "open_filtered").Get("error").String(), "allowed domains")
 			}
 		})
@@ -237,7 +242,8 @@ func TestDeepSeekHostedFetchBoundsPageContentWithoutBreakingUTF8(t *testing.T) {
 	require.True(t, utf8.ValidString(page))
 	require.True(t, strings.HasPrefix(content, page))
 	require.NotContains(t, string(upstream.modelRequests[1]), "UNTRUSTED_TAIL_MUST_BE_OMITTED")
-	require.Equal(t, 1, result.SearchCount, "successful provider page is billed once even if continuation content is shortened")
+	require.Zero(t, result.SearchCount)
+	require.Equal(t, 1, result.FetchCount, "successful provider page is billed once even if continuation content is shortened")
 }
 
 type hostedFetchReadCounter struct {
@@ -303,7 +309,8 @@ func TestDeepSeekHostedFetchHistoryReplaysWithoutCallingProviderAgain(t *testing
 	svc, c, recorder, account, body := hostedSearchFixture(t, upstream, false, "auto", false)
 	result, err := svc.Forward(context.Background(), c, account, body)
 	require.NoError(t, err, recorder.Body.String())
-	require.Equal(t, 1, result.SearchCount)
+	require.Zero(t, result.SearchCount)
+	require.Equal(t, 1, result.FetchCount)
 	final := hostedSearchFinal(t, recorder, false)
 	var history []json.RawMessage
 	for _, item := range final.Get("output").Array() {
@@ -344,7 +351,8 @@ func TestDeepSeekHostedFetchSharesSearchBudgetAndKeepsClientTools(t *testing.T) 
 			require.NotNil(t, result)
 			require.Len(t, upstream.searchRequests, 1)
 			require.Len(t, upstream.fetchRequests, 2)
-			require.Equal(t, 3, result.SearchCount, "search and fetch share the same paid-tool budget")
+			require.Equal(t, 1, result.SearchCount, "search and fetch share the same paid-tool budget")
+			require.Equal(t, 2, result.FetchCount, "search and fetch track their own counts within the shared budget")
 			require.Len(t, upstream.modelRequests, 2)
 			require.Contains(t, hostedFetchOutput(t, upstream.modelRequests[1], "open_over_budget").Get("error").String(), "limit")
 			tools := gjson.GetBytes(upstream.modelRequests[1], "tools").Array()
@@ -374,7 +382,8 @@ func TestDeepSeekHostedFetchMixedClientCallDoesNotContinueWithMissingResult(t *t
 	require.NoError(t, err, recorder.Body.String())
 	require.Len(t, upstream.fetchRequests, 1)
 	require.Len(t, upstream.modelRequests, 1, "client owns the missing client_lookup result")
-	require.Equal(t, 1, result.SearchCount)
+	require.Zero(t, result.SearchCount)
+	require.Equal(t, 1, result.FetchCount)
 	final := hostedSearchFinal(t, recorder, true)
 	require.Equal(t, "open_page", final.Get("output.0.action.type").String())
 	require.Equal(t, "function_call", final.Get("output.1.type").String())
@@ -420,10 +429,12 @@ func TestDeepSeekHostedFetchCancellationStopsNewWork(t *testing.T) {
 				}
 				if phase == "after_fetch" {
 					require.Len(t, upstream.fetchRequests, 1)
-					require.Equal(t, 1, result.SearchCount, "completed paid provider work remains billable after cancellation")
+					require.Zero(t, result.SearchCount)
+					require.Equal(t, 1, result.FetchCount, "completed paid provider work remains billable after cancellation")
 				} else {
 					require.Empty(t, upstream.fetchRequests)
 					require.Zero(t, result.SearchCount)
+					require.Zero(t, result.FetchCount)
 				}
 			})
 		}

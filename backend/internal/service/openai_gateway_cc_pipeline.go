@@ -260,10 +260,16 @@ func (s *OpenAIGatewayService) sendCCUpstreamRequest(
 	if account.ProxyID != nil && account.Proxy != nil {
 		proxyURL = account.Proxy.URL()
 	}
-	resp, err := s.doOpenAIUpstream(upstreamReq, proxyURL, account)
-	releaseUpstreamRequestPayload(upstreamReq, resp)
+	clientCtx := openAIClientContext(ctx, c)
+	resp, err := s.doOpenAIUpstreamWithHeaderCancel(clientCtx, upstreamReq, proxyURL, account)
 	if err != nil {
+		if clientCtx != nil && clientCtx.Err() != nil {
+			return nil, err
+		}
 		return nil, s.handleOpenAIUpstreamTransportError(ctx, c, account, err, false)
+	}
+	if !stream || resp.StatusCode >= http.StatusBadRequest {
+		resp.Body = s.openAIBufferedBodyWithCancel(clientCtx, resp.Body)
 	}
 	return resp, nil
 }
@@ -277,6 +283,9 @@ type ccStreamScanState struct {
 	FirstTokenMs *int
 	// SawDone 表示上游发出了 [DONE] 哨兵。
 	SawDone bool
+	// SawFinalOutput is true once a chunk at or after a non-empty finish_reason
+	// reported a positive OutputTokens count (authoritative final usage).
+	SawFinalOutput bool
 	// NonBillableUpstreamError distinguishes provider errors from broken reads.
 	NonBillableUpstreamError bool
 	// UpstreamError retains the last provider rejection until a successful terminal.
@@ -302,6 +311,7 @@ func (s *OpenAIGatewayService) scanCCStream(
 	var st ccStreamScanState
 	pendingEventType := ""
 	sawSuccessfulFinish := false
+	guardCtx, streamBalanceGuard := balancePreauthorizationGuardForRequest(context.Background(), c)
 
 	scanner := s.newUpstreamSSEScanner(resp.Body)
 	for scanner.Scan() {
@@ -332,8 +342,19 @@ func (s *OpenAIGatewayService) scanCCStream(
 		}
 
 		root := gjson.Parse(payload)
+		chunkHasFinish := false
+		root.Get("choices").ForEach(func(_, ch gjson.Result) bool {
+			if fr := ch.Get("finish_reason").String(); fr != "" && fr != "error" {
+				chunkHasFinish = true
+				return false
+			}
+			return true
+		})
 		if u := extractCCStreamUsageFromRoot(root, resp.Header); u != nil {
 			st.Usage = *u
+			if (sawSuccessfulFinish || chunkHasFinish) && u.OutputTokens > 0 {
+				st.SawFinalOutput = true
+			}
 		}
 		if openAIExplicitUpstreamError(root, pendingEventType) {
 			st.NonBillableUpstreamError = true
@@ -368,6 +389,16 @@ func (s *OpenAIGatewayService) scanCCStream(
 			st.FirstTokenMs = &ms
 		}
 		emit(&chunk)
+		if n := chatChunkOutputBytes(&chunk); n > 0 {
+			if topUpErr := streamBalanceGuard.ObserveStreamingOutput(guardCtx, n); topUpErr != nil {
+				_ = resp.Body.Close()
+				s.reportOpenAIStreamOutputHoldTopUpFailure(c, nil, logPrefix, topUpErr)
+				st.NonBillableUpstreamError = false
+				st.UpstreamError = nil
+				st.Err = wrapStreamOutputHoldTopUpFailure(topUpErr)
+				return st
+			}
+		}
 	}
 
 	if err := scanner.Err(); err != nil {

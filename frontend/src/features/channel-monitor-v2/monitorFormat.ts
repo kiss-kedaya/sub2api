@@ -138,8 +138,12 @@ export function cacheTextClass(value: number | null | undefined): string {
   return 'text-gray-900 dark:text-gray-100'
 }
 
+const HISTOGRAM_INF_SENTINEL_MS = 2147483647
+const HISTOGRAM_MAX_FINITE_MS = 600000
+
 export function formatMonitorMs(value: number | null | undefined): string {
-  if (value == null) return '-'
+  if (value == null || !Number.isFinite(value) || value < 0) return '-'
+  if (value >= HISTOGRAM_INF_SENTINEL_MS) return `>${HISTOGRAM_MAX_FINITE_MS / 1000}s`
   return value >= 1000 ? `${(value / 1000).toFixed(1)}s` : `${Math.round(value)}ms`
 }
 

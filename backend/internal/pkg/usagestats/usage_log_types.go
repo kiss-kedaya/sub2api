@@ -304,7 +304,11 @@ type UsageLogFilters struct {
 	AccountID int64
 	GroupID   int64
 	RequestID string
-	Model     string
+	// ExcludeUpstreamRequestIDSearch restricts RequestID filtering to user-visible
+	// identifiers (request_id, response_request_id, client_request_id, response_msg_id)
+	// and skips admin-only upstream_request_id.
+	ExcludeUpstreamRequestIDSearch bool
+	Model                          string
 	// ModelFilterSource controls how Model is matched. Empty preserves raw usage_logs.model semantics.
 	ModelFilterSource     string
 	RequestType           *int16

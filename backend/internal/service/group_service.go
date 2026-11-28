@@ -133,6 +133,7 @@ func (s *GroupService) Create(ctx context.Context, req CreateGroupRequest) (*Gro
 		AllowImageGeneration: req.AllowImageGeneration,
 		ImageRateIndependent: req.ImageRateIndependent,
 		ImageRateMultiplier:  imageRateMultiplier,
+		ToolRateMultiplier:   1.0,
 	}
 
 	if err := s.groupRepo.Create(ctx, group); err != nil {

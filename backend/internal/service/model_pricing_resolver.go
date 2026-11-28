@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"log/slog"
+	"math"
 	"strings"
 )
 
@@ -245,6 +246,36 @@ func (r *ModelPricingResolver) lookupChannelPricingNormalized(ctx context.Contex
 		return nil
 	}
 	return r.channelService.GetChannelModelPricing(ctx, groupID, normalized)
+}
+
+// resolveChannelPerRequestPrice returns an explicit non-negative channel-level
+// per_request price for the model (0 = explicit free), or nil when none exists.
+// Only exact model name matches are accepted so wildcard patterns like
+// "deepseek-*" cannot accidentally apply across heterogeneous tool units.
+func (r *ModelPricingResolver) resolveChannelPerRequestPrice(ctx context.Context, group *Group, model string) *float64 {
+	if r == nil || group == nil || group.ID <= 0 {
+		return nil
+	}
+	chPricing := r.lookupChannelPricingNormalized(ctx, group.ID, model)
+	if chPricing == nil || chPricing.BillingMode != BillingModePerRequest || chPricing.PerRequestPrice == nil {
+		return nil
+	}
+	target := normalizeChannelPricingModelName(model)
+	exactMatch := false
+	for _, pattern := range chPricing.Models {
+		if normalizeChannelPricingModelName(pattern) == target {
+			exactMatch = true
+			break
+		}
+	}
+	if !exactMatch {
+		return nil
+	}
+	p := *chPricing.PerRequestPrice
+	if math.IsNaN(p) || math.IsInf(p, 0) || p < 0 {
+		return nil
+	}
+	return &p
 }
 
 // applyChannelOverrides 应用渠道定价覆盖

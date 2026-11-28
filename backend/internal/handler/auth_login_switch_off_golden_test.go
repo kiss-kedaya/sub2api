@@ -2,18 +2,16 @@ package handler
 
 // 登录首步 / 第二步在 login_shape_disguise_enabled 关闭（缺失 / false / 乱值）时的黄金快照。
 //
-// 快照 testdata/login_switch_off.golden.txt 是在 #659（登录首步伪装）合并之前的代码（3dd2074f7^）上生成的：
 // 150 个场景（首步：未知邮箱 / 各种因子形状的账号 / 被禁用账号 × 对错密码 × 带不带假凭证 Cookie，各种畸形请求；
-// 第二步：旧诱饵会话 / 真实会话 × 自然重放 / 乱填密码 / 不带密码 / 换邮箱 / 超限 / Passkey finish），
-// 每个场景记录状态码、响应头、Set-Cookie 与响应体。开关关闭时当前代码必须与它逐字节一致——线上开关就是关的，
-// 任何对登录路径的改动都不能让这份快照变化。
+// 第二步：无效会话 / 真实会话 × 自然重放 / 乱填密码 / 不带密码 / 换邮箱 / 超限 / Passkey finish），
+// 每个场景记录状态码、响应头、Set-Cookie 与响应体。开关关闭时凭据错误一律返回 401 INVALID_CREDENTIALS
+// （不弹 2FA 框），且账号不存在与各形态账号密码错误逐字节一致。
 //
-// 重新生成（只有「旧行为」本身需要更新时才做，通常永远不用）：在 3dd2074f7^ 的工作树里放入本文件，
+// 重新生成（仅当明确调整默认登录响应行为时）：
 //
-//	LOGIN_GOLDEN_WRITE=<输出文件> go test ./internal/handler -run TestLoginSwitchOffMatchesPreDisguiseGolden
+//	LOGIN_GOLDEN_WRITE=testdata/login_switch_off.golden.txt go test ./internal/handler -run TestLoginSwitchOffMatchesPreDisguiseGolden
 //
-// 再把输出文件覆盖到 testdata/login_switch_off.golden.txt。本文件只用旧树里就有的夹具与符号，开关键名用字面量，
-// 因此同一份文件能在旧树编译。全部邮箱 / 密码 / 凭据 ID 都是假数据。
+// 全部邮箱 / 密码 / 凭据 ID 都是假数据。
 
 import (
 	"context"
@@ -286,7 +284,7 @@ func goldenRun(t *testing.T, fx *goldenFixture, extra map[string]string) string 
 	emit("step1 totp_enabled=false unknown", h2.do("/api/v1/auth/login", goldenBody(users["unknown"], goldenWrong)))
 	emit("step1 totp_enabled=false totp wrong", h2.do("/api/v1/auth/login", goldenBody(users["totp"], goldenWrong)))
 
-	// 设置读取失败：totp_enabled 读失败 => 仍下发统一挑战
+	// 设置读取失败：disguise 开关关闭时凭据错误仍直接返回 401 INVALID_CREDENTIALS
 	h3 := newGoldenHarness(t, fx, extra)
 	h3.settings.errKey = service.SettingKeyTotpEnabled
 	emit("step1 totp_enabled read error unknown", h3.do("/api/v1/auth/login", goldenBody(users["unknown"], goldenWrong)))

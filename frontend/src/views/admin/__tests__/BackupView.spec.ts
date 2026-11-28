@@ -216,6 +216,8 @@ describe('admin BackupView 分卷备份', () => {
       retain_days: 14,
       retain_count: 10,
       critical_only: true,
+      age_recipients: [],
+      max_rate_mbps: 0,
     })
 
     // 保存后手动备份的仅关键表开关同步开启，点击创建备份会传 critical_only: true
@@ -296,6 +298,7 @@ describe('admin BackupView 分卷备份', () => {
     expect(manualLabel.element.contains(manualToggle.element)).toBe(false)
     expect(wrapper.text()).toContain('admin.backup.schedule.criticalForcedByServer')
     expect(wrapper.text()).toContain('admin.backup.schedule.ageEncryptionActive')
+    expect(wrapper.find('[data-testid="schedule-age-status-badge"]').text()).toContain('admin.backup.schedule.ageStatusEnabledLegacy')
 
     // 锁定态点击两个开关都不得把状态改回 false
     await scheduleToggle.trigger('click')
@@ -351,5 +354,86 @@ describe('admin BackupView 分卷备份', () => {
     const encryptedRestoreBtn = rows[2].findAll('button').find(b => b.text().includes('admin.backup.actions.restore'))
     expect(encryptedRestoreBtn).toBeDefined()
     expect(encryptedRestoreBtn!.attributes('disabled')).toBeDefined()
+  })
+
+  it('支持在后台配置 age 公钥和导出限速，并本地拦截私钥粘贴', async () => {
+    listBackups.mockResolvedValue({ items: [] })
+    const validKey = `age1${'q'.repeat(58)}`
+    updateSchedule.mockResolvedValue({
+      enabled: false,
+      cron_expr: '0 2 * * *',
+      retain_days: 14,
+      retain_count: 10,
+      critical_only: false,
+      age_recipients: [validKey],
+      max_rate_mbps: 15,
+      age_encryption_enabled: true,
+    })
+
+    const wrapper = mountBackupView()
+    await flushPromises()
+
+    const ageTextarea = wrapper.find('[data-testid="schedule-age-recipients-input"] textarea')
+    const textareaEl = ageTextarea.exists() ? ageTextarea : wrapper.find('[data-testid="schedule-age-recipients-input"]')
+    const rateInput = wrapper.find('[data-testid="schedule-max-rate-input"] input')
+    const rateEl = rateInput.exists() ? rateInput : wrapper.find('[data-testid="schedule-max-rate-input"]')
+    const saveButtons = wrapper.findAll('button').filter(button => button.text().includes('common.save'))
+    expect(saveButtons).toHaveLength(3)
+
+    // 整份粘贴 age-keygen 输出（含前两行注释 + 第 3 行私钥）时立即展示私钥拦截告警并禁止提交
+    await textareaEl.setValue(`# created: 2026-11-27T00:00:00Z\n# public key: ${validKey}\nAGE-SECRET-KEY-1QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ`)
+    await flushPromises()
+    expect(wrapper.find('[data-testid="schedule-age-error-alert"]').exists()).toBe(true)
+    expect(wrapper.text()).toContain('admin.backup.schedule.agePrivateKeyForbidden')
+    expect(saveButtons[2].attributes('disabled')).toBeDefined()
+    await saveButtons[2].trigger('click')
+    await flushPromises()
+    expect(updateSchedule).not.toHaveBeenCalled()
+
+    // 粘贴合法 age1... 公钥但尚未点击保存时：状态仍为「未加密」+「待保存」，不得提前伪报「已启用」
+    await textareaEl.setValue(`  ${validKey}  \n\n${validKey}`)
+    await rateEl.setValue('15')
+    await flushPromises()
+    expect(wrapper.find('[data-testid="schedule-age-error-alert"]').exists()).toBe(false)
+    expect(saveButtons[2].attributes('disabled')).toBeUndefined()
+    expect(wrapper.find('[data-testid="schedule-age-status-badge"]').text()).toContain('admin.backup.schedule.ageStatusDisabled')
+    expect(wrapper.find('[data-testid="schedule-age-unsaved-badge"]').exists()).toBe(true)
+    expect(wrapper.text()).not.toContain('admin.backup.schedule.ageEncryptionActive')
+
+    await saveButtons[2].trigger('click')
+    await flushPromises()
+    expect(updateSchedule).toHaveBeenCalledWith({
+      enabled: false,
+      cron_expr: '0 2 * * *',
+      retain_days: 14,
+      retain_count: 10,
+      critical_only: false,
+      age_recipients: [validKey],
+      max_rate_mbps: 15,
+    })
+    expect(wrapper.find('[data-testid="schedule-age-status-badge"]').text()).toContain('admin.backup.schedule.ageStatusEnabled')
+    expect(wrapper.find('[data-testid="schedule-age-unsaved-badge"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('服务端强制开启 age 加密时展示只读提示', async () => {
+    listBackups.mockResolvedValue({ items: [] })
+    getSchedule.mockResolvedValue({
+      enabled: true,
+      cron_expr: '0 3 * * *',
+      retain_days: 7,
+      retain_count: 5,
+      critical_only: true,
+      age_encryption_enabled: true,
+      server_age_encryption_forced: true,
+      server_age_recipient_count: 2,
+    })
+
+    const wrapper = mountBackupView()
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="schedule-age-server-forced-alert"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="schedule-age-status-badge"]').text()).toContain('admin.backup.schedule.ageStatusServerForced')
+    wrapper.unmount()
   })
 })

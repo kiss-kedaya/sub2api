@@ -195,7 +195,10 @@ type Group struct {
 	VideoModelPrices map[string]map[string]float64 `json:"video_model_prices,omitempty"`
 	// Codex alpha/search 网页搜索单次价格（USD/次）；null 表示使用默认价 0.01
 	WebSearchPricePerCall *float64 `json:"web_search_price_per_call"`
+	ToolRateIndependent   bool     `json:"tool_rate_independent"`
+	ToolRateMultiplier    float64  `json:"tool_rate_multiplier"`
 	SearchPricePer1k      *float64 `json:"search_price_per_1k"`
+	FetchPricePer1k       *float64 `json:"fetch_price_per_1k"`
 	OCRPricePer1kPages    *float64 `json:"ocr_price_per_1k_pages"`
 	// GrokModerationRefusalPrice Grok 安全拒绝单次扣费（USD/次）；nil 使用默认 0.1，0 表示不扣费。
 	GrokModerationRefusalPrice   *float64 `json:"grok_moderation_refusal_price"`
@@ -257,6 +260,8 @@ type AdminGroup struct {
 	Group
 	// ReturnRequestedModel controls response model metadata for this group.
 	ReturnRequestedModel bool `json:"return_requested_model"`
+	// SaveResponseMsgID controls persisting Claude/Anthropic response message IDs on usage logs.
+	SaveResponseMsgID bool `json:"save_response_msg_id"`
 	// 搜索上游配置仅供主管理员读取，普通分组及其嵌套 DTO 不携带。
 	// 密钥本身永不返回，只暴露是否已配置。
 	SearchProviderBaseURL   *string `json:"search_provider_base_url"`
@@ -716,7 +721,13 @@ type UsageLog struct {
 	APIKeyID  int64  `json:"api_key_id"`
 	AccountID int64  `json:"account_id"`
 	RequestID string `json:"request_id"`
-	Model     string `json:"model"`
+	// ResponseRequestID is the final X-Request-Id response header returned to the client.
+	ResponseRequestID *string `json:"response_request_id,omitempty"`
+	// ClientRequestID is the X-Client-Request-Id response header returned to the client.
+	ClientRequestID *string `json:"client_request_id,omitempty"`
+	// ResponseMsgID is the Claude/Anthropic message id (e.g. msg_...) when enabled on the group.
+	ResponseMsgID *string `json:"response_msg_id,omitempty"`
+	Model         string  `json:"model"`
 	// Associated semantic error code, not wire HTTP status or proof of delivery.
 	// Only status is exposed; raw provider errors remain in Ops.
 	FailureStatusCode *int `json:"failure_status_code,omitempty"`

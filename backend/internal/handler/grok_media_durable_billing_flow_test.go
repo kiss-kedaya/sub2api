@@ -130,6 +130,7 @@ func (r *durableMediaHandlerRepo) PrepareMediaBillingIntent(_ context.Context, i
 		_ = json.Unmarshal(payload, &frozen)
 		job.Intent = &frozen
 		job.Status = service.MediaBillingReady
+		job.Attempts = 0
 	}
 	return cloneDurableMediaHandlerJob(job).Intent, nil
 }
@@ -218,6 +219,21 @@ func (r *durableMediaHandlerRepo) ReconcileMediaBillingJob(_ context.Context, id
 		job.Status = service.MediaBillingReconciliation
 	}
 	return nil
+}
+
+func (r *durableMediaHandlerRepo) AbandonMediaBillingJob(_ context.Context, id string) (bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	job := r.jobs[id]
+	if job == nil {
+		return false, service.ErrMediaBillingJobNotFound
+	}
+	if job.Status == service.MediaBillingReady && job.Intent != nil {
+		job.Attempts++
+		job.AvailableAt = time.Now().Add(24 * time.Hour)
+		return true, nil
+	}
+	return false, nil
 }
 
 func (r *durableMediaHandlerRepo) snapshotByTask(taskID string) (*service.MediaBillingJob, float64, int, int, int) {

@@ -712,7 +712,9 @@ func TestAntigravityCompatFirstEventTimeoutTriggersFailover(t *testing.T) {
 	_ = reader.Close()
 }
 
-func TestAntigravityCompatClientDisconnectDrainsUsage(t *testing.T) {
+// Stage 1C: 客户端写失败（断开连接）时立即关闭上游连接、不再排水后续事件，
+// 仅保留断开前已收到的 usage。
+func TestAntigravityCompatClientDisconnectClosesUpstreamImmediately(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	svc := newAntigravityCompatService(config.GatewayConfig{MaxLineSize: defaultMaxLineSize}, nil)
 	c, _ := newAntigravityCompatContext(http.MethodPost, "/v1/chat/completions", nil)
@@ -734,7 +736,8 @@ func TestAntigravityCompatClientDisconnectDrainsUsage(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	require.True(t, result.clientDisconnect)
-	require.Equal(t, 15, result.usage.OutputTokens)
+	require.Equal(t, 8, result.usage.InputTokens)
+	require.Equal(t, 1, result.usage.OutputTokens, "must stop reading upstream instead of draining later frames")
 }
 
 func TestAntigravityCompatStreamErrorCommitsSingleTerminalFrame(t *testing.T) {

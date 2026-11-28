@@ -12,7 +12,13 @@
  */
 export function formatScaled(value: number | null, scale: number, minFractionDigits = 0): string {
   if (value == null) return '-'
-  let s = (value * scale).toPrecision(10).replace(/\.?0+$/, '')
+  const scaledValue = value * scale
+  let s: string
+  if (scaledValue !== 0 && Math.abs(scaledValue) < 1e-6) {
+    s = scaledValue.toFixed(10).replace(/\.?0+$/, '')
+  } else {
+    s = scaledValue.toPrecision(10).replace(/\.?0+$/, '')
+  }
   if (minFractionDigits > 0 && !s.includes('e')) {
     const dot = s.indexOf('.')
     const digits = dot === -1 ? 0 : s.length - dot - 1

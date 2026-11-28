@@ -26,7 +26,10 @@ const (
 	// 与旧版全权 admin_api_key 分开登记：前者是显式授权、可过期/轮换/IP 限制的
 	// 自动化身份，后者是常驻全权的历史后门路径（默认拒绝）。
 	AuditAuthMethodScopedAdminAPIKey = "admin_scoped_api_key"
-	AuditAuthMethodPasskey           = "passkey"
+	// AuditAuthMethodUserAPIKey 是用户个人接口密钥（uak_）的认证方式。
+	// 免浏览器会话指纹限制，仅覆盖用户端非账户安全类接口，始终受独立限流与审计约束。
+	AuditAuthMethodUserAPIKey = "user_api_key"
+	AuditAuthMethodPasskey    = "passkey"
 	// AuditAuthMethodPassword / AuditAuthMethodOAuth 用于登录事件：
 	// 密码/邮箱登录与第三方（OAuth / 扫码 / OIDC / 钉钉 / 微信）登录分开检索。
 	AuditAuthMethodPassword = "password"
@@ -93,6 +96,12 @@ const (
 	// extra 只记因子名 / 结果 / 机器码，以及改前 / 改后的模式标签（auto / on / off），
 	// 密码、动态码、断言、票据永远不进审计。
 	AuditActionAPIKeyCreateVerificationSet = "api_key.create_verification.set"
+	// 用户个人接口密钥（Personal API Key）生命周期与越权访问拦截审计动作：
+	// 只记录脱敏前缀与事件类型，明文密钥永不入库。
+	AuditActionUserPersonalAPIKeyCreate     = "user.personal_api_key.create"
+	AuditActionUserPersonalAPIKeyRegenerate = "user.personal_api_key.regenerate"
+	AuditActionUserPersonalAPIKeyDelete     = "user.personal_api_key.delete"
+	AuditActionUserPersonalAPIKeyForbidden  = "user.personal_api_key.forbidden"
 
 	// 第三方登录（OAuth / 扫码 / 设备登录）与 2FA 挑战的固定动作名。
 	// 与 AuditAuthMethodOAuth / AuditAuthMethodPasskey 配套，让「哪个渠道、
@@ -233,6 +242,8 @@ var auditBodySensitiveExactKeys = func() map[string]struct{} {
 		// session 为 Ollama Cloud 用量的浏览器会话 Cookie 明文。
 		"proxy_key", "custom_key", "session",
 		"request", CustomUsageExtraKey,
+		// 备份加密配置只应传 age 公钥，但误传私钥时绝不能落入 audit_logs。
+		"age_recipients",
 	}
 	set := make(map[string]struct{}, len(builtin)+len(SensitiveCredentialKeys)+16)
 	for _, k := range builtin {
@@ -330,6 +341,11 @@ func redactAuditValue(value any, depth int) any {
 			out[i] = redactAuditValue(item, depth+1)
 		}
 		return out
+	case string:
+		if strings.Contains(strings.ToUpper(v), "AGE-SECRET-KEY-") {
+			return auditRedactedPlaceholder
+		}
+		return v
 	default:
 		return value
 	}

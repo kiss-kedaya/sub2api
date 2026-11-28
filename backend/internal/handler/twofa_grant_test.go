@@ -400,42 +400,19 @@ func TestLoginRequiresTOTPWhenTwoFactorGrantInvalid(t *testing.T) {
 	r.ServeHTTP(w, req)
 	require.Contains(t, w.Body.String(), "access_token")
 
-	// 密码错误时凭证不能绕过密码校验；统一登录协议下这一步返回与
-	// 「需要 2FA」完全相同的挑战结构（不泄露密码对错），第二步才报
-	// INVALID_CREDENTIALS。
+	// 密码错误时凭证不能绕过密码校验；默认模式下直接返回 401 INVALID_CREDENTIALS，
+	// 不弹 2FA 验证框，也不签发任何令牌或清理凭证 Cookie。
 	wrongReq := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader(loginRequestBody(user.Email, "wrong-password")))
 	wrongReq.Header.Set("Content-Type", "application/json")
 	wrongReq.Header.Set("User-Agent", "grant-test-agent")
 	wrongReq.AddCookie(&http.Cookie{Name: service.TwoFactorGrantCookieName, Value: valid.Token})
 	wrongW := httptest.NewRecorder()
 	r.ServeHTTP(wrongW, wrongReq)
-	require.Equal(t, http.StatusOK, wrongW.Code)
-	require.True(t, strings.Contains(wrongW.Body.String(), `"requires_2fa":true`), wrongW.Body.String())
+	require.Equal(t, http.StatusUnauthorized, wrongW.Code, wrongW.Body.String())
+	require.Contains(t, wrongW.Body.String(), "INVALID_CREDENTIALS")
+	require.NotContains(t, wrongW.Body.String(), `"requires_2fa":true`)
 	require.NotContains(t, wrongW.Body.String(), "access_token")
-
-	// 第二步用错误密码：必须与「动态码错误」返回同一个码（INVALID_CREDENTIALS），
-	// 不得回 TOTP_INVALID_CODE 之类可区分密码正确性的错误。
-	var wrongChallenge struct {
-		Data struct {
-			TempToken string `json:"temp_token"`
-		} `json:"data"`
-	}
-	require.NoError(t, json.Unmarshal(wrongW.Body.Bytes(), &wrongChallenge), wrongW.Body.String())
-	require.NotEmpty(t, wrongChallenge.Data.TempToken)
-	step2Payload, err := json.Marshal(map[string]string{
-		"temp_token": wrongChallenge.Data.TempToken,
-		"totp_code":  "123456",
-		"email":      user.Email,
-		"password":   "wrong-password",
-	})
-	require.NoError(t, err)
-	step2Req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login/2fa", strings.NewReader(string(step2Payload)))
-	step2Req.Header.Set("Content-Type", "application/json")
-	step2W := httptest.NewRecorder()
-	r.ServeHTTP(step2W, step2Req)
-	require.Equal(t, http.StatusUnauthorized, step2W.Code, step2W.Body.String())
-	require.Contains(t, step2W.Body.String(), "INVALID_CREDENTIALS")
-	require.NotContains(t, step2W.Body.String(), "TOTP_INVALID_CODE")
+	require.Empty(t, wrongW.Result().Cookies())
 }
 
 func TestLoginRequiresTOTPFailsClosedWhenGrantStoreUnavailable(t *testing.T) {

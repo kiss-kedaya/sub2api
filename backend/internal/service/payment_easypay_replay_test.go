@@ -32,6 +32,10 @@ func TestEasyPaySignedSuccessRequiresProviderSettlement(t *testing.T) {
 		{"upstream query unavailable", `{"code":1,"out_trade_no":"ORDER","status":1,"money":"80.0000","trade_no":"gateway-trade"}`, "gateway-trade", "query failed", 500, 1, false},
 		{"missing callback transaction", `{"code":1,"out_trade_no":"ORDER","status":1,"money":"80.0000","trade_no":"gateway-trade"}`, "", "missing callback trade_no", 200, 0, false},
 		{"paid order", `{"code":1,"out_trade_no":"ORDER","status":1,"money":"80.0000","trade_no":"gateway-trade"}`, "gateway-trade", "", 200, 1, true},
+		{"paid order with string status", `{"code":1,"out_trade_no":"ORDER","status":"1","money":"80.0000","trade_no":"gateway-trade"}`, "gateway-trade", "", 200, 1, true},
+		{"paid order with nested data string status", `{"code":"1","data":{"out_trade_no":"ORDER","status":"1","money":80,"trade_no":"gateway-trade"}}`, "gateway-trade", "", 200, 1, true},
+		{"unpaid order with string status", `{"code":1,"out_trade_no":"ORDER","status":"0","money":"80.0000","trade_no":"gateway-trade"}`, "gateway-trade", "not paid", 200, 1, false},
+		{"invalid string status fails closed", `{"code":1,"out_trade_no":"ORDER","status":"paid","money":"80.0000","trade_no":"gateway-trade"}`, "gateway-trade", "query failed", 200, 1, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.Background()

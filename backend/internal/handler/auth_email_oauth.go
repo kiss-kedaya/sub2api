@@ -80,7 +80,7 @@ func (h *AuthHandler) emailOAuthStart(c *gin.Context, provider string) {
 		redirectTo = emailOAuthDefaultRedirect
 	}
 
-	secureCookie := isRequestHTTPS(c)
+	secureCookie := h.isRequestHTTPS(c)
 	emailOAuthSetCookie(c, emailOAuthStateCookieName, encodeCookieValue(state), secureCookie)
 	emailOAuthSetCookie(c, emailOAuthRedirectCookie, encodeCookieValue(redirectTo), secureCookie)
 	emailOAuthSetCookie(c, emailOAuthProviderCookie, encodeCookieValue(provider), secureCookie)
@@ -132,7 +132,7 @@ func (h *AuthHandler) emailOAuthCallback(c *gin.Context, provider string) {
 		return
 	}
 
-	secureCookie := isRequestHTTPS(c)
+	secureCookie := h.isRequestHTTPS(c)
 	defer func() {
 		emailOAuthClearCookie(c, emailOAuthStateCookieName, secureCookie)
 		emailOAuthClearCookie(c, emailOAuthRedirectCookie, secureCookie)
@@ -197,7 +197,7 @@ func (h *AuthHandler) emailOAuthCallbackBindWithProfile(
 		redirectOAuthError(c, frontendCallback, "session_error", "failed to continue oauth bind", "")
 		return
 	}
-	secureCookie := isRequestHTTPS(c)
+	secureCookie := h.isRequestHTTPS(c)
 	setOAuthPendingBrowserCookie(c, browserSessionKey, secureCookie)
 	clearOAuthPendingSessionCookie(c, secureCookie)
 
@@ -510,7 +510,7 @@ func (h *AuthHandler) createEmailOAuthRegistrationPendingSession(
 	if err != nil {
 		return infraerrors.InternalServer("PENDING_AUTH_SESSION_CREATE_FAILED", "failed to create pending auth session").WithCause(err)
 	}
-	setOAuthPendingBrowserCookie(c, browserSessionKey, isRequestHTTPS(c))
+	setOAuthPendingBrowserCookie(c, browserSessionKey, h.isRequestHTTPS(c))
 
 	email := strings.TrimSpace(strings.ToLower(profile.Email))
 	username := strings.TrimSpace(profile.Username)

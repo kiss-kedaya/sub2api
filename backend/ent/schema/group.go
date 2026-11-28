@@ -160,13 +160,26 @@ func (Group) Fields() []ent.Field {
 			SchemaType(map[string]string{dialect.Postgres: "decimal(20,8)"}).
 			Comment("Codex alpha/search 网页搜索单次价格（USD/次）；nil 表示使用默认价 0.01（官方 $10/1000 次）"),
 
-		// 搜索/工具调用显式定价（per 1k calls），用于 Grok web_search 等。
+		// 搜索/工具调用显式定价（per 1k calls），用于 Grok web_search 与 DeepSeek 工具端点。
+		field.Bool("tool_rate_independent").
+			Default(false).
+			Comment("工具端点是否使用独立倍率；false 表示共享分组/用户有效倍率（不含高峰倍率）"),
+		field.Float("tool_rate_multiplier").
+			SchemaType(map[string]string{dialect.Postgres: "decimal(10,4)"}).
+			Default(1.0).
+			Comment("工具端点独立倍率，仅 tool_rate_independent=true 时生效"),
 		field.Float("search_price_per_1k").
 			Optional().
 			Nillable().
 			Min(0).
 			SchemaType(map[string]string{dialect.Postgres: "decimal(20,8)"}).
 			Comment("搜索工具价格 per 1000 calls（web_search 等）"),
+		field.Float("fetch_price_per_1k").
+			Optional().
+			Nillable().
+			Min(0).
+			SchemaType(map[string]string{dialect.Postgres: "decimal(20,8)"}).
+			Comment("网页抓取工具价格 per 1,000 calls（DeepSeek /v1/tools/fetch 与托管 web_fetch）；NULL 回落 search_price_per_1k 再回落默认价，0 免费"),
 
 		field.Float("ocr_price_per_1k_pages").
 			Optional().
@@ -276,6 +289,9 @@ func (Group) Fields() []ent.Field {
 		field.Bool("return_requested_model").
 			Default(false).
 			Comment("响应模型字段返回请求中的模型名，不改变请求路由、计费或正文"),
+		field.Bool("save_response_msg_id").
+			Default(false).
+			Comment("是否保存 Claude/Anthropic 响应正文中的消息 ID（msg_...）到使用记录"),
 		field.Bool("allow_live").
 			Default(false).
 			Comment("是否允许此 OpenAI 分组访问 Live 接口"),

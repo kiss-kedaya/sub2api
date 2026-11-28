@@ -73,7 +73,7 @@ func (s *OpenAIGatewayService) runDeepSeekHostedFetch(ctx context.Context, c *gi
 		return `{"error":"fetch provider request failed"}`
 	}
 	if result != nil && result.WebSearchCalls > 0 {
-		state.searchCount += result.WebSearchCalls
+		state.fetchCount += result.WebSearchCalls
 	}
 	if !deepSeekToolsHasBillableResult(DeepSeekToolsPathFetch, recorder.Body.Bytes()) {
 		return `{"error":"fetch provider returned no page content"}`

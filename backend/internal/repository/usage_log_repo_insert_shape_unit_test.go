@@ -167,3 +167,47 @@ func TestPrepareUsageLogInsert_ServiceTierMultiplierArgWiring(t *testing.T) {
 	require.True(t, ok)
 	require.Nil(t, none, "a request without a premium tier stores NULL")
 }
+
+// TestPrepareUsageLogInsert_ResponseIDsArgWiring pins response_request_id,
+// client_request_id, and response_msg_id right before upstream_request_id.
+func TestPrepareUsageLogInsert_ResponseIDsArgWiring(t *testing.T) {
+	respID := "4276cee5-69e9-497a-9318-f99c84625bac"
+	clientID := "564966d3-8995-44d3-bc78-b5730b19a922"
+	msgID := "msg_011ChSwsWaLgTDX3Ay9jabZw"
+	prepared := prepareUsageLogInsert(&service.UsageLog{
+		UserID:            1,
+		APIKeyID:          2,
+		RequestID:         "client:" + clientID,
+		ResponseRequestID: &respID,
+		ClientRequestID:   &clientID,
+		ResponseMsgID:     &msgID,
+		Model:             "claude-opus-5-5",
+		CreatedAt:         time.Now().UTC(),
+	})
+	require.Len(t, prepared.args, len(usageLogInsertArgTypes))
+
+	checks := []struct {
+		name string
+		idx  int
+		want string
+	}{
+		{"response_request_id", len(prepared.args) - 8, respID},
+		{"client_request_id", len(prepared.args) - 7, clientID},
+		{"response_msg_id", len(prepared.args) - 6, msgID},
+	}
+	for _, tc := range checks {
+		require.Equal(t, "text", usageLogInsertArgTypes[tc.idx], tc.name)
+		arg, ok := prepared.args[tc.idx].(sql.NullString)
+		require.True(t, ok, "%s should be sql.NullString", tc.name)
+		require.True(t, arg.Valid, tc.name)
+		require.Equal(t, tc.want, arg.String, tc.name)
+		require.Contains(t, usageLogSelectColumns, tc.name)
+	}
+
+	absent := prepareUsageLogInsert(&service.UsageLog{UserID: 1, APIKeyID: 2, RequestID: "client:absent-ids", Model: "claude-opus-5-5", CreatedAt: time.Now().UTC()})
+	for _, tc := range checks {
+		nullArg, ok := absent.args[tc.idx].(sql.NullString)
+		require.True(t, ok, tc.name)
+		require.False(t, nullArg.Valid, "absent %s must be NULL", tc.name)
+	}
+}

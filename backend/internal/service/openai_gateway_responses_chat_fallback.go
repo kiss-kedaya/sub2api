@@ -129,16 +129,31 @@ func (s *OpenAIGatewayService) forwardResponsesViaRawChatCompletions(
 	if err != nil {
 		return nil, err
 	}
+	clientCtx := openAIClientContext(ctx, c)
 	resp, err := s.sendCCUpstreamRequest(ctx, c, account, targetURL, chatBody, clientStream, apiKey, account.GetOpenAIUserAgent(), "")
 	if err != nil {
+		if clientErr := openAIClientErr(clientCtx); clientErr != nil {
+			if errors.Is(err, errOpenAIRequestNotSent) {
+				return nil, clientErr
+			}
+			return newClientGoneOpenAIForwardResult(
+				c, account, body, originalModel, billingModel, upstreamModel, reasoningEffort, clientStream, startTime,
+			), clientErr
+		}
 		return nil, err
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode >= 400 {
+		if clientErr := openAIClientErr(clientCtx); clientErr != nil {
+			return nil, clientErr
+		}
 		respBody, upstreamMsg, readErr := s.readOpenAIUpstreamErrorWithError(resp)
 		if errors.Is(readErr, errOpenAIUpstreamWaitLimit) {
 			return s.openAIStreamSilenceHTTPError(c, resp, respBody, readErr, originalModel, billingModel, upstreamModel, clientStream, startTime)
+		}
+		if clientErr := openAIClientErr(clientCtx); clientErr != nil {
+			return nil, clientErr
 		}
 		if foErr := s.failoverOpenAIUpstreamHTTPError(ctx, c, account, resp, respBody, upstreamMsg, upstreamModel); foErr != nil {
 			return nil, foErr
@@ -308,17 +323,23 @@ func (s *OpenAIGatewayService) streamChatCompletionsAsResponses(
 	var upstreamErr error
 	// A scan ended by the silence limit has already told the client and carries its
 	// own error; writing the upstream-error frame as well would send two errors.
-	if scan.NonBillableUpstreamError && !errors.Is(scan.Err, errOpenAIUpstreamWaitLimit) {
+	// A mid-stream balance abort already delivered output and must never be waived
+	// as a non-billable upstream error.
+	if scan.NonBillableUpstreamError && !errors.Is(scan.Err, errOpenAIUpstreamWaitLimit) && !isBalanceHoldTopUpError(scan.Err) {
 		upstreamErr = writeCompatUpstreamStreamError(c, "responses", originalModel, scan.UpstreamError)
 	}
 
 	// The stream ended without [DONE] and the client is gone: nothing more will come.
 	if gone := clientDisconnected || watch.Gone(); upstreamErr != nil || scan.Err != nil || (gone && !scan.SawDone) {
+		nonBillable := scan.NonBillableUpstreamError
+		if isBalanceHoldTopUpError(scan.Err) {
+			nonBillable = false
+		}
 		result := &OpenAIForwardResult{
 			RequestID:                   requestID,
 			UpstreamHeaders:             resp.Header,
 			Usage:                       scan.Usage,
-			NonBillableUpstreamError:    scan.NonBillableUpstreamError,
+			NonBillableUpstreamError:    nonBillable,
 			Model:                       originalModel,
 			BillingModel:                billingModel,
 			UpstreamModel:               upstreamModel,
@@ -337,10 +358,22 @@ func (s *OpenAIGatewayService) streamChatCompletionsAsResponses(
 		if cause == nil {
 			cause = errors.New("missing done sentinel")
 		}
+		replaceUpTo := 0
+		if !scan.SawFinalOutput {
+			replaceUpTo = result.Usage.OutputTokens
+		}
 		applyCompatIncompleteUsage(c, &result.Usage, compatIncompleteUsage{
 			Path: "responses_chat_stream", Model: originalModel, RequestID: requestID,
 			ClientGone: gone, Cause: cause, OutputEstimate: tally.EstimateTokens(),
+			ReplaceOutputUpTo: replaceUpTo,
 		})
+		if isBalanceHoldTopUpError(scan.Err) {
+			if c != nil && c.Writer != nil && !c.Writer.Written() {
+				status, errType, message := balanceHoldAbortClientError(scan.Err)
+				writeResponsesError(c, status, errType, message)
+			}
+			return result, scan.Err
+		}
 		if gone {
 			return result, nil
 		}

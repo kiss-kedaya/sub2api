@@ -1,4 +1,5 @@
 import { BILLING_MODE_IMAGE, BILLING_MODE_TOKEN, BILLING_MODE_VIDEO } from '@/constants/channel'
+import { isDeepSeekToolModel } from '@/utils/deepseekTools'
 import type { ModelPlazaGroup } from '@/api/modelPlaza'
 
 export interface ModelOffer {
@@ -55,7 +56,7 @@ export type ComparisonSort = 'spread' | 'input' | 'output' | 'name'
 
 function effectiveRate(group: ModelPlazaGroup): number {
   const rate = group.user_rate_multiplier ?? group.rate_multiplier
-  return Number.isFinite(rate) && rate > 0 ? rate : 1
+  return Number.isFinite(rate) && rate >= 0 ? rate : 1
 }
 
 function scaled(value: number | null | undefined, rate: number, perMillion: boolean): number | null {
@@ -85,6 +86,8 @@ export function buildModelOffers(groups: ModelPlazaGroup[]): ModelOffer[] {
         mediaRate = Number.isFinite(group.image_rate_multiplier) && group.image_rate_multiplier >= 0 ? group.image_rate_multiplier : 1
       } else if (mode === BILLING_MODE_VIDEO && group.video_rate_independent) {
         mediaRate = typeof group.video_rate_multiplier === 'number' && Number.isFinite(group.video_rate_multiplier) && group.video_rate_multiplier >= 0 ? group.video_rate_multiplier : 1
+      } else if (isDeepSeekToolModel(model.name) && group.tool_rate_independent) {
+        mediaRate = typeof group.tool_rate_multiplier === 'number' && Number.isFinite(group.tool_rate_multiplier) && group.tool_rate_multiplier >= 0 ? group.tool_rate_multiplier : 1
       }
       const isToken = mode === BILLING_MODE_TOKEN
       const inputPerMillion = isToken ? scaled(pricing.input_price, rate, true) : null
@@ -101,7 +104,7 @@ export function buildModelOffers(groups: ModelPlazaGroup[]): ModelOffer[] {
         platform: model.platform,
         groupId: group.id,
         groupName: group.name,
-        groupRate: rate,
+        groupRate: isToken ? rate : mediaRate,
         subscriptionType: group.subscription_type,
         isExclusive: group.is_exclusive,
         qualityStatus: group.quality_status,

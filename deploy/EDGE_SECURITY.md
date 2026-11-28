@@ -106,12 +106,24 @@ server {
 
     location ~ ^/(auth|api/auth)/ {
         limit_req zone=sub2api_auth burst=10 nodelay;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Host "";
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto $scheme;
         proxy_pass http://127.0.0.1:8080;
     }
 
     location ~ ^/(v1/)?(embeddings|alpha/search)$ {
         client_max_body_size 32m;
         limit_req zone=sub2api_api burst=60 nodelay;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Host "";
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto $scheme;
         proxy_pass http://127.0.0.1:8080;
     }
 
@@ -119,6 +131,7 @@ server {
         limit_req zone=sub2api_api burst=60 nodelay;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Host "";
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $remote_addr;
         proxy_set_header X-Forwarded-Proto $scheme;

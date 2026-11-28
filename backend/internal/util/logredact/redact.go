@@ -42,8 +42,9 @@ type textRedactPatterns struct {
 }
 
 var (
-	reGOCSPX = regexp.MustCompile(`GOCSPX-[0-9A-Za-z_-]{24,}`)
-	reAIza   = regexp.MustCompile(`AIza[0-9A-Za-z_-]{35}`)
+	reGOCSPX             = regexp.MustCompile(`GOCSPX-[0-9A-Za-z_-]{24,}`)
+	reAIza               = regexp.MustCompile(`AIza[0-9A-Za-z_-]{35}`)
+	reUserPersonalAPIKey = regexp.MustCompile(`(?i)\buak_[0-9a-f]{64}\b`)
 
 	defaultTextRedactPatterns = compileTextRedactPatterns(nil)
 	extraTextPatternCache     sync.Map // map[string]*textRedactPatterns
@@ -101,6 +102,7 @@ func RedactText(input string, extraKeys ...string) string {
 	out := input
 	out = reGOCSPX.ReplaceAllString(out, "GOCSPX-***")
 	out = reAIza.ReplaceAllString(out, "AIza***")
+	out = reUserPersonalAPIKey.ReplaceAllString(out, "uak_***")
 	out = patterns.reJSONLike.ReplaceAllString(out, `$1***$3`)
 	out = patterns.reQueryLike.ReplaceAllString(out, `$1=***`)
 	out = patterns.rePlain.ReplaceAllString(out, `$1$2***`)
@@ -219,6 +221,11 @@ func redactValueWithDepth(value any, keys map[string]struct{}, depth int) any {
 			out[i] = redactValueWithDepth(item, keys, depth+1)
 		}
 		return out
+	case string:
+		if strings.Contains(v, "uak_") || strings.Contains(v, "UAK_") {
+			return reUserPersonalAPIKey.ReplaceAllString(v, "uak_***")
+		}
+		return v
 	default:
 		return value
 	}

@@ -130,9 +130,10 @@ func (s *OpenAIGatewayService) applyOpenAITierBilling(
 	// both sides so only the token charge is re-priced.
 	tokenResult := result
 	tierTokens := cost
-	if result.SearchCount > 0 {
+	if result.SearchCount > 0 || result.FetchCount > 0 {
 		noSearch := *result
 		noSearch.SearchCount = 0
+		noSearch.FetchCount = 0
 		tokenResult = &noSearch
 		var err error
 		tierTokens, err = s.calculateOpenAIRecordUsageCost(ctx, tokenResult, apiKey, billingModels,

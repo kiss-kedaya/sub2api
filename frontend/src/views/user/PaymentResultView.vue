@@ -138,6 +138,7 @@ const SUCCESS_STATUSES = new Set(['COMPLETED', 'PAID', 'RECHARGING'])
 const PENDING_STATUSES = new Set(['PENDING', 'CREATED', 'WAITING', 'PROCESSING'])
 const STATUS_REFRESH_INTERVAL_MS = 2000
 const STATUS_REFRESH_MAX_ATTEMPTS = 15
+const PAYMENT_RESULT_RESUME_STORAGE_PREFIX = 'payment.result.resume_token:'
 
 let statusRefreshTimer: ReturnType<typeof setTimeout> | null = null
 let userBalanceRefreshStarted = false
@@ -203,7 +204,7 @@ function setResolvedOrder(nextOrder: ResolvedOrder | null): void {
 }
 
 function refreshUserBalanceForSuccessfulOrder(nextOrder: ResolvedOrder | null): void {
-  if (!nextOrder || userBalanceRefreshStarted || normalizeOrderStatus(nextOrder.status) !== 'COMPLETED') {
+  if (!authStore.isAuthenticated || !nextOrder || userBalanceRefreshStarted || normalizeOrderStatus(nextOrder.status) !== 'COMPLETED') {
     return
   }
   if ('order_type' in nextOrder && nextOrder.order_type !== 'balance') {
@@ -247,9 +248,93 @@ function isPendingStatus(status: string | null | undefined): boolean {
 function readRouteQueryString(key: string): string {
   const value = route.query[key]
   if (Array.isArray(value)) {
+    const firstNonEmpty = value.find((item): item is string => typeof item === 'string' && item.trim() !== '')
+    if (firstNonEmpty !== undefined) {
+      return firstNonEmpty
+    }
     return typeof value[0] === 'string' ? value[0] : ''
   }
   return typeof value === 'string' ? value : ''
+}
+
+function parsePositiveOrderId(raw: string): number {
+  const trimmed = raw.trim()
+  if (!trimmed) {
+    return 0
+  }
+  const parsed = Number(trimmed)
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : 0
+}
+
+function serializeRemainingQueryForResumeKey(query: Record<string, unknown>): string {
+  const params = new URLSearchParams()
+  const keys = Object.keys(query)
+    .filter((key) => key !== 'resume_token')
+    .sort()
+  for (const key of keys) {
+    const raw = query[key]
+    if (Array.isArray(raw)) {
+      for (const item of raw) {
+        if (typeof item === 'string') {
+          params.append(key, item)
+        } else if (item === null) {
+          params.append(key, '')
+        }
+      }
+    } else if (typeof raw === 'string') {
+      params.append(key, raw)
+    } else if (raw === null) {
+      params.append(key, '')
+    }
+  }
+  return params.toString()
+}
+
+interface ResumeTokenStorageContext {
+  routeOrderId: number
+  routeOutTradeNo: string
+  remainingQueryKey: string
+}
+
+function resolveResumeSessionStorageKey(context: ResumeTokenStorageContext): string {
+  if (context.routeOrderId > 0 && context.routeOutTradeNo) {
+    return `${PAYMENT_RESULT_RESUME_STORAGE_PREFIX}order:${context.routeOrderId}:trade:${encodeURIComponent(context.routeOutTradeNo)}`
+  }
+  if (context.routeOrderId > 0) {
+    return `${PAYMENT_RESULT_RESUME_STORAGE_PREFIX}order:${context.routeOrderId}`
+  }
+  if (context.routeOutTradeNo) {
+    return `${PAYMENT_RESULT_RESUME_STORAGE_PREFIX}trade:${encodeURIComponent(context.routeOutTradeNo)}`
+  }
+  if (!context.remainingQueryKey) {
+    return `${PAYMENT_RESULT_RESUME_STORAGE_PREFIX}token_only`
+  }
+  return `${PAYMENT_RESULT_RESUME_STORAGE_PREFIX}query:${context.remainingQueryKey}`
+}
+
+function stashResumeToken(resumeToken: string, context: ResumeTokenStorageContext): void {
+  const trimmed = resumeToken.trim()
+  if (!trimmed || typeof window === 'undefined') {
+    return
+  }
+  const storageKey = resolveResumeSessionStorageKey(context)
+  try {
+    window.sessionStorage.setItem(storageKey, trimmed)
+  } catch {
+    // Ignore restricted storage environments (e.g. SecurityError / QuotaExceededError).
+  }
+}
+
+function readStashedResumeToken(context: ResumeTokenStorageContext): string {
+  if (typeof window === 'undefined') {
+    return ''
+  }
+  const storageKey = resolveResumeSessionStorageKey(context)
+  try {
+    return (window.sessionStorage.getItem(storageKey) || '').trim()
+  } catch {
+    return ''
+  }
 }
 
 function restoreRecoverySnapshot(context: {
@@ -261,7 +346,12 @@ function restoreRecoverySnapshot(context: {
     return null
   }
 
-  const rawSnapshot = window.localStorage.getItem(PAYMENT_RECOVERY_STORAGE_KEY)
+  let rawSnapshot: string | null = null
+  try {
+    rawSnapshot = window.localStorage.getItem(PAYMENT_RECOVERY_STORAGE_KEY)
+  } catch {
+    return null
+  }
   if (!rawSnapshot) {
     return null
   }
@@ -302,16 +392,19 @@ async function resolveOrderFromResumeToken(resumeToken: string): Promise<Resolve
 }
 
 async function resolveOrderFromOutTradeNo(outTradeNo: string): Promise<ResolvedOrder | null> {
-  try {
-    const result = await paymentAPI.verifyOrder(outTradeNo)
-    return result.data
-  } catch (_err: unknown) {
+  if (authStore.isAuthenticated) {
     try {
-      const result = await paymentAPI.verifyOrderPublic(outTradeNo)
+      const result = await paymentAPI.verifyOrder(outTradeNo)
       return result.data
-    } catch (_innerErr: unknown) {
-      return null
+    } catch (_err: unknown) {
+      // Fall through to public verification when authenticated verification fails.
     }
+  }
+  try {
+    const result = await paymentAPI.verifyOrderPublic(outTradeNo)
+    return result.data
+  } catch (_innerErr: unknown) {
+    return null
   }
 }
 
@@ -324,7 +417,11 @@ function clearStatusRefreshTimer(): void {
 
 function clearRecoverySnapshot(): void {
   if (typeof window === 'undefined') return
-  clearPaymentRecoverySnapshot(window.localStorage, PAYMENT_RECOVERY_STORAGE_KEY)
+  try {
+    clearPaymentRecoverySnapshot(window.localStorage, PAYMENT_RECOVERY_STORAGE_KEY)
+  } catch {
+    // Ignore restricted storage environments.
+  }
 }
 
 function clearRecoverySnapshotForTerminalStatus(status: string | null | undefined): void {
@@ -355,11 +452,40 @@ function scheduleStatusRefresh(refreshOrder: (() => Promise<ResolvedOrder | null
 }
 
 onMounted(async () => {
-  const resumeToken = readRouteQueryString('resume_token')
-  const routeOrderId = Number(readRouteQueryString('order_id')) || 0
-  let outTradeNo = readRouteQueryString('out_trade_no')
+  const queryResumeToken = readRouteQueryString('resume_token').trim()
+  const routeOrderId = parsePositiveOrderId(readRouteQueryString('order_id'))
+  const routeOutTradeNo = readRouteQueryString('out_trade_no').trim()
+  let outTradeNo = routeOutTradeNo
+  const routeTradeStatus = readRouteQueryString('trade_status')
+  const routeMoney = readRouteQueryString('money')
+  const routeType = readRouteQueryString('type')
   let orderId = 0
   let resumeTokenLookupFailed = false
+
+  const resumeStorageContext: ResumeTokenStorageContext = {
+    routeOrderId,
+    routeOutTradeNo,
+    remainingQueryKey: serializeRemainingQueryForResumeKey(route.query as Record<string, unknown>),
+  }
+  if (queryResumeToken) {
+    // Stash the signed resume_token in tab-scoped sessionStorage before
+    // scrubbing the URL so F5 reloads (including unauthenticated cross-origin
+    // returns and token-only URLs) continue using the public resolver without
+    // re-exposing resume_token in the address bar.
+    stashResumeToken(queryResumeToken, resumeStorageContext)
+  }
+  const resumeToken = queryResumeToken || readStashedResumeToken(resumeStorageContext)
+
+  // Scrub the signed resume_token from the browser address bar immediately so
+  // it does not linger in browser history or leak via outbound Referer headers.
+  const hasResumeTokenQuery = Object.prototype.hasOwnProperty.call(route.query, 'resume_token')
+  if ((queryResumeToken || hasResumeTokenQuery) && typeof router.replace === 'function') {
+    const sanitizedQuery = { ...route.query }
+    delete sanitizedQuery.resume_token
+    void Promise.resolve(router.replace({ query: sanitizedQuery })).catch(() => {
+      // Best-effort URL scrubbing; order resolution continues using the in-memory token.
+    })
+  }
 
   const restored = restoreRecoverySnapshot({
     resumeToken,
@@ -393,10 +519,10 @@ onMounted(async () => {
     orderId = routeOrderId
   }
 
-  const hasLegacyFallbackContext = readRouteQueryString('trade_status').trim() !== ''
+  const hasLegacyFallbackContext = routeTradeStatus.trim() !== ''
   const shouldUsePublicOutTradeNo = outTradeNo !== '' && (hasLegacyFallbackContext || routeOrderId > 0 || orderId > 0)
 
-  if (!order.value && orderId && (!resumeToken || routeOrderId > 0)) {
+  if (!order.value && authStore.isAuthenticated && orderId && (!resumeToken || routeOrderId > 0)) {
     try {
       setResolvedOrder(await paymentStore.pollOrderStatus(orderId))
     } catch (_err: unknown) {
@@ -417,9 +543,9 @@ onMounted(async () => {
   if (!order.value && !orderId && outTradeNo && hasLegacyFallbackContext) {
     returnInfo.value = {
       outTradeNo,
-      money: String(route.query.money || ''),
-      type: String(route.query.type || ''),
-      tradeStatus: String(route.query.trade_status || ''),
+      money: routeMoney,
+      type: routeType,
+      tradeStatus: routeTradeStatus,
     }
   }
 
@@ -431,7 +557,7 @@ onMounted(async () => {
       }
     }
 
-    if (orderId) {
+    if (authStore.isAuthenticated && orderId) {
       try {
         return await paymentStore.pollOrderStatus(orderId)
       } catch (_err: unknown) {

@@ -112,7 +112,14 @@ type UsageLog struct {
 	APIKeyID  int64
 	AccountID int64
 	RequestID string
-	Model     string
+	// ResponseRequestID records the final X-Request-Id response header returned to the client.
+	ResponseRequestID *string
+	// ClientRequestID records the X-Client-Request-Id response header returned to the client.
+	ClientRequestID *string
+	// ResponseMsgID records the Claude/Anthropic response body message id (e.g. msg_...)
+	// when the group has save_response_msg_id enabled.
+	ResponseMsgID *string
+	Model         string
 	// FailureStatusCode is best-effort read-time correlation with a terminal Ops
 	// error, not a wire HTTP status or a durable delivery outcome. Nil means no
 	// unambiguous retained match was found, never an assertion of success.

@@ -213,7 +213,7 @@
     <!-- Schedule Config -->
     <SettingsSection :title="t('admin.backup.schedule.title')" :description="t('admin.backup.schedule.description')">
       <template #actions>
-        <UButton :loading="savingSchedule" :disabled="savingSchedule" @click="saveSchedule">
+        <UButton :loading="savingSchedule" :disabled="savingSchedule || Boolean(ageRecipientsClientError)" @click="saveSchedule">
           {{ savingSchedule ? t('common.loading') : t('common.save') }}
         </UButton>
       </template>
@@ -240,6 +240,121 @@
                   :disabled="serverCriticalForced"
                   data-testid="schedule-critical-only-toggle"
                   @update:model-value="onScheduleCriticalOnlyChange"
+                />
+            </template>
+          </SettingRow>
+          <SettingRow
+            :label="t('admin.backup.schedule.ageRecipients')"
+            :on="persistedAgeEncryptionEnabled"
+            default-open
+            test-id="schedule-age-recipients-row"
+          >
+            <template #title>
+              <span class="min-w-0 truncate">{{ t('admin.backup.schedule.ageRecipients') }}</span>
+              <UBadge
+                v-if="serverAgeEncryptionForced"
+                color="success"
+                variant="subtle"
+                size="sm"
+                data-testid="schedule-age-status-badge"
+              >
+                {{ t('admin.backup.schedule.ageStatusServerForced', { count: serverAgeRecipientCount || 1 }) }}
+              </UBadge>
+              <UBadge
+                v-else-if="savedAgeRecipients.length > 0"
+                color="success"
+                variant="subtle"
+                size="sm"
+                data-testid="schedule-age-status-badge"
+              >
+                {{ t('admin.backup.schedule.ageStatusEnabled', { count: savedAgeRecipients.length }) }}
+              </UBadge>
+              <UBadge
+                v-else-if="ageEncryptionEnabled"
+                color="success"
+                variant="subtle"
+                size="sm"
+                data-testid="schedule-age-status-badge"
+              >
+                {{ t('admin.backup.schedule.ageStatusEnabledLegacy') }}
+              </UBadge>
+              <UBadge
+                v-else
+                color="neutral"
+                variant="subtle"
+                size="sm"
+                data-testid="schedule-age-status-badge"
+              >
+                {{ t('admin.backup.schedule.ageStatusDisabled') }}
+              </UBadge>
+              <UBadge
+                v-if="ageRecipientsDirty && !ageRecipientsClientError"
+                color="warning"
+                variant="subtle"
+                size="sm"
+                data-testid="schedule-age-unsaved-badge"
+              >
+                {{ t('admin.backup.schedule.ageStatusUnsaved') }}
+              </UBadge>
+            </template>
+            <template #status>
+              <div v-if="ageRecipientsClientError || serverAgeEncryptionForced" class="flex flex-col gap-2 pb-2">
+                <UAlert
+                  v-if="ageRecipientsClientError"
+                  color="error"
+                  variant="subtle"
+                  icon="i-lucide-shield-alert"
+                  :description="ageRecipientsClientError"
+                  data-testid="schedule-age-error-alert"
+                />
+                <UAlert
+                  v-if="serverAgeEncryptionForced"
+                  color="info"
+                  variant="subtle"
+                  icon="i-lucide-lock"
+                  :description="t('admin.backup.schedule.ageServerForcedNotice', { count: serverAgeRecipientCount || 1 })"
+                  data-testid="schedule-age-server-forced-alert"
+                />
+              </div>
+            </template>
+            <template #hint>
+              <div class="space-y-2">
+                <p>{{ t('admin.backup.schedule.ageRecipientsHint') }}</p>
+                <div class="space-y-1 text-xs">
+                  <p class="text-toned">{{ t('admin.backup.schedule.ageKeygenHint') }}</p>
+                  <code class="block overflow-x-auto rounded bg-elevated px-2.5 py-1.5 font-mono text-xs text-highlighted">age-keygen -o backup-key.txt</code>
+                  <p class="pt-1 text-toned">{{ t('admin.backup.schedule.ageDecryptHint') }}</p>
+                  <code class="block overflow-x-auto rounded bg-elevated px-2.5 py-1.5 font-mono text-xs text-highlighted">age -d -i backup-key.txt backup.critical.sql.gz.age | gunzip | psql -v ON_ERROR_STOP=1 -1 -d &lt;empty_db&gt;</code>
+                </div>
+              </div>
+            </template>
+            <template #fields>
+              <UTextarea
+                v-model="ageRecipientsText"
+                :rows="3"
+                autocomplete="off"
+                spellcheck="false"
+                class="w-full"
+                :ui="{ base: 'font-mono text-xs' }"
+                :placeholder="t('admin.backup.schedule.ageRecipientsPlaceholder')"
+                data-testid="schedule-age-recipients-input"
+              />
+            </template>
+          </SettingRow>
+          <SettingRow
+            :label="t('admin.backup.schedule.maxRateMBps')"
+            :hint="t('admin.backup.schedule.maxRateMBpsHint')"
+            :in-summary="false"
+            test-id="schedule-max-rate-row"
+          >
+            <template #control>
+                <UInput
+                  v-model.number="scheduleForm.max_rate_mbps"
+                  type="number"
+                  min="0"
+                  :max="MAX_RATE_MBPS"
+                  class="w-32"
+                  data-testid="schedule-max-rate-input"
                 />
             </template>
           </SettingRow>
@@ -513,16 +628,65 @@ const testingImageStorage = ref(false)
 // Must match maxBackupRetainCount in the backend: the record list holds 100 entries
 // and one slot always belongs to the backup in flight.
 const MAX_RETAIN_COUNT = 99
+const MAX_AGE_RECIPIENTS = 16
+const MAX_RATE_MBPS = 500
+const AGE_PUBLIC_KEY_RE = /^age1[02-9ac-hj-np-z]{58}$/
+
 const scheduleForm = ref<BackupScheduleConfig>({
   enabled: false,
   cron_expr: '0 2 * * *',
   retain_days: 14,
   retain_count: 10,
   critical_only: false,
+  age_recipients: [],
+  max_rate_mbps: 0,
 })
+const ageRecipientsText = ref('')
 const serverCriticalForced = ref(false)
 const ageEncryptionEnabled = ref(false)
+const serverAgeEncryptionForced = ref(false)
+const serverAgeRecipientCount = ref(0)
 const savingSchedule = ref(false)
+
+const ageRecipientsValidation = computed(() => {
+  const lines = ageRecipientsText.value.split(/\r?\n/)
+  // 全量先扫私钥，避免整份粘贴 age-keygen 输出（前两行为 # 注释）时在第 1 行就短路。
+  for (let i = 0; i < lines.length; i++) {
+    if (/age-secret-key-/i.test(lines[i])) {
+      return { keys: [] as string[], error: t('admin.backup.schedule.agePrivateKeyForbidden') }
+    }
+  }
+  const keys: string[] = []
+  const seen = new Set<string>()
+  for (let i = 0; i < lines.length; i++) {
+    const trimmed = lines[i].trim()
+    if (!trimmed) continue
+    if (!AGE_PUBLIC_KEY_RE.test(trimmed)) {
+      return { keys: [] as string[], error: t('admin.backup.schedule.ageRecipientInvalid', { line: i + 1 }) }
+    }
+    if (!seen.has(trimmed)) {
+      seen.add(trimmed)
+      keys.push(trimmed)
+    }
+    if (keys.length > MAX_AGE_RECIPIENTS) {
+      return { keys: [] as string[], error: t('admin.backup.schedule.ageRecipientsTooMany') }
+    }
+  }
+  return { keys, error: '' }
+})
+
+const parsedAgeRecipients = computed(() => ageRecipientsValidation.value.keys)
+const ageRecipientsClientError = computed(() => ageRecipientsValidation.value.error)
+const savedAgeRecipients = computed(() => scheduleForm.value.age_recipients ?? [])
+const ageRecipientsDirty = computed(() => {
+  if (ageRecipientsClientError.value) return true
+  const draft = parsedAgeRecipients.value
+  const saved = savedAgeRecipients.value
+  return draft.length !== saved.length || draft.some((key, index) => key !== saved[index])
+})
+const persistedAgeEncryptionEnabled = computed(
+  () => serverAgeEncryptionForced.value || savedAgeRecipients.value.length > 0 || ageEncryptionEnabled.value,
+)
 
 const effectiveScheduleCriticalOnly = computed(
   () => serverCriticalForced.value || Boolean(scheduleForm.value.critical_only),
@@ -533,7 +697,7 @@ const scheduleCriticalHints = computed(() => {
   if (serverCriticalForced.value) {
     hints.push(t('admin.backup.schedule.criticalForcedByServer'))
   }
-  if (ageEncryptionEnabled.value) {
+  if (persistedAgeEncryptionEnabled.value) {
     hints.push(t('admin.backup.schedule.ageEncryptionActive'))
   }
   return hints
@@ -807,15 +971,21 @@ async function testS3() {
 async function loadSchedule() {
   try {
     const cfg = await adminAPI.backup.getSchedule()
+    const recipients = Array.isArray(cfg.age_recipients) ? cfg.age_recipients : []
     scheduleForm.value = {
       enabled: cfg.enabled,
       cron_expr: cfg.cron_expr || '0 2 * * *',
       retain_days: cfg.retain_days || 14,
       retain_count: cfg.retain_count || 10,
       critical_only: Boolean(cfg.critical_only),
+      age_recipients: recipients,
+      max_rate_mbps: Number(cfg.max_rate_mbps || 0),
     }
+    ageRecipientsText.value = recipients.join('\n')
     serverCriticalForced.value = Boolean(cfg.server_critical_forced)
     ageEncryptionEnabled.value = Boolean(cfg.age_encryption_enabled)
+    serverAgeEncryptionForced.value = Boolean(cfg.server_age_encryption_forced)
+    serverAgeRecipientCount.value = Number(cfg.server_age_recipient_count || 0)
     manualCriticalOnly.value = Boolean(cfg.server_critical_forced || cfg.critical_only)
   } catch (error) {
     appStore.showError((error as { message?: string })?.message || t('errors.networkError'))
@@ -823,23 +993,41 @@ async function loadSchedule() {
 }
 
 async function saveSchedule() {
+  if (ageRecipientsClientError.value) {
+    appStore.showError(ageRecipientsClientError.value)
+    return
+  }
+  const rawRate = Number(scheduleForm.value.max_rate_mbps || 0)
+  const normalizedRate = Math.max(0, Math.min(MAX_RATE_MBPS, Math.trunc(Number.isFinite(rawRate) ? rawRate : 0)))
   savingSchedule.value = true
   try {
-    const saved = await adminAPI.backup.updateSchedule({
-      enabled: scheduleForm.value.enabled,
-      cron_expr: scheduleForm.value.cron_expr,
-      retain_days: scheduleForm.value.retain_days,
-      retain_count: scheduleForm.value.retain_count,
-      critical_only: Boolean(scheduleForm.value.critical_only),
-    })
+    const saved = await backupStepUp.run(() =>
+      adminAPI.backup.updateSchedule({
+        enabled: scheduleForm.value.enabled,
+        cron_expr: scheduleForm.value.cron_expr,
+        retain_days: scheduleForm.value.retain_days,
+        retain_count: scheduleForm.value.retain_count,
+        critical_only: Boolean(scheduleForm.value.critical_only),
+        age_recipients: parsedAgeRecipients.value,
+        max_rate_mbps: normalizedRate,
+      }),
+    )
     if (saved) {
+      const savedRecipients = Array.isArray(saved.age_recipients) ? saved.age_recipients : []
       serverCriticalForced.value = Boolean(saved.server_critical_forced)
       ageEncryptionEnabled.value = Boolean(saved.age_encryption_enabled)
+      serverAgeEncryptionForced.value = Boolean(saved.server_age_encryption_forced)
+      serverAgeRecipientCount.value = Number(saved.server_age_recipient_count || 0)
       scheduleForm.value.critical_only = Boolean(saved.critical_only)
+      scheduleForm.value.age_recipients = savedRecipients
+      scheduleForm.value.max_rate_mbps = Number(saved.max_rate_mbps || 0)
+      ageRecipientsText.value = savedRecipients.join('\n')
     }
     manualCriticalOnly.value = Boolean(serverCriticalForced.value || scheduleForm.value.critical_only)
     appStore.showSuccess(t('admin.backup.schedule.saved'))
   } catch (error) {
+    if (isStepUpCancelled(error)) return
+    if (reportStepUpBlocked(error)) return
     appStore.showError((error as { message?: string })?.message || t('errors.networkError'))
   } finally {
     savingSchedule.value = false

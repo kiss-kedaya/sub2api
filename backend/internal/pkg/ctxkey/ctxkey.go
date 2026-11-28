@@ -23,6 +23,12 @@ const (
 	// RequestID 为服务端生成/透传的请求 ID。
 	RequestID Key = "ctx_request_id"
 
+	// ResponseRequestID 为最终写入客户端响应头 X-Request-Id 的值（含上游覆盖后的值）。
+	ResponseRequestID Key = "ctx_response_request_id"
+
+	// SaveResponseMsgID 快照当前请求命中的分组是否开启保存响应消息 ID（避免异步计费队列持有 *Group）。
+	SaveResponseMsgID Key = "ctx_save_response_msg_id"
+
 	// ClientRequestID 客户端请求的唯一标识，用于追踪请求全生命周期（用于 Ops 监控与排障）。
 	ClientRequestID Key = "ctx_client_request_id"
 

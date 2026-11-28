@@ -272,6 +272,8 @@ import {
 import * as groupsApi from '@/api/admin/groups'
 import type { AdminGroup } from '@/types'
 import { extractApiErrorMessage } from '@/utils/apiError'
+import { getDeepSeekToolSpec } from '@/utils/deepseekTools'
+import { formatScaled } from '@/utils/pricing'
 import {
   buildModelOffers,
   compareModels,
@@ -395,12 +397,16 @@ function formatMoney(value: number | null | undefined): string {
 
 function formatRequest(value: number | null | undefined): string {
   if (typeof value !== 'number' || !Number.isFinite(value)) return '—'
-  return `$${value.toFixed(value >= 1 ? 2 : 4)}`
+  return formatScaled(value, 1, 2)
 }
 
 function pricePair(offer: ModelOffer): string {
   if (offer.billingMode === 'token') {
     return `${formatMoney(offer.inputPerMillion)} / ${formatMoney(offer.outputPerMillion)}`
+  }
+  const toolSpec = getDeepSeekToolSpec(offer.model)
+  if (toolSpec) {
+    return `${formatRequest(offer.requestPrice)} / ${text(toolSpec.unitZh, toolSpec.unitEn)}`
   }
   if (offer.billingMode === 'video') {
     return `${formatRequest(offer.requestPrice)} / ${text('秒', 's')}`

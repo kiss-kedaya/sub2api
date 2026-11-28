@@ -116,7 +116,7 @@
         </div>
         <div v-else class="grid grid-cols-1 items-end gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
           <UFormField :label="t('admin.usage.requestId')">
-            <UInput v-model="filters.request_id" type="text" size="lg" class="w-full" :ui="{ base: 'py-[11px]' }" :placeholder="t('usage.requestIdPlaceholder')" @change="applyFilters" @keyup.enter="applyFilters" />
+            <UInput v-model="filters.request_id" type="text" size="lg" class="w-full" :ui="{ base: 'py-[11px]' }" :placeholder="t('usage.requestIdPlaceholder')" @change="applyRequestIdFilter" @keyup.enter="applyRequestIdFilter" />
           </UFormField>
           <UFormField :label="t('usage.apiKeyFilter')">
             <Select v-model="filters.api_key_id" :options="apiKeyOptions" @change="applyFilters" />
@@ -222,6 +222,7 @@
             :columns="inflightColumns"
             :show-account-billing="false"
             :show-upstream-endpoint="false"
+            @requestIdClick="handleRequestIdClick"
           />
         </InflightUsagePanel>
         <UsageTable
@@ -233,6 +234,7 @@
           :show-upstream-endpoint="false"
           default-sort-key="created_at"
           default-sort-order="desc"
+          @requestIdClick="handleRequestIdClick"
           @sort="handleSort"
           @ipGeoBatchFailed="handleIpGeoBatchFailed"
         />
@@ -527,8 +529,9 @@ const modelOptions = computed<SelectOption[]>(() => [
 const normalizedFilters = computed<UsageQueryParams>(() => {
   const requestType = filters.value.request_type
   const legacyStream = requestType ? requestTypeToLegacyStream(requestType) : filters.value.stream
+  const { request_id: _ignoredRequestId, ...rest } = filters.value
   return {
-    ...filters.value,
+    ...rest,
     start_date: startDate.value,
     end_date: endDate.value,
     stream: legacyStream === null ? undefined : legacyStream,
@@ -612,7 +615,7 @@ const loadLogs = async (silent = false) => {
     // 列表总数（COUNT）也走后端并发闸：繁忙时保留当前这页、不弹错误，稍后自动重试一次。
     if (generation === logsGeneration && deferWhenStatsBusy(error, 'logs', () => loadLogs(silent))) return
     if (!silent && error?.name !== 'AbortError' && error?.code !== 'ERR_CANCELED') {
-      appStore.showError(t('usage.failedToLoad'))
+      appStore.showError(error?.response?.data?.message || error?.message || t('usage.failedToLoad'))
     }
   } finally {
     if (!silent && abortController === controller) loading.value = false
@@ -794,6 +797,18 @@ const handleSort = (key: string, order: 'asc' | 'desc') => {
   void loadLogs()
 }
 
+const applyRequestIdFilter = () => {
+  pagination.page = 1
+  void loadLogs()
+}
+
+const handleRequestIdClick = (requestId: string) => {
+  const trimmed = requestId.trim()
+  if (!trimmed) return
+  filters.value.request_id = `=${trimmed}`
+  applyRequestIdFilter()
+}
+
 const handleIpGeoBatchFailed = () => {
   appStore.showError(t('usage.ipGeo.batchFailed'))
 }
@@ -863,6 +878,9 @@ const exportToCSV = async () => {
       'Original Cost',
       'First Token (ms)',
       'Duration (ms)',
+      'X-Request-Id',
+      'X-Client-Request-Id',
+      'Message ID',
     ]
     const rows = allLogs.map((log) => [
       log.created_at,
@@ -882,6 +900,9 @@ const exportToCSV = async () => {
       log.total_cost.toFixed(8),
       log.first_token_ms ?? '',
       log.duration_ms ?? '',
+      log.response_request_id || '',
+      log.client_request_id || '',
+      log.response_msg_id || '',
     ].map(escapeCSVValue))
     const csvContent = [
       headers.map(escapeCSVValue).join(','),
@@ -929,12 +950,14 @@ const allColumns = computed<Column[]>(() => [
   { key: 'cost', label: t('usage.cost'), sortable: false },
   { key: 'latency', label: t('usage.latency'), sortable: false },
   { key: 'created_at', label: t('usage.time'), sortable: true },
+  { key: 'request_id', label: t('admin.usage.requestId'), sortable: false },
+  { key: 'response_msg_id', label: t('admin.usage.responseMsgId'), sortable: false },
   { key: 'user_agent', label: t('usage.userAgent'), sortable: false },
 ])
 
 const hiddenColumns = reactive<Set<string>>(new Set())
 // 用户仅展示自己的分组与密钥名称，不增加上游账户信息。
-const inflightColumnKeys = new Set(['api_key', 'model', 'group', 'stream', 'cost', 'latency', 'created_at'])
+const inflightColumnKeys = new Set(['api_key', 'model', 'group', 'stream', 'cost', 'latency', 'created_at', 'request_id'])
 const inflightColumns = computed(() => allColumns.value
   .filter(column => inflightColumnKeys.has(column.key))
   .map(column => ({ ...column, sortable: false })))

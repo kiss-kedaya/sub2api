@@ -1019,6 +1019,9 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			if wsErr == nil {
 				break
 			}
+			if isBalanceHoldTopUpError(wsErr) {
+				break
+			}
 			if c != nil && c.Writer != nil && c.Writer.Written() {
 				break
 			}
@@ -1127,10 +1130,12 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			}
 			return wsResult, nil
 		}
-		s.writeOpenAIWSFallbackErrorResponse(c, account, wsErr)
-		if wsResult != nil && wsResult.ClientDisconnect {
-			// The client left mid-turn: hand what was observed to billing together with the
-			// error, the way the SSE path does.
+		if !isBalanceHoldTopUpError(wsErr) {
+			s.writeOpenAIWSFallbackErrorResponse(c, account, wsErr)
+		}
+		if wsResult != nil && (wsResult.ClientDisconnect || isBalanceHoldTopUpError(wsErr)) {
+			// The client left or balance withholding aborted mid-turn: hand what was
+			// observed/estimated to billing together with the error, the way the SSE path does.
 			wsResult.UpstreamModel = upstreamModel
 			if wsResult.BillingModel == "" {
 				wsResult.BillingModel = billingModel
@@ -1208,12 +1213,16 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		releaseUpstreamRequestPayload(upstreamReq, resp)
 		SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(upstreamStart).Milliseconds())
 		if headerGuard != nil && headerGuard.stopHeaderWait() {
+			rejectedByUpstream := resp != nil && resp.StatusCode >= http.StatusBadRequest
 			if resp != nil && resp.Body != nil {
 				_ = resp.Body.Close()
 			}
 			headerGuard.close()
 			if clientErr := clientCtx.Err(); clientErr != nil {
-				return nil, clientErr
+				if rejectedByUpstream {
+					return nil, clientErr
+				}
+				return clientGone(err, clientErr)
 			}
 			return nil, s.newOpenAIFirstOutputTimeoutError(
 				ctx, c, account, opsUpstreamProxyID(account), opsUpstreamProxyName(account),
@@ -1518,6 +1527,14 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		} else {
 			nonStreamResult, err := s.handleNonStreamingResponse(ctx, resp, c, account, originalModel, upstreamModel)
 			if err != nil {
+				if nonStreamResult != nil && (nonStreamResult.balanceAborted || isBalanceHoldTopUpError(err)) {
+					usage = nonStreamResult.usage
+					if usage == nil {
+						usage = &OpenAIUsage{}
+					}
+					fillIncompleteStreamUsage(usage, nonStreamResult.incompleteOutputTokens, body)
+					return buildForwardResult(), err
+				}
 				if nonStreamResult != nil && errors.Is(err, errOpenAIUpstreamWaitLimit) {
 					usage, nonBillableUpstreamError = nonStreamResult.usage, true
 					return buildForwardResult(), err

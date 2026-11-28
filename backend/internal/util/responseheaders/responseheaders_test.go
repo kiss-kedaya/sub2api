@@ -188,3 +188,44 @@ func TestFilterHeadersAllowsMshCacheWriteTTLHeaders(t *testing.T) {
 		}
 	}
 }
+
+func TestWriteFilteredHeadersReplacesExistingAndDeduplicatesXRequestID(t *testing.T) {
+	t.Run("replaces RequestLogger default without duplicate header", func(t *testing.T) {
+		dst := http.Header{}
+		dst.Set("X-Request-Id", "e66dc7ac-0844-4e7b-8310-21c292462a0b")
+		src := http.Header{}
+		src.Set("X-Request-Id", "384f0c79-64df-458c-89f4-d7e7ecb544d6")
+
+		WriteFilteredHeaders(dst, src, nil)
+		vals := dst.Values("X-Request-Id")
+		if len(vals) != 1 || vals[0] != "384f0c79-64df-458c-89f4-d7e7ecb544d6" {
+			t.Fatalf("expected single replaced X-Request-Id, got %v", vals)
+		}
+	})
+
+	t.Run("collapses multiple upstream X-Request-Id headers into one", func(t *testing.T) {
+		dst := http.Header{}
+		dst.Set("X-Request-Id", "local-default-id")
+		src := http.Header{}
+		src.Add("X-Request-Id", "upstream-first-id")
+		src.Add("X-Request-Id", "upstream-second-id")
+
+		WriteFilteredHeaders(dst, src, nil)
+		vals := dst.Values("X-Request-Id")
+		if len(vals) != 1 || vals[0] != "upstream-first-id" {
+			t.Fatalf("expected single upstream X-Request-Id, got %v", vals)
+		}
+	})
+
+	t.Run("preserves existing X-Request-Id when upstream omits it", func(t *testing.T) {
+		dst := http.Header{}
+		dst.Set("X-Request-Id", "4276cee5-69e9-497a-9318-f99c84625bac")
+		src := http.Header{"Content-Type": {"application/json"}}
+
+		WriteFilteredHeaders(dst, src, nil)
+		vals := dst.Values("X-Request-Id")
+		if len(vals) != 1 || vals[0] != "4276cee5-69e9-497a-9318-f99c84625bac" {
+			t.Fatalf("expected existing X-Request-Id preserved, got %v", vals)
+		}
+	})
+}

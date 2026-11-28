@@ -257,7 +257,17 @@ func (h *ConcurrencyHelper) TryAcquireUserSlotForAPIKeyFromGin(c *gin.Context, u
 	if key, ok := middleware2.GetAPIKeyFromContext(c); ok && key != nil {
 		keyLimit = key.ConcurrencyLimit
 	}
-	reservation, err := h.ReserveWSAPIKeySlotWithWait(c.Request.Context(), apiKeyID, keyLimit)
+	return h.TryAcquireUserSlotForAPIKeyWithLimit(c, userID, maxConcurrency, apiKeyID, keyLimit)
+}
+
+// TryAcquireUserSlotForAPIKeyWithLimit acquires the API key and user slots using
+// an explicit (e.g. live-refreshed) API key concurrency limit instead of reading
+// the handshake-time APIKey snapshot from Gin context.
+func (h *ConcurrencyHelper) TryAcquireUserSlotForAPIKeyWithLimit(c *gin.Context, userID int64, maxConcurrency int, apiKeyID int64, apiKeyLimit int) (func(), bool, error) {
+	if c == nil || c.Request == nil {
+		return h.TryAcquireUserSlotForAPIKey(context.Background(), userID, maxConcurrency, apiKeyID)
+	}
+	reservation, err := h.ReserveWSAPIKeySlotWithWait(c.Request.Context(), apiKeyID, apiKeyLimit)
 	if err != nil {
 		return nil, false, err
 	}

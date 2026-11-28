@@ -68,7 +68,10 @@ const messages: Record<string, string> = {
   'admin.usage.billingModeToken': 'Token',
   'admin.usage.billingModePerRequest': 'Per request',
   'admin.usage.billingModeImage': 'Image',
+	'admin.usage.requestId': 'Request ID',
 	'admin.usage.requestIdCopied': 'Request ID copied',
+	'admin.usage.responseMsgId': 'Message ID',
+	'admin.usage.responseMsgIdCopied': 'Message ID copied',
 	'admin.usage.upstreamRequestIdCopied': 'Upstream ID copied',
 	'keys.copied': 'Copied',
 	'keys.copyToClipboard': 'Copy to clipboard',
@@ -106,6 +109,7 @@ const DataTableStub = {
         <slot name="cell-cost" :row="row" />
         <slot name="cell-latency" :row="row" />
         <slot name="cell-request_id" :row="row" />
+        <slot name="cell-response_msg_id" :row="row" />
         <slot name="cell-upstream_request_id" :row="row" />
       </div>
     </div>
@@ -1371,5 +1375,52 @@ describe('admin UsageTable request ID column', () => {
 
     expect(writeText).toHaveBeenCalledWith('20260903082826779695')
     expect(appStoreMocks.showSuccess).toHaveBeenCalledWith('Upstream ID copied')
+  })
+
+  it('renders labeled X-Request-Id, X-Client-Request-Id, and response_msg_id with click-to-search and copy', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    vi.stubGlobal('navigator', { clipboard: { writeText } })
+    Object.defineProperty(window, 'isSecureContext', { value: true, configurable: true })
+
+    const wrapper = mount(UsageTable, {
+      props: {
+        data: [{
+          ...baseImageRow,
+          request_id: 'client:564966d3-8995-44d3-bc78-b5730b19a922',
+          response_request_id: '4276cee5-69e9-497a-9318-f99c84625bac',
+          client_request_id: '564966d3-8995-44d3-bc78-b5730b19a922',
+          response_msg_id: 'msg_011ChSwsWaLgTDX3Ay9jabZw',
+        }],
+        loading: false,
+        columns: [
+          { key: 'request_id', label: 'Request ID' },
+          { key: 'response_msg_id', label: 'Message ID' },
+        ],
+      },
+      global: {
+        stubs: {
+          DataTable: DataTableStub,
+          EmptyState: true,
+          Icon: true,
+          Teleport: true,
+        },
+      },
+    })
+
+    expect(wrapper.get('[data-testid="usage-response-request-id"]').text()).toBe('4276cee5-69e9-497a-9318-f99c84625bac')
+    expect(wrapper.get('[data-testid="usage-client-request-id"]').text()).toBe('564966d3-8995-44d3-bc78-b5730b19a922')
+    expect(wrapper.get('[data-testid="usage-response-msg-id"]').text()).toBe('msg_011ChSwsWaLgTDX3Ay9jabZw')
+
+    await wrapper.get('[data-testid="usage-response-msg-id"]').trigger('click')
+    expect(wrapper.emitted('requestIdClick')?.[0]).toEqual(['msg_011ChSwsWaLgTDX3Ay9jabZw'])
+
+    await wrapper.get('[data-testid="usage-response-request-id"]').trigger('click')
+    expect(wrapper.emitted('requestIdClick')?.[1]).toEqual(['4276cee5-69e9-497a-9318-f99c84625bac'])
+
+    const copyButtons = wrapper.findAll('button[title="Copy to clipboard"]')
+    expect(copyButtons).toHaveLength(3)
+    await copyButtons[2].trigger('click')
+    expect(writeText).toHaveBeenCalledWith('msg_011ChSwsWaLgTDX3Ay9jabZw')
+    expect(appStoreMocks.showSuccess).toHaveBeenCalledWith('Message ID copied')
   })
 })

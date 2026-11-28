@@ -52,6 +52,7 @@ func (s *GatewayService) handleBedrockStreamingResponse(
 	clientDisconnected := false
 	sawTerminal := false
 	progress := &anthropicStreamProgress{}
+	guardCtx, streamBalanceGuard := balancePreauthorizationGuardForRequest(ctx, c)
 	clientWatch := newAnthropicClientWatch(ctx, c, resp.Body)
 	defer clientWatch.stop()
 	// 没有终帧就结束的流不会再有 usage；调用方据此按已产出内容估算。
@@ -168,9 +169,15 @@ func (s *GatewayService) handleBedrockStreamingResponse(
 			// 同时移除该字段避免透传给客户端
 			sseData = transformBedrockInvocationMetrics(sseData)
 
+			if observer := upstreamResponseModelObserverFromContext(c); observer != nil {
+				observer.ObserveAnthropic(sseData)
+			} else {
+				beginUpstreamResponseModelObservation(c).ObserveAnthropic(sseData)
+			}
+
 			// 解析 SSE 事件数据提取 usage
 			parseSSEUsagePassthrough(string(sseData), usage)
-			progress.observeData(string(sseData))
+			observedBytes := progress.observeData(string(sseData))
 
 			// 确定 SSE event type
 			eventType := gjson.GetBytes(sseData, "type").String()
@@ -191,6 +198,19 @@ func (s *GatewayService) handleBedrockStreamingResponse(
 					markClientGone("client write failed")
 				} else {
 					flusher.Flush()
+					if observedBytes > 0 {
+						if topUpErr := streamBalanceGuard.ObserveStreamingOutput(guardCtx, observedBytes); topUpErr != nil {
+							_ = resp.Body.Close()
+							logger.LegacyPrintf("service.gateway", "[Bedrock] Stream output hold top-up failed, aborting upstream: account=%d error=%v", account.ID, topUpErr)
+							return &streamingResult{
+								usage:            usage,
+								firstTokenMs:     firstTokenMs,
+								clientDisconnect: clientDisconnected,
+								incompleteStream: !sawTerminal,
+								progress:         progress,
+							}, wrapStreamOutputHoldTopUpFailure(topUpErr)
+						}
+					}
 				}
 			}
 
