@@ -49,9 +49,9 @@ func TestIsGrokModelSpecificFreeUsage(t *testing.T) {
 }
 
 func TestGrokStickyAffinitySeed_ScopesByModel(t *testing.T) {
-	a := grokStickyAffinitySeed("session-1", []byte(`{"model":"grok-4.5"}`))
-	b := grokStickyAffinitySeed("session-1", []byte(`{"model":"grok-4.3"}`))
-	c := grokStickyAffinitySeed("session-1", []byte(`{"model":"grok-4.5"}`))
+	a := grokStickyAffinitySeedCtx(nil, "session-1", []byte(`{"model":"grok-4.5"}`))
+	b := grokStickyAffinitySeedCtx(nil, "session-1", []byte(`{"model":"grok-4.3"}`))
+	c := grokStickyAffinitySeedCtx(nil, "session-1", []byte(`{"model":"grok-4.5"}`))
 	require.NotEqual(t, a, b)
 	require.Equal(t, a, c)
 	require.Contains(t, a, "grok-affinity:v1:")

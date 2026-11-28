@@ -67,7 +67,7 @@ func explicitOpenAISessionID(c *gin.Context, body []byte) string {
 
 	sessionID := explicitOpenAIHeaderSessionID(c)
 	if sessionID == "" && len(body) > 0 {
-		sessionID = strings.TrimSpace(openAIRequestPayloadView(body).Get("prompt_cache_key").String())
+		sessionID = strings.TrimSpace(openAIRequestPayloadField(c, body, "prompt_cache_key").String())
 	}
 	return sessionID
 }
@@ -84,6 +84,23 @@ func openAIRequestPayloadView(body []byte) gjson.Result {
 		}
 	}
 	return root
+}
+
+// openAIRequestPayloadField reads a top-level (or WS-envelope response.*) field
+// via the request-scoped BodyTop index so ordinary HTTP requests do not rescan
+// the entire body twice via gjson on every lookup.
+func openAIRequestPayloadField(c *gin.Context, body []byte, path string) gjson.Result {
+	if len(body) == 0 {
+		return gjson.Result{}
+	}
+	top := RequestBodyTop(c, body)
+	eventType := strings.ToLower(strings.TrimSpace(top.Get("type").String()))
+	if strings.HasPrefix(eventType, "response.") {
+		if response := top.Get("response"); response.Exists() && response.IsObject() {
+			return response.Get(path)
+		}
+	}
+	return top.Get(path)
 }
 
 // explicitOpenAIRequestSessionID extends the common OpenAI session signals
@@ -103,14 +120,23 @@ func explicitOpenAIRequestSessionID(c *gin.Context, body []byte) string {
 	}
 
 	sessionID := explicitOpenAIHeaderSessionID(c)
-	if sessionID == "" && isGrokRequestContext(c, body) {
+	isGrokChecked := false
+	isGrok := false
+	checkGrok := func() bool {
+		if !isGrokChecked {
+			isGrok = isGrokRequestContext(c, body)
+			isGrokChecked = true
+		}
+		return isGrok
+	}
+	if sessionID == "" && checkGrok() {
 		sessionID = strings.TrimSpace(c.GetHeader(grokConversationIDHeader))
 	}
 	if sessionID == "" && len(body) > 0 {
-		sessionID = strings.TrimSpace(openAIRequestPayloadView(body).Get("prompt_cache_key").String())
+		sessionID = strings.TrimSpace(openAIRequestPayloadField(c, body, "prompt_cache_key").String())
 	}
-	if sessionID == "" && isGrokRequestContext(c, body) && len(body) > 0 {
-		sessionID = grokPreviousResponseSessionSeed(body)
+	if sessionID == "" && len(body) > 0 && checkGrok() {
+		sessionID = grokPreviousResponseSessionSeedCtx(c, body)
 	}
 	return sessionID
 }
@@ -119,7 +145,11 @@ func explicitOpenAIRequestSessionID(c *gin.Context, body []byte) string {
 // previous_response_id. Only resp_* response ids are accepted; message ids and
 // unknown shapes must not pin sticky routing or prompt-cache identity.
 func grokPreviousResponseSessionSeed(body []byte) string {
-	id := strings.TrimSpace(gjson.GetBytes(body, "previous_response_id").String())
+	return grokPreviousResponseSessionSeedCtx(nil, body)
+}
+
+func grokPreviousResponseSessionSeedCtx(c *gin.Context, body []byte) string {
+	id := strings.TrimSpace(RequestBodyTop(c, body).Get("previous_response_id").String())
 	if id == "" {
 		return ""
 	}
@@ -175,7 +205,7 @@ func (s *OpenAIGatewayService) GenerateSessionHash(c *gin.Context, body []byte) 
 	}
 
 	if isGrokRequestContext(c, body) {
-		sessionID = grokStickyAffinitySeed(sessionID, body)
+		sessionID = grokStickyAffinitySeedCtx(c, sessionID, body)
 	}
 
 	currentHash, legacyHash := deriveOpenAISessionHashes(sessionID)
@@ -183,16 +213,16 @@ func (s *OpenAIGatewayService) GenerateSessionHash(c *gin.Context, body []byte) 
 	return currentHash
 }
 
-// grokStickyAffinitySeed scopes sticky routing by model without changing the
+// grokStickyAffinitySeedCtx scopes sticky routing by model without changing the
 // upstream prompt_cache_key written by applyGrokResponsesCacheIdentity.
-func grokStickyAffinitySeed(sessionID string, body []byte) string {
+func grokStickyAffinitySeedCtx(c *gin.Context, sessionID string, body []byte) string {
 	sessionID = strings.TrimSpace(sessionID)
 	if sessionID == "" {
 		return ""
 	}
 	model := ""
 	if len(body) > 0 {
-		model = strings.ToLower(strings.TrimSpace(gjson.GetBytes(body, "model").String()))
+		model = strings.ToLower(strings.TrimSpace(RequestBodyTop(c, body).Get("model").String()))
 	}
 	if model == "" {
 		return "grok-affinity:v1:" + sessionID

@@ -48,21 +48,35 @@ func (t *openAIRawStreamTerminalState) ObserveDataLine(payload string) {
 		t.sawDone = true
 		return
 	}
+	t.ObserveRoot(gjson.Parse(payload), payload)
+}
+
+// ObserveRoot reuses an already-parsed SSE data root to avoid re-scanning the
+// chunk payload on every token delta.
+func (t *openAIRawStreamTerminalState) ObserveRoot(root gjson.Result, payload string) {
+	if t == nil {
+		return
+	}
+	t.sawDataLine = true
 	if !t.sawUsage && jsonMayContainText(payload, "usage") {
-		if usage := gjson.Get(payload, "usage"); usage.Exists() && usage.IsObject() {
+		if usage := root.Get("usage"); usage.Exists() && usage.IsObject() {
 			t.sawUsage = true
 		}
 	}
 	if t.sawFinishReason {
 		return
 	}
-	for _, choice := range gjson.Get(payload, "choices").Array() {
+	if !strings.Contains(payload, `"finish_reason"`) && !strings.Contains(payload, `\u`) {
+		return
+	}
+	root.Get("choices").ForEach(func(_, choice gjson.Result) bool {
 		// finish_reason 为 null 时 String() 返回空串，不算终止。
 		if strings.TrimSpace(choice.Get("finish_reason").String()) != "" {
 			t.sawFinishReason = true
-			return
+			return false
 		}
-	}
+		return true
+	})
 }
 
 // Terminated 表示上游给出过终止信号。

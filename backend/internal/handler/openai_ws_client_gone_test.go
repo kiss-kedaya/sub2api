@@ -463,7 +463,8 @@ func (h *wsGoneHarness) requireEstimatedBill(t *testing.T, index int, requestBod
 	require.NoError(t, err)
 	require.Positive(t, total)
 	assert.Zero(t, log.CacheReadTokens, "an estimate never invents a cache discount")
-	assert.Equal(t, total, log.InputTokens, "the whole estimated input bills at the plain input price")
+	assert.Positive(t, log.InputTokens, "the cut-off turn must bill estimated input")
+	assert.InDelta(t, float64(total), float64(log.InputTokens), float64(total)*0.20, "fast incomplete input estimate must stay calibrated to exact tiktoken")
 
 	sent := int(h.upstream.sentDeltas.Load())
 	assert.Zero(t, log.OutputTokens%wsGoneDeltaTokens, "output is estimated from whole deltas")

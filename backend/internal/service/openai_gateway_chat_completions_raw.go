@@ -484,27 +484,36 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 				protocolRefusalErr = refusalErr
 				break
 			}
-			terminal.ObserveDataLine(trimmedPayload)
-			if trimmedPayload != "[DONE]" {
+			if trimmedPayload == "[DONE]" {
+				terminal.ObserveDataLine(trimmedPayload)
+			} else {
 				root := gjson.Parse(payload)
+				terminal.ObserveRoot(root, trimmedPayload)
 				rootType := root.Get("type").String()
 				if openAIExplicitUpstreamError(root, pendingSSEEventType) {
 					nonBillableUpstreamError = true
 					upstreamErrorPending = true
 				} else if rootType == "response.completed" || rootType == "response.done" {
 					nonBillableUpstreamError = false
-				} else {
-					for _, choice := range root.Get("choices").Array() {
+				} else if strings.Contains(payload, `"finish_reason"`) || strings.Contains(payload, `\u`) {
+					root.Get("choices").ForEach(func(_, choice gjson.Result) bool {
 						reason := choice.Get("finish_reason").String()
 						if reason != "" && reason != "error" {
 							nonBillableUpstreamError = false
-							break
+							return false
 						}
-					}
+						return true
+					})
 				}
-				observer.ObserveOpenAI([]byte(payload), strings.TrimSpace(rootType))
-				observedBytes = tally.AddPayload(payload)
-				usageOnlyChunk := isOpenAIChatUsageOnlyStreamChunk(payload)
+				if strings.Contains(payload, `"model"`) || strings.Contains(payload, `\u`) {
+					observer.ObserveOpenAIFrame(openAISSEDataFrame{
+						root:      root,
+						eventType: strings.TrimSpace(rootType),
+						validJSON: gjson.Valid(payload),
+					})
+				}
+				observedBytes = tally.AddRoot(root, payload)
+				usageOnlyChunk := isOpenAIChatUsageOnlyStreamRoot(root, payload)
 				if u := extractCCStreamUsageFromRoot(root, resp.Header); u != nil {
 					usage = *u
 					if (terminal.sawFinishReason || rootType == "response.completed" || rootType == "response.done") && u.OutputTokens > 0 {
@@ -518,12 +527,15 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 			}
 		}
 		line = applyOllamaCloudRawChatCompletionsSSELine(account, line)
-		line = stripEmptyChatToolCallIdentityFromSSELine(line)
+		if strings.Contains(line, "tool_calls") {
+			line = stripEmptyChatToolCallIdentityFromSSELine(line)
+		}
 		// Preserve the client rewrite order; billing enriches its own usage copy.
 		if streamCacheBucketsOK {
 			line = InjectChatCompletionCacheCreationIntoSSELine(line, streamCacheFiveMinute, streamCacheOneHour)
 		}
 
+		wasEventInProgress := eventInProgress
 		writeLine(line)
 		if line == "" {
 			pendingSSEEventType = ""
@@ -542,7 +554,11 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 			}
 			continue
 		}
-		if !clientDisconnected && clientOutputStarted {
+		// Standard SSE frames end with a blank separator line ("") right after
+		// data:, which flushes the complete event in one write. Only flush on a
+		// non-empty line for [DONE] or blank-line-less consecutive data: lines,
+		// avoiding double Flush() syscalls on every chunk.
+		if !clientDisconnected && clientOutputStarted && (terminal.sawDone || (wasEventInProgress && strings.HasPrefix(line, "data:"))) {
 			c.Writer.Flush()
 		}
 		if observedBytes > 0 {
@@ -757,10 +773,17 @@ func isOpenAIChatUsageOnlyStreamChunk(payload string) bool {
 	if !jsonMayContainText(payload, "usage") {
 		return false
 	}
-	if !gjson.Get(payload, "usage").Exists() {
+	return isOpenAIChatUsageOnlyStreamRoot(gjson.Parse(payload), payload)
+}
+
+func isOpenAIChatUsageOnlyStreamRoot(root gjson.Result, payload string) bool {
+	if !jsonMayContainText(payload, "usage") {
 		return false
 	}
-	choices := gjson.Get(payload, "choices")
+	if !root.Get("usage").Exists() {
+		return false
+	}
+	choices := root.Get("choices")
 	return choices.Exists() && choices.IsArray() && len(choices.Array()) == 0
 }
 
@@ -814,25 +837,61 @@ func (t *compatChatTally) AddPayload(payload string) int {
 	if !strings.Contains(payload, `"delta"`) {
 		return 0
 	}
+	return t.AddRoot(gjson.Parse(payload), payload)
+}
+
+// AddRoot reuses an already-parsed SSE data root to tally visible/reasoning/tool
+// output in a single pass per delta without re-parsing the payload.
+func (t *compatChatTally) AddRoot(root gjson.Result, payload string) int {
+	if !strings.Contains(payload, `"delta"`) {
+		return 0
+	}
 	added := 0
-	gjson.Get(payload, "choices").ForEach(func(_, choice gjson.Result) bool {
+	root.Get("choices").ForEach(func(_, choice gjson.Result) bool {
 		delta := choice.Get("delta")
-		added += writeIfJSONString(&t.text, delta.Get("content"))
-		added += writeIfJSONString(&t.refusal, delta.Get("refusal"))
-		if reasoning := delta.Get("reasoning_content"); reasoning.Type == gjson.String {
-			s := reasoning.String()
-			_, _ = t.reasoning.WriteString(s)
-			added += len(s)
-		} else {
-			added += writeIfJSONString(&t.reasoning, delta.Get("reasoning"))
+		if !delta.IsObject() {
+			return true
 		}
-		delta.Get("tool_calls").ForEach(func(_, call gjson.Result) bool {
-			added += writeIfJSONString(&t.tools, call.Get("function.name"))
-			added += writeIfJSONString(&t.tools, call.Get("function.arguments"))
+		var (
+			hasReasoningContent bool
+			reasoningFallback   gjson.Result
+		)
+		delta.ForEach(func(k, v gjson.Result) bool {
+			switch k.Str {
+			case "content":
+				added += writeIfJSONString(&t.text, v)
+			case "refusal":
+				added += writeIfJSONString(&t.refusal, v)
+			case "reasoning_content":
+				if v.Type == gjson.String {
+					s := v.String()
+					_, _ = t.reasoning.WriteString(s)
+					added += len(s)
+					hasReasoningContent = true
+				}
+			case "reasoning":
+				if !hasReasoningContent {
+					reasoningFallback = v
+				}
+			case "tool_calls":
+				v.ForEach(func(_, call gjson.Result) bool {
+					if fn := call.Get("function"); fn.IsObject() {
+						added += writeIfJSONString(&t.tools, fn.Get("name"))
+						added += writeIfJSONString(&t.tools, fn.Get("arguments"))
+					}
+					return true
+				})
+			case "function_call":
+				if v.IsObject() {
+					added += writeIfJSONString(&t.tools, v.Get("name"))
+					added += writeIfJSONString(&t.tools, v.Get("arguments"))
+				}
+			}
 			return true
 		})
-		added += writeIfJSONString(&t.tools, delta.Get("function_call.name"))
-		added += writeIfJSONString(&t.tools, delta.Get("function_call.arguments"))
+		if !hasReasoningContent {
+			added += writeIfJSONString(&t.reasoning, reasoningFallback)
+		}
 		return true
 	})
 	return added

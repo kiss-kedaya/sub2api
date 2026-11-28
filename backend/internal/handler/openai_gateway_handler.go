@@ -1351,7 +1351,7 @@ func isOpenAIRemoteCompactionV2Request(c *gin.Context, body []byte) bool {
 func (h *OpenAIGatewayHandler) normalizeOpenAIResponsesCompactRequest(c *gin.Context, reqLog *zap.Logger, body []byte) ([]byte, bool) {
 	isCompactRequest := isOpenAILegacyCompactPath(c)
 	if !isCompactRequest && isBareOpenAIResponsesPath(c) && service.HasCompactionTriggerInInputCtx(c, body) {
-		if normalized, changed, err := service.NormalizeCompactionTriggerInputOrder(body); err != nil {
+		if normalized, changed, err := service.NormalizeCompactionTriggerInputOrderCtx(c, body); err != nil {
 			reqLog.Warn("codex.remote_compact.trigger_order_normalization_failed", zap.Error(err))
 		} else if changed {
 			body = normalized
@@ -1361,7 +1361,7 @@ func (h *OpenAIGatewayHandler) normalizeOpenAIResponsesCompactRequest(c *gin.Con
 		}
 		c.Request.URL.Path = strings.TrimRight(c.Request.URL.Path, "/") + "/compact"
 		isCompactRequest = true
-		clientStream := gjson.GetBytes(body, "stream").Bool()
+		clientStream := service.RequestBodyTop(c, body).Get("stream").Bool()
 		if clientStream {
 			service.MarkOpenAICompactClientStream(c)
 		}
@@ -1370,7 +1370,7 @@ func (h *OpenAIGatewayHandler) normalizeOpenAIResponsesCompactRequest(c *gin.Con
 	if !isCompactRequest {
 		return body, true
 	}
-	if compactSeed := strings.TrimSpace(gjson.GetBytes(body, "prompt_cache_key").String()); compactSeed != "" {
+	if compactSeed := strings.TrimSpace(service.RequestBodyTop(c, body).Get("prompt_cache_key").String()); compactSeed != "" {
 		c.Set(service.OpenAICompactSessionSeedKeyForTest(), compactSeed)
 	}
 	normalizedCompactBody, normalizedCompact, compactErr := service.NormalizeOpenAICompactRequestBodyForTest(body)

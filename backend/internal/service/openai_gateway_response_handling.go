@@ -1678,26 +1678,49 @@ func logOpenAISuccessMissingUsage(ctx context.Context, c *gin.Context, account *
 }
 
 func extractOpenAIUsageFromJSONBytes(body []byte) (OpenAIUsage, bool) {
-	if len(body) == 0 || !gjson.ValidBytes(body) {
+	if len(body) == 0 {
 		return OpenAIUsage{}, false
 	}
+	if !bytes.Contains(body, []byte(`"usage"`)) && !bytes.Contains(body, []byte(`\u`)) {
+		return OpenAIUsage{}, false
+	}
+	if !validJSON(body) && !gjson.ValidBytes(body) {
+		return OpenAIUsage{}, false
+	}
+	root := parseRawJSONView(body)
+	mayHaveImageUsage := bytes.Contains(body, []byte("tool_usage")) || bytes.Contains(body, []byte(`\u`))
 	// 部分 OpenAI 兼容上游（例如 Cline API）会将标准响应包在 data 字段中：
 	// {"data":{"choices": [...], "usage": {...}}, "success":true}。
 	// 按优先级先保留原有路径，再尝试兼容层 data 包装，
 	// 避免同步请求能正常返回但用量被静默记录为 0。
-	candidates := []struct {
-		usagePath      string
-		imageUsagePath string
-	}{
-		{usagePath: "usage", imageUsagePath: "tool_usage.image_gen"},
-		{usagePath: "response.usage", imageUsagePath: "response.tool_usage.image_gen"},
-		{usagePath: "data.usage", imageUsagePath: "data.tool_usage.image_gen"},
-		{usagePath: "data.response.usage", imageUsagePath: "data.response.tool_usage.image_gen"},
+	if usage, ok := openAIUsageFromGJSON(root.Get("usage")); ok {
+		if mayHaveImageUsage {
+			mergeHostedImageGenToolUsage(root.Get("tool_usage.image_gen"), &usage)
+		}
+		return usage, true
 	}
-	for _, candidate := range candidates {
-		if usage, ok := openAIUsageFromGJSON(gjson.GetBytes(body, candidate.usagePath)); ok {
-			mergeHostedImageGenToolUsage(gjson.GetBytes(body, candidate.imageUsagePath), &usage)
+	if resp := root.Get("response"); resp.IsObject() {
+		if usage, ok := openAIUsageFromGJSON(resp.Get("usage")); ok {
+			if mayHaveImageUsage {
+				mergeHostedImageGenToolUsage(resp.Get("tool_usage.image_gen"), &usage)
+			}
 			return usage, true
+		}
+	}
+	if data := root.Get("data"); data.IsObject() {
+		if usage, ok := openAIUsageFromGJSON(data.Get("usage")); ok {
+			if mayHaveImageUsage {
+				mergeHostedImageGenToolUsage(data.Get("tool_usage.image_gen"), &usage)
+			}
+			return usage, true
+		}
+		if resp := data.Get("response"); resp.IsObject() {
+			if usage, ok := openAIUsageFromGJSON(resp.Get("usage")); ok {
+				if mayHaveImageUsage {
+					mergeHostedImageGenToolUsage(resp.Get("tool_usage.image_gen"), &usage)
+				}
+				return usage, true
+			}
 		}
 	}
 	return OpenAIUsage{}, false

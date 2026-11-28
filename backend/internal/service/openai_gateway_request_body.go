@@ -1529,8 +1529,23 @@ type openAIRequestPatch struct {
 }
 
 func newOpenAIRequestView(body []byte) openAIRequestView {
+	return newOpenAIRequestViewCtx(nil, body)
+}
+
+func newOpenAIRequestViewCtx(c *gin.Context, body []byte) openAIRequestView {
 	if len(body) == 0 {
 		return openAIRequestView{}
+	}
+	if top := RequestBodyTop(c, body); top.idx != nil {
+		return openAIRequestView{
+			body:               body,
+			Model:              strings.Clone(strings.TrimSpace(top.Get("model").String())),
+			Stream:             top.Get("stream").Bool(),
+			PromptCacheKey:     strings.Clone(strings.TrimSpace(top.Get("prompt_cache_key").String())),
+			PreviousResponseID: strings.Clone(strings.TrimSpace(top.Get("previous_response_id").String())),
+			ServiceTier:        strings.Clone(strings.TrimSpace(top.Get("service_tier").String())),
+			ReasoningEffort:    strings.Clone(strings.TrimSpace(top.Get("reasoning.effort").String())),
+		}
 	}
 
 	const (

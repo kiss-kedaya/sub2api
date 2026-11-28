@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
-	"github.com/tidwall/gjson"
 )
 
 const (
@@ -51,10 +50,14 @@ func resolveOpenAIWSClientThreadID(c *gin.Context, body []byte) string {
 	if len(body) == 0 {
 		return ""
 	}
-	if id := strings.TrimSpace(gjson.GetBytes(body, "client_metadata.thread_id").String()); id != "" {
+	meta := RequestBodyTop(c, body).Get("client_metadata")
+	if !meta.Exists() || !meta.IsObject() {
+		return ""
+	}
+	if id := strings.TrimSpace(meta.Get("thread_id").String()); id != "" {
 		return id
 	}
-	return codexTurnMetadataThreadID(gjson.GetBytes(body, "client_metadata."+openAIWSTurnMetadataHeader).String())
+	return codexTurnMetadataThreadID(meta.Get(openAIWSTurnMetadataHeader).String())
 }
 
 // codexTurnMetadata 是 x-codex-turn-metadata JSON 里执行作用域用到的字段。
@@ -93,7 +96,11 @@ func openAIWSExecutionTurnMetadata(c *gin.Context, body []byte) codexTurnMetadat
 	if len(body) == 0 {
 		return codexTurnMetadata{}
 	}
-	metadata, _ := parseCodexTurnMetadata(gjson.GetBytes(body, "client_metadata."+openAIWSTurnMetadataHeader).String())
+	meta := RequestBodyTop(c, body).Get("client_metadata")
+	if !meta.Exists() || !meta.IsObject() {
+		return codexTurnMetadata{}
+	}
+	metadata, _ := parseCodexTurnMetadata(meta.Get(openAIWSTurnMetadataHeader).String())
 	return metadata
 }
 
@@ -106,7 +113,11 @@ func openAIWSExecutionSubagent(c *gin.Context, body []byte) string {
 	if len(body) == 0 {
 		return ""
 	}
-	return strings.ToLower(strings.TrimSpace(gjson.GetBytes(body, "client_metadata."+openAISubagentHeader).String()))
+	meta := RequestBodyTop(c, body).Get("client_metadata")
+	if !meta.Exists() || !meta.IsObject() {
+		return ""
+	}
+	return strings.ToLower(strings.TrimSpace(meta.Get(openAISubagentHeader).String()))
 }
 
 // resolveOpenAIWSExecutionLane 派生执行作用域里的“道”，同道才互相抢占、共享会话级状态。

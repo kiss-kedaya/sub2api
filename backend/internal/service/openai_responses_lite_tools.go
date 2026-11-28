@@ -5,6 +5,7 @@ import (
 	"reflect"
 	"strings"
 
+	"github.com/gin-gonic/gin"
 	"github.com/tidwall/gjson"
 )
 
@@ -258,11 +259,11 @@ func normalizeOpenAIResponsesLiteToolsPayload(body []byte) ([]byte, bool, error)
 	return rebuilt, true, nil
 }
 
-// liteParallelToolCallsPinned reports whether body is a valid JSON object whose
+// liteParallelToolCallsPinnedCtx reports whether body is a valid JSON object whose
 // effective (last) parallel_tool_calls is already false, i.e. the payload needs
 // no rewrite. Validity is part of the answer because a malformed body must keep
 // failing in the decoder below instead of being forwarded.
-func liteParallelToolCallsPinned(body []byte) bool {
+func liteParallelToolCallsPinnedCtx(c *gin.Context, body []byte) bool {
 	var last string
 	found := false
 	if jsonForEachMember(jsonView(body), func(key, val string) bool {
@@ -271,7 +272,7 @@ func liteParallelToolCallsPinned(body []byte) bool {
 		}
 		return true
 	}) {
-		return found && last == "false" && validJSON(body)
+		return found && last == "false" && RequestBodyTop(c, body).Valid()
 	}
 	// A key spelled with escapes, or text the scanner cannot follow: let gjson
 	// decide, as before.
@@ -287,13 +288,17 @@ func liteParallelToolCallsPinned(body []byte) bool {
 		}
 		return true
 	})
-	return parallel.Type == gjson.False && validJSON(body)
+	return parallel.Type == gjson.False && RequestBodyTop(c, body).Valid()
 }
 
 // normalizeOpenAIResponsesLiteParallelToolCallsPayload pins the Lite-only
 // parallel tool setting while preserving large JSON numbers via UseNumber.
 func normalizeOpenAIResponsesLiteParallelToolCallsPayload(body []byte) ([]byte, bool, error) {
-	if liteParallelToolCallsPinned(body) {
+	return normalizeOpenAIResponsesLiteParallelToolCallsPayloadCtx(nil, body)
+}
+
+func normalizeOpenAIResponsesLiteParallelToolCallsPayloadCtx(c *gin.Context, body []byte) ([]byte, bool, error) {
+	if liteParallelToolCallsPinnedCtx(c, body) {
 		return body, false, nil
 	}
 	var requestBody map[string]any
@@ -319,11 +324,15 @@ func normalizeOpenAIResponsesLiteParallelToolCallsPayload(body []byte) ([]byte, 
 // entry point used by HTTP, WS and bridge paths. OAuth accounts additionally
 // need namespace/tool lowering; both account types pin parallel_tool_calls=false.
 func normalizeOpenAIResponsesLitePayloadForAccount(body []byte, account *Account) ([]byte, bool, error) {
+	return normalizeOpenAIResponsesLitePayloadForAccountCtx(nil, body, account)
+}
+
+func normalizeOpenAIResponsesLitePayloadForAccountCtx(c *gin.Context, body []byte, account *Account) ([]byte, bool, error) {
 	if account == nil || !account.IsOpenAI() {
 		return body, false, nil
 	}
 	if account.IsOpenAIOAuthLike() {
 		return normalizeOpenAIResponsesLiteToolsPayload(body)
 	}
-	return normalizeOpenAIResponsesLiteParallelToolCallsPayload(body)
+	return normalizeOpenAIResponsesLiteParallelToolCallsPayloadCtx(c, body)
 }
