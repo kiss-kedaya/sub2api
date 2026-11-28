@@ -292,10 +292,9 @@ function readTokenResponse(params: URLSearchParams): OAuthTokenResponse | null {
   return response
 }
 
-function sanitizeRedirectPath(path: string | null | undefined): string {
+function sanitizeRedirectPath(path: unknown): string {
   return sanitizeInternalRedirectPath(path, '/dashboard')
 }
-
 function readPendingEmailOAuthProvider(): 'github' | 'google' | null {
   if (typeof window === 'undefined') return null
   const provider = window.sessionStorage.getItem(EMAIL_OAUTH_PENDING_PROVIDER_KEY)

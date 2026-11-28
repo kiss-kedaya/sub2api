@@ -550,6 +550,17 @@ describe('local custom usage fixtures', () => {
     expect(api.handle('GET', '/api/v1/user/passkeys', query())).toEqual([])
   })
 
+  it('serves /v1beta/models for gemini-cli connectivity check using x-goog-api-key', () => {
+    const api = createMockApi(date)
+    const created = api.handle('POST', '/api/v1/keys', query(), { name: 'Gemini Key', group_id: 3 }) as ApiKey & { key: string }
+    const models = api.handle('GET', '/v1beta/models', query(), {}, { 'x-goog-api-key': created.key }) as {
+      models: Array<{ name: string }>
+      data: Array<{ id: string }>
+    }
+    expect(models.data.map(m => m.id)).toEqual(['gemini-2.5-pro', 'gemini-2.5-flash'])
+    expect(models.models.map(m => m.name)).toEqual(['models/gemini-2.5-pro', 'models/gemini-2.5-flash'])
+  })
+
   it('serves payment dashboard, plugins, traffic, security, prompt-audit, ip-risk, ip-audit and pending oauth exchange fixtures', () => {
     const api = createMockApi(date)
 

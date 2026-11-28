@@ -546,6 +546,7 @@ export default {
       modelLoadedHint: '已加载当前密钥的 {count} 个可用模型（来自 /v1/models）。',
       modelLoading: '正在获取当前密钥的可用模型…',
       modelEmpty: '当前密钥暂无可用模型，请检查绑定分组或渠道状态。',
+      modelRequiredHint: '该应用需要指定默认模型 ID，请先输入或选择模型后再导入。',
       modelLoadFailed: '拉取当前密钥模型列表失败，可重试或手动输入模型 ID。',
       modelRefresh: '刷新模型',
       modelRetry: '重试',
@@ -564,7 +565,13 @@ export default {
       agy: 'Antigravity',
       omp: 'Oh My Pi',
       deeplinkUnsupported:
-        'CC Switch 版本过旧，会拒绝这个平台的深链导入。请先升级 CC Switch 再试。'
+        'CC Switch 版本过旧，会拒绝这个平台的深链导入。请先升级 CC Switch 再试。',
+      fallbackHint:
+        '已发送唤起请求：如浏览器顶部弹出确认框请点「打开 CC Switch」；如未弹出可点下方重新唤起、复制导入链接手动打开，或下载 CC Switch：',
+      retryOpen: '重新唤起 CC Switch',
+      copyDeeplink: '复制导入链接',
+      deeplinkCopied: '已复制导入链接',
+      downloadApp: '下载 CC Switch'
     },
     // 配额和有效期
     quotaLimit: '额度限制',

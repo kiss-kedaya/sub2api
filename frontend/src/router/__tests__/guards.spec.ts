@@ -1,7 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
+import { createMemoryHistory, createRouter } from 'vue-router'
 import { resolveCompletedSetupRedirectPath } from '@/router/setupRedirect'
 import { isRestrictedInSimpleMode } from '@/router/simpleMode'
+import { installNavigationGuards } from '@/router/guards'
+import { useAuthStore } from '@/stores/auth'
 
 // Mock 导航加载状态
 vi.mock('@/composables/useNavigationLoading', () => {
@@ -520,6 +523,49 @@ describe('路由守卫逻辑', () => {
       }
       const redirect = simulateGuard('/email-verify', { requiresAuth: false }, authState)
       expect(redirect).toBe('/login')
+    })
+  })
+
+  describe('installNavigationGuards redirect-back behavior', () => {
+    function buildGuardedRouter() {
+      const router = createRouter({
+        history: createMemoryHistory(),
+        routes: [
+          { path: '/login', component: { template: '<div />' }, meta: { requiresAuth: false } },
+          { path: '/register', component: { template: '<div />' }, meta: { requiresAuth: false } },
+          { path: '/docs', component: { template: '<div />' }, meta: { requiresAuth: false } },
+          { path: '/dashboard', component: { template: '<div />' }, meta: { requiresAuth: true } },
+          { path: '/admin/dashboard', component: { template: '<div />' }, meta: { requiresAuth: true, requiresAdmin: true } },
+        ],
+      })
+      installNavigationGuards(router, false)
+      return router
+    }
+
+    it('honors sanitized ?redirect= when an already-authenticated user hits /login or /register', async () => {
+      const authStore = useAuthStore()
+      authStore.token = 'demo-token'
+      authStore.user = { id: 1, role: 'user', email: 'u@example.test' } as never
+
+      const router = buildGuardedRouter()
+      await router.push('/login?redirect=%2Fdocs%3Fpage%3Dagent-setup%26agent%3Dopencode')
+      expect(router.currentRoute.value.fullPath).toBe('/docs?page=agent-setup&agent=opencode')
+
+      await router.push('/register?redirect=%2Fdocs%3Fpage%3Dagent-setup')
+      expect(router.currentRoute.value.fullPath).toBe('/docs?page=agent-setup')
+    })
+
+    it('falls back to dashboard for unsafe or self-referential redirects when authenticated', async () => {
+      const authStore = useAuthStore()
+      authStore.token = 'demo-token'
+      authStore.user = { id: 1, role: 'user', email: 'u@example.test' } as never
+
+      const router = buildGuardedRouter()
+      await router.push('/login?redirect=%2F%2Fevil.example%2Fphish')
+      expect(router.currentRoute.value.fullPath).toBe('/dashboard')
+
+      await router.push('/login?redirect=%2Flogin')
+      expect(router.currentRoute.value.fullPath).toBe('/dashboard')
     })
   })
 })

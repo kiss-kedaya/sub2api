@@ -589,7 +589,7 @@ describe('user KeysView column settings', () => {
     // 创建/轮换响应是唯一带明文的回执，CCS 导入只能从这次回执进入。
     createKey.mockResolvedValue({ ...createApiKey(), key: 'sk-test-key' })
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ data: [] }) }))
-    const open = vi.spyOn(window, 'open').mockReturnValue(null)
+    const openSpy = vi.spyOn(window, 'open').mockImplementation(() => null)
     const wrapper = await mountView()
     try {
       await wrapper.get('[data-tour="keys-create-btn"]').trigger('click')
@@ -602,9 +602,9 @@ describe('user KeysView column settings', () => {
       await flushPromises()
       wrapper.getComponent('#ccs-import-platform').vm.$emit('update:modelValue', app)
       await nextTick()
-      const launchAnchor = wrapper.get('[data-test="ccs-import-launch"]')
-      expect(launchAnchor.element.tagName).toBe('A')
-      const href = launchAnchor.attributes('href') ?? ''
+      const confirmLink = wrapper.get('[data-test="ccs-import-confirm"]')
+      expect(confirmLink.element.tagName).toBe('A')
+      const href = confirmLink.attributes('href') ?? ''
       expect(href.startsWith('ccswitch://')).toBe(true)
       const params = new URL(href).searchParams
       expect(params.get('endpoint')).toBe(endpoint)
@@ -613,10 +613,10 @@ describe('user KeysView column settings', () => {
       const request = new Function(`return (${script})`)().request
       expect(request.url).toBe('https://api.example.com/prefix/v1/usage')
       expect(request.method).toBe('GET')
-      expect(open).not.toHaveBeenCalled()
+      expect(openSpy).not.toHaveBeenCalled()
     } finally {
+      openSpy.mockRestore()
       wrapper.unmount()
-      open.mockRestore()
       vi.unstubAllGlobals()
     }
   })
@@ -660,8 +660,9 @@ describe('user KeysView column settings', () => {
       await nextTick()
       expect(modelSelect.props('modelValue')).toBe('gpt-5.4-real')
 
-      const href = wrapper.get('[data-test="ccs-import-launch"]').attributes('href') ?? ''
-      const params = new URL(href).searchParams
+      const confirmLink = wrapper.get('[data-test="ccs-import-confirm"]')
+      expect(confirmLink.element.tagName).toBe('A')
+      const params = new URL(confirmLink.attributes('href')!).searchParams
       expect(params.get('app')).toBe('codex')
       expect(params.get('model')).toBe('gpt-5.4-real')
     } finally {
@@ -689,35 +690,37 @@ describe('user KeysView column settings', () => {
       await getButtonByText(wrapper, 'keys.secretDialog.importCcs').trigger('click')
       await flushPromises()
 
-      const launchEl = wrapper.get('[data-test="ccs-import-launch"]').element
+      const launchEl = wrapper.get('[data-test="ccs-import-confirm"]').element
       const clickEvent = new MouseEvent('click', { bubbles: true, cancelable: true })
       launchEl.dispatchEvent(clickEvent)
       expect(clickEvent.defaultPrevented).toBe(false)
 
-      // Blur suppresses fallback.
+      // Blur suppresses fallback and closes the modal.
       window.dispatchEvent(new Event('blur'))
       await vi.advanceTimersByTimeAsync(1300)
       await nextTick()
-      expect(wrapper.find('[data-test="ccs-import-fallback"]').exists()).toBe(false)
+      expect(wrapper.find('[data-test="ccs-import-fallback-notice"]').exists()).toBe(false)
       expect(showError).not.toHaveBeenCalled()
 
-      // Clicking again without blur/visibilitychange reveals the calm inline fallback after 1300ms.
-      await wrapper.get('[data-test="ccs-import-launch"]').trigger('click')
+      // Re-open modal and click without blur/visibilitychange to verify calm fallback after 1300ms.
+      await getButtonByText(wrapper, 'keys.secretDialog.importCcs').trigger('click')
+      await flushPromises()
+      await wrapper.get('[data-test="ccs-import-confirm"]').trigger('click')
       await vi.advanceTimersByTimeAsync(1299)
       await nextTick()
-      expect(wrapper.find('[data-test="ccs-import-fallback"]').exists()).toBe(false)
+      expect(wrapper.find('[data-test="ccs-import-fallback-notice"]').exists()).toBe(false)
 
       await vi.advanceTimersByTimeAsync(1)
       await nextTick()
-      const fallback = wrapper.get('[data-test="ccs-import-fallback"]')
-      expect(fallback.text()).toContain('keys.ccSwitchNotInstalled')
-      expect(fallback.get('[data-test="ccs-import-retry"]').attributes('href')).toMatch(/^ccswitch:\/\//)
-      expect(fallback.get('[data-test="ccs-import-download"]').attributes('href')).toContain('ccswitch.io')
+      const fallback = wrapper.get('[data-test="ccs-import-fallback-notice"]')
+      expect(fallback.text()).toContain('keys.ccsImport.fallbackHint')
+      expect(fallback.get('[data-test="ccs-import-retry-link"]').attributes('href')).toMatch(/^ccswitch:\/\//)
+      expect(fallback.get('[data-test="ccs-import-download-link"]').attributes('href')).toContain('ccswitch.io')
       expect(showError).not.toHaveBeenCalled()
 
       await fallback.get('[data-test="ccs-import-copy-deeplink"]').trigger('click')
       await flushPromises()
-      expect(copyToClipboard).toHaveBeenCalledWith(expect.stringMatching(/^ccswitch:\/\//), 'common.copied')
+      expect(copyToClipboard).toHaveBeenCalledWith(expect.stringMatching(/^ccswitch:\/\//), 'keys.ccsImport.deeplinkCopied')
     } finally {
       wrapper.unmount()
       vi.useRealTimers()

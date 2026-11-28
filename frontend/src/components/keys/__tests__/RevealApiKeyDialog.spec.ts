@@ -436,6 +436,7 @@ describe('RevealApiKeyDialog three-way identity verification', () => {
     await wrapper.get('[data-test="api-key-reveal-import-ccs"]').trigger('click')
     await wrapper.get('[data-test="api-key-reveal-use"]').trigger('click')
 
+    expect(wrapper.emitted('revealed')).toEqual([[KEY]])
     expect(wrapper.emitted('import-ccs')).toEqual([[KEY]])
     expect(wrapper.emitted('use')).toEqual([[KEY]])
 

@@ -542,6 +542,7 @@ export default {
       modelLoadedHint: 'Loaded {count} available models from this key’s /v1/models.',
       modelLoading: 'Loading available models for this key…',
       modelEmpty: 'No available models found for this key. Check its bound groups or channel status.',
+      modelRequiredHint: 'This app requires a default model ID. Enter or select a model before importing.',
       modelLoadFailed: 'Failed to load models for this key. Retry or enter a model ID manually.',
       modelRefresh: 'Refresh',
       modelRetry: 'Retry',
@@ -561,6 +562,12 @@ export default {
       omp: 'Oh My Pi',
       deeplinkUnsupported:
         'This CC Switch version rejects provider deeplinks for this app. Upgrade CC Switch and try again.',
+      fallbackHint:
+        'Launch request sent: if your browser shows a confirmation prompt at the top, click "Open CC Switch"; otherwise retry below, copy the import deeplink, or download CC Switch:',
+      retryOpen: 'Retry opening CC Switch',
+      copyDeeplink: 'Copy deeplink',
+      deeplinkCopied: 'Deeplink copied',
+      downloadApp: 'Download CC Switch',
     },
     // Quota and expiration
     quotaLimit: 'Quota Limit',

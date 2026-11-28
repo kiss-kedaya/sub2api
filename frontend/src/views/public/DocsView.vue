@@ -138,7 +138,7 @@
         :class="isAgentSetupPage ? 'xl:grid-cols-[minmax(0,1fr)_216px]' : 'xl:grid-cols-[minmax(0,1040px)_216px]'"
       >
         <article
-          :key="`${page.id}-${selectedAgentId}`"
+          :key="page.id"
           class="docs-article-enter w-full min-w-0"
           :class="isAgentSetupPage ? 'max-w-[1360px]' : 'max-w-[1040px]'"
           data-testid="docs-article"

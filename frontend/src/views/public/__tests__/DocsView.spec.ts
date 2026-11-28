@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { nextTick } from 'vue'
+import { createPinia, setActivePinia } from 'pinia'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import DocsView from '../DocsView.vue'
 import english from '@/i18n/locales/en/docs'
@@ -84,6 +85,8 @@ function mediaDocs(): DocsPage[] {
 }
 
 async function openDocs(query = 'quick-start', options: { attachTo?: boolean } = {}) {
+  const pinia = createPinia()
+  setActivePinia(pinia)
   const router = createRouter({
     history: createMemoryHistory(),
     routes: [
@@ -95,7 +98,7 @@ async function openDocs(query = 'quick-start', options: { attachTo?: boolean } =
   await router.isReady()
   const wrapper = mount(DocsView, {
     attachTo: options.attachTo ? document.body : undefined,
-    global: { plugins: [router], stubs: { LocaleSwitcher: true } },
+    global: { plugins: [pinia, router], stubs: { LocaleSwitcher: true } },
   })
   await flushPromises()
   return { wrapper, router }
@@ -369,20 +372,29 @@ describe('public API documentation page', () => {
     wrapper.unmount()
   })
 
-  it('renders the interactive Agent Setup Guide in the client setup category and navigates into per-agent guides', async () => {
+  it('renders the interactive Agent Setup Guide in the client setup category and navigates into per-agent guides without losing the active key', async () => {
     const { wrapper, router } = await openDocs('agent-setup')
     expect(wrapper.find('[data-testid="agent-setup-guide"]').exists()).toBe(true)
     expect(wrapper.find('[data-testid="site-ccswitch-workflow"]').exists()).toBe(true)
     expect(wrapper.find('.docs-category[aria-current="page"]').text()).toBe('Client setup')
 
+    const demoKey = 'demo-persist-key-9988'
+    await wrapper.get('[data-testid="docs-apikey-paste-input"]').setValue(demoKey)
+    await wrapper.get('[data-testid="docs-apikey-apply-btn"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[data-testid="docs-apikey-display"]').text()).toBe(demoKey)
+
     await router.push('/docs?page=agent-setup&agent=claude-code')
     await flushPromises()
     expect(wrapper.get('[data-testid="agent-detail-header"]').text()).toContain('Claude Code + Example gateway')
+    expect(wrapper.get('[data-testid="docs-apikey-display"]').text()).toBe(demoKey)
+    expect(wrapper.text()).not.toContain('YOUR_API_KEY')
 
     await wrapper.get('[data-testid="agent-back-all"]').trigger('click')
     await flushPromises()
     expect(router.currentRoute.value.query.agent).toBeUndefined()
     expect(wrapper.find('[data-testid="site-ccswitch-workflow"]').exists()).toBe(true)
+    expect(wrapper.get('[data-testid="docs-apikey-display"]').text()).toBe(demoKey)
     wrapper.unmount()
   })
 

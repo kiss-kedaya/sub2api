@@ -2,9 +2,10 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import LoginView from '@/views/auth/LoginView.vue'
 
-const { getPublicSettingsMock, pushMock } = vi.hoisted(() => ({
+const { getPublicSettingsMock, pushMock, currentRouteQuery } = vi.hoisted(() => ({
   getPublicSettingsMock: vi.fn(),
-  pushMock: vi.fn()
+  pushMock: vi.fn(),
+  currentRouteQuery: { value: {} as Record<string, string> }
 }))
 
 const publicSettings = {
@@ -33,7 +34,7 @@ const publicSettings = {
 vi.mock('vue-router', () => ({
   useRouter: () => ({
     push: pushMock,
-    currentRoute: { value: { query: {} } }
+    currentRoute: { value: { query: currentRouteQuery.value } }
   })
 }))
 
@@ -80,7 +81,7 @@ function mountLogin() {
         LinuxDoOAuthSection: true,
         LoginAgreementPrompt: true,
         OidcOAuthSection: true,
-        RouterLink: { template: '<a><slot /></a>' },
+        RouterLink: { props: ['to'], template: '<a :data-to="JSON.stringify(to)"><slot /></a>' },
         TotpFactorPane: true,
         TurnstileWidget: true,
         WechatOAuthSection: true,
@@ -94,7 +95,24 @@ describe('LoginView registration entry', () => {
   beforeEach(() => {
     getPublicSettingsMock.mockReset()
     pushMock.mockReset()
+    currentRouteQuery.value = {}
     getPublicSettingsMock.mockResolvedValue(publicSettings)
+  })
+
+  it('preserves safe redirect query when linking to /register and drops unsafe redirects', async () => {
+    currentRouteQuery.value = { redirect: '/docs?page=agent-setup&agent=opencode' }
+    const wrapper = mountLogin()
+    await flushPromises()
+    expect(wrapper.get('a[data-to]').attributes('data-to')).toBe(
+      JSON.stringify({ path: '/register', query: { redirect: '/docs?page=agent-setup&agent=opencode' } })
+    )
+    wrapper.unmount()
+
+    currentRouteQuery.value = { redirect: '//evil.example/phish' }
+    const unsafeWrapper = mountLogin()
+    await flushPromises()
+    expect(unsafeWrapper.get('a[data-to]').attributes('data-to')).toBe(JSON.stringify('/register'))
+    unsafeWrapper.unmount()
   })
 
   it('shows the registration entry when registration is enabled', async () => {

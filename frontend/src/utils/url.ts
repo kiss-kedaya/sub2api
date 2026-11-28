@@ -96,3 +96,13 @@ export function sanitizeUrl(value: string, options: SanitizeOptions = {}): strin
     return ''
   }
 }
+
+/**
+ * 校验并规范化站内重定向路径，统一委托给 sanitizeInternalRedirectPath。
+ */
+export function sanitizeRedirectPath(
+  path: unknown,
+  fallback = '/dashboard',
+): string {
+  return sanitizeInternalRedirectPath(path, fallback)
+}

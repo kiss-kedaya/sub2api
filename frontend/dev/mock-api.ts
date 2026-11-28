@@ -844,7 +844,7 @@ export function createMockApi(now = new Date()) {
       path: string,
       query: URLSearchParams,
       body: Record<string, unknown> = {},
-      headers: { authorization?: string } = {},
+      headers: { authorization?: string; 'x-goog-api-key'?: string } = {},
     ): unknown {
       if (path === '/api/v1/admin/request-captures/config' || path.startsWith('/api/v1/admin/request-captures/small') || path === '/api/v1/__preview/small-retention') {
         return copy(smallRetention(method, path, query, body))
@@ -2098,6 +2098,14 @@ export function createMockApi(now = new Date()) {
         if (path === '/v1/models') {
           const ids = modelsForBearer(headers.authorization)
           return { object: 'list', data: ids.map(id => ({ id, object: 'model', owned_by: 'local-demo' })) }
+        }
+        if (path === '/v1beta/models') {
+          const keyHeader = headers['x-goog-api-key']?.trim()
+          const ids = modelsForBearer(keyHeader ? `Bearer ${keyHeader}` : headers.authorization)
+          return {
+            models: ids.map(id => ({ name: `models/${id}`, displayName: id })),
+            data: ids.map(id => ({ id, object: 'model', owned_by: 'local-demo' })),
+          }
         }
         const getSealPath = path.match(/^\/api\/v1\/user\/api-keys\/(\d+)\/secret-seal$/)
         if (getSealPath) {

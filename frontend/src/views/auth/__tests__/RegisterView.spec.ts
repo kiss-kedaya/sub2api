@@ -10,7 +10,8 @@ const {
   sendVerifyCodeMock,
   pushMock,
   verifyActionMock,
-  appStoreMock
+  appStoreMock,
+  routeQueryMock
 } = vi.hoisted(() => ({
   getPublicSettingsMock: vi.fn(),
   registerMock: vi.fn(),
@@ -19,6 +20,7 @@ const {
   sendVerifyCodeMock: vi.fn(),
   pushMock: vi.fn(),
   verifyActionMock: vi.fn(),
+  routeQueryMock: { value: {} as Record<string, string> },
   appStoreMock: {
     cachedPublicSettings: null as { promo_code_enabled?: boolean } | null,
     showError: (...args: unknown[]) => showErrorMock(...args),
@@ -46,7 +48,7 @@ const publicSettings = {
 
 vi.mock('vue-router', () => ({
   useRouter: () => ({ push: pushMock }),
-  useRoute: () => ({ query: {} })
+  useRoute: () => ({ query: routeQueryMock.value })
 }))
 
 vi.mock('vue-i18n', () => ({
@@ -128,6 +130,7 @@ describe('RegisterView invitation layout', () => {
     showErrorMock.mockReset()
     pushMock.mockReset()
     verifyActionMock.mockReset()
+    routeQueryMock.value = {}
     appStoreMock.cachedPublicSettings = null
     sessionStorage.removeItem('register_data')
     verifyActionMock.mockResolvedValue({ token: 'ticket', randstr: 'randstr' })
@@ -794,5 +797,30 @@ describe('RegisterView autofill contract', () => {
     const password = wrapper.get('#password')
     expect(password.attributes('name')).toBe('password')
     expect(password.attributes('autocomplete')).toBe('new-password')
+  })
+
+  it('redirects back to sanitized route.query.redirect after registration and rejects external redirects', async () => {
+    getPublicSettingsMock.mockResolvedValue({ ...publicSettings, turnstile_enabled: false })
+    routeQueryMock.value = { redirect: '/docs?page=agent-setup&agent=opencode' }
+
+    const wrapper = mountRegister()
+    await flushPromises()
+    await wrapper.get('#email').setValue('newuser@example.com')
+    await wrapper.get('#password').setValue('valid-test-password')
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+    expect(pushMock).toHaveBeenCalledWith('/docs?page=agent-setup&agent=opencode')
+    wrapper.unmount()
+
+    pushMock.mockReset()
+    routeQueryMock.value = { redirect: 'https://evil.example/steal' }
+    const unsafeWrapper = mountRegister()
+    await flushPromises()
+    await unsafeWrapper.get('#email').setValue('newuser2@example.com')
+    await unsafeWrapper.get('#password').setValue('valid-test-password')
+    await unsafeWrapper.get('form').trigger('submit')
+    await flushPromises()
+    expect(pushMock).toHaveBeenCalledWith('/dashboard')
+    unsafeWrapper.unmount()
   })
 })

@@ -159,6 +159,7 @@ const props = withDefaults(
 const emit = defineEmits<{
   close: []
   rotate: []
+  revealed: [secret: string]
   use: [secret: string]
   'import-ccs': [secret: string]
 }>()
@@ -267,6 +268,7 @@ const submit = async () => {
     const seal = await keysAPI.getSecretSeal(props.apiKey.id, grant.grant)
     const revealed = await openApiKeySeal(seal, decryptPassword)
     plaintext.value = revealed
+    emit('revealed', revealed)
     await copyToClipboard(revealed, t('keys.reveal.copied'))
     copied.value = true
   } catch (err) {

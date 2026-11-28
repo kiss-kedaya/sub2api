@@ -392,7 +392,7 @@
       <p class="text-muted">
         {{ t('auth.alreadyHaveAccount') }}
         <router-link
-          to="/login"
+          :to="loginLocation"
           class="rounded-sm font-medium text-primary transition-colors hover:text-primary/80 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
         >
           {{ t('auth.signIn') }}
@@ -439,6 +439,7 @@ import {
   loadAffiliateReferralCode,
   resolveAffiliateReferralCode
 } from '@/utils/oauthAffiliate'
+import { sanitizeInternalRedirectPath } from '@/utils/url'
 import type { LoginAgreementDocument, RegisterRequest } from '@/types'
 
 const { t, locale } = useI18n()
@@ -450,6 +451,10 @@ const router = useRouter()
 const route = useRoute()
 const authStore = useAuthStore()
 const appStore = useAppStore()
+const loginLocation = computed(() => {
+  const safeRedirect = sanitizeInternalRedirectPath(route.query?.redirect, '')
+  return safeRedirect ? { path: '/login', query: { redirect: safeRedirect } } : '/login'
+})
 
 // ==================== State ====================
 
@@ -644,7 +649,14 @@ function emailVerificationSignature(): string {
 async function beginEmailVerification(options: { requestProof?: boolean } = {}): Promise<void> {
   if (!emailVerifyEnabled.value) return
   if (options.requestProof !== false && !(await acquireActionProof())) return
-  sessionStorage.setItem('register_data', JSON.stringify(buildRegistrationPayload()))
+  const pendingRedirect = sanitizeInternalRedirectPath(route.query?.redirect, '')
+  sessionStorage.setItem(
+    'register_data',
+    JSON.stringify({
+      ...buildRegistrationPayload(),
+      ...(pendingRedirect ? { pending_redirect: pendingRedirect } : {})
+    })
+  )
   const signature = emailVerificationSignature()
   if (!emailVerifyReady.value) {
     emailVerifySignature.value = signature
@@ -1286,8 +1298,8 @@ async function handleRegister(): Promise<void> {
     // Show success toast
     appStore.showSuccess(t('auth.accountCreatedSuccess', { siteName: siteName.value }))
 
-    // Redirect to dashboard
-    await router.push('/dashboard')
+    // Redirect to intended page or dashboard
+    await router.push(sanitizeInternalRedirectPath(route.query?.redirect))
   } catch (error: unknown) {
     // Handle registration error
     errorMessage.value = buildRegistrationErrorMessage(error, t('auth.registrationFailed'))

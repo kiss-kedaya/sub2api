@@ -110,6 +110,7 @@ describe('preview server isolation', () => {
     }
     expect(JSON.parse((await http('/setup/status')).text)).toMatchObject({ needs_setup: false })
     expect(JSON.parse((await http('/v1/models')).text).data).toHaveLength(6)
+    expect(JSON.parse((await http('/v1beta/models', 'GET', { 'x-goog-api-key': 'demo' })).text).data).toHaveLength(6)
     expect(outbound).not.toHaveBeenCalled()
   })
 
@@ -262,6 +263,7 @@ describe('preview server isolation', () => {
     expect(publicSettings.site_name).toBe('kedaya.ai')
     expect(publicSettings.api_base_url).toBe(`http://127.0.0.1:${port}`)
     expect(publicSettings.version).toBe(PREVIEW_LABEL)
+    expect(response.text).toContain("if (targetUrl.protocol === 'ccswitch:') return;")
     expect(response.headers['content-security-policy']).toContain(`connect-src 'self' ws://127.0.0.1:${port}`)
     expect(response.headers['content-security-policy']).toContain("frame-ancestors 'none'")
     expect(outbound).not.toHaveBeenCalled()

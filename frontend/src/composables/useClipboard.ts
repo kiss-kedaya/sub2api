@@ -11,14 +11,21 @@ function isClipboardSupported(): boolean {
 
 /**
  * 降级方案：使用 textarea + execCommand
- * 使用 textarea 而非 input，以正确处理多行文本
+ * 使用 textarea 而非 input，以正确处理多行文本；在弹窗打开时挂载到弹窗容器内，避免 focus-trap / inert 拦截。
  */
 function fallbackCopy(text: string): boolean {
+  if (typeof document === 'undefined') return false
+  const activeEl = document.activeElement instanceof HTMLElement ? document.activeElement : null
+  const container =
+    (activeEl?.closest?.('[role="dialog"], .modal-overlay') as HTMLElement | null) ?? document.body
   const textarea = document.createElement('textarea')
   textarea.value = text
-  textarea.setAttribute('readonly', 'true')
-  textarea.style.cssText = 'position:fixed;left:0;top:0;width:1px;height:1px;opacity:0;pointer-events:none'
-  document.body.appendChild(textarea)
+  textarea.readOnly = false
+  textarea.inputMode = 'none'
+  textarea.setAttribute('aria-hidden', 'true')
+  textarea.style.cssText =
+    'position:fixed;left:-9999px;top:0;width:1px;height:1px;font-size:12pt;opacity:0;pointer-events:none'
+  container.appendChild(textarea)
   textarea.focus({ preventScroll: true })
   textarea.select()
   textarea.setSelectionRange(0, textarea.value.length)
@@ -27,7 +34,8 @@ function fallbackCopy(text: string): boolean {
   } catch {
     return false
   } finally {
-    document.body.removeChild(textarea)
+    container.removeChild(textarea)
+    activeEl?.focus?.({ preventScroll: true })
   }
 }
 

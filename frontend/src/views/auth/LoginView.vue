@@ -272,7 +272,7 @@
       <p class="text-muted">
         {{ t('auth.dontHaveAccount') }}
         <router-link
-          to="/register"
+          :to="registerLocation"
           class="rounded-sm font-medium text-primary transition-colors hover:text-primary/80 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
         >
           {{ t('auth.signUp') }}
@@ -326,6 +326,10 @@ const LOGIN_AGREEMENT_STORAGE_KEY = 'sub2api_login_agreement_consent'
 const router = useRouter()
 const authStore = useAuthStore()
 const appStore = useAppStore()
+const registerLocation = computed(() => {
+  const safeRedirect = sanitizeInternalRedirectPath(router.currentRoute.value.query?.redirect, '')
+  return safeRedirect ? { path: '/register', query: { redirect: safeRedirect } } : '/register'
+})
 
 // ==================== State ====================
 
@@ -954,7 +958,7 @@ function maskLoginEmail(email: string): string {
 }
 
 const loginRedirect = (): string =>
-  sanitizeInternalRedirectPath(router.currentRoute.value.query.redirect, '/dashboard')
+  sanitizeInternalRedirectPath(router.currentRoute.value.query?.redirect, '/dashboard')
 
 /** 全部因子通过后：清挑战、提示成功、跳转目标页。 */
 async function finishLoginSuccess(): Promise<void> {
