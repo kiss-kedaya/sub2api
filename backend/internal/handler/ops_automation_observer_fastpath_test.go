@@ -97,6 +97,8 @@ func TestAutomationLineMayMatter_TightenedUnicodeEscapeHandling(t *testing.T) {
 		`{"type":"response.output_text.delta","delta":"emoji \ud83d\ude00 and \u0000 ctrl"}`,
 		`{"type":"response.output_text.delta","delta":"quote \u0022 inside"}`,
 		`{"type":"response.output_text.delta","delta":"escaped backslash \\u003c"}`,
+		`{"type":"response.output_text.delta","delta":"truncated \u12"}`,
+		`{"type":"response.output_text.delta","delta":"invalid hex \u123g"}`,
 	} {
 		require.False(t, automationLineMayMatter([]byte(benign)), "benign escape should be skipped: %s", benign)
 		checkAutomationLine(t, "data: "+benign)
@@ -106,11 +108,16 @@ func TestAutomationLineMayMatter_TightenedUnicodeEscapeHandling(t *testing.T) {
 	for _, sensitive := range []string{
 		`{"\u0065rror":{"message":"boom"}}`,
 		`{"\u0045RROR":{"message":"boom"}}`,
+		`{"err\u004Fr":{"message":"boom"}}`,
+		`{"err\u006fr":{"message":"boom"}}`,
 		`{"type":"message_\u0073top"}`,
 		`{"type":"response.\u0066ailed"}`,
 		`{"type":"response.\u0063ompleted","response":{"status":"completed"}}`,
 		`{"choices":[{"finish_reason":"\u0073top"}]}`,
 		`{"candidates":[{"finishReason":"MAX_\u0054OKENS"}]}`,
+		`{"delta":"escaped backslash before quote \\","type":"message_stop"}`,
+		`{"delta":"odd backslashes \\\u0065","type":"response.output_text.delta"}`,
+		`{"delta":"surrogate \uD83D\uDE00 then verdict","choices":[{"finish_reason":"stop"}]}`,
 	} {
 		require.True(t, automationLineMayMatter([]byte(sensitive)), "verdict escape must not be skipped: %s", sensitive)
 		checkAutomationLine(t, "data: "+sensitive)

@@ -310,9 +310,6 @@ func (s *httpUpstreamService) Do(req *http.Request, proxyURL string, accountID i
 
 	// 执行请求
 	client := s.httpClientForUpstreamRequest(entry.client, req)
-	if isGrokCLIProxyRequest(req) {
-		client = httpClientWithGrokAccessDeniedFallback(client)
-	}
 	releaseWrappedPayload := wrapUpstreamRequestPayloadForRelease(req)
 	resp, err := observedUpstreamRequest(client, req)
 	captureUpstreamHeadersForOps(req, resp)
@@ -388,9 +385,6 @@ func (s *httpUpstreamService) DoWithTLS(req *http.Request, proxyURL string, acco
 	}
 
 	client := s.httpClientForUpstreamRequest(entry.client, req)
-	if isGrokCLIProxyRequest(req) {
-		client = httpClientWithGrokAccessDeniedFallback(client)
-	}
 	releaseWrappedPayload := wrapUpstreamRequestPayloadForRelease(req)
 	resp, err := observedUpstreamRequest(client, req)
 	captureUpstreamHeadersForOps(req, resp)
@@ -412,27 +406,37 @@ func (s *httpUpstreamService) DoWithTLS(req *http.Request, proxyURL string, acco
 	return resp, nil
 }
 
-// httpClientForUpstreamRequest 按请求上下文的标记派生客户端：禁用重定向，或对重定向的每一跳做主机校验。
-// 派生的克隆与缓存客户端共享 Transport；未打标记时原样返回。
+// httpClientForUpstreamRequest 按请求上下文的标记与目标主机派生客户端：禁用重定向、
+// 对重定向的每一跳做主机校验，以及仅为 Grok CLI 代理主机挂载 403 回退包装器。
+// 派生的克隆与缓存客户端共享底层 Transport；均无需改写时原样返回。
 func (s *httpUpstreamService) httpClientForUpstreamRequest(client *http.Client, req *http.Request) *http.Client {
 	if client == nil || req == nil {
 		return client
 	}
 	ctx := req.Context()
+	disableRedirects := service.HTTPUpstreamRedirectsDisabled(ctx)
+	publicHostsOnly := !disableRedirects && service.HTTPUpstreamPublicHostsOnly(ctx) && client.CheckRedirect == nil
+	grokFallback := isGrokCLIProxyRequest(req)
+	if !disableRedirects && !publicHostsOnly && !grokFallback {
+		return client
+	}
+	clone := *client
 	switch {
-	case service.HTTPUpstreamRedirectsDisabled(ctx):
-		clone := *client
+	case disableRedirects:
 		clone.CheckRedirect = func(*http.Request, []*http.Request) error {
 			return http.ErrUseLastResponse
 		}
-		return &clone
-	case service.HTTPUpstreamPublicHostsOnly(ctx) && client.CheckRedirect == nil:
-		clone := *client
+	case publicHostsOnly:
 		clone.CheckRedirect = s.redirectChecker
-		return &clone
-	default:
-		return client
 	}
+	if grokFallback {
+		base := clone.Transport
+		if base == nil {
+			base = http.DefaultTransport
+		}
+		clone.Transport = &grokAccessDeniedFallbackTransport{base: base}
+	}
+	return &clone
 }
 
 // grokAccessDeniedFallbackTransport preserves the subscription CLI proxy as
@@ -443,19 +447,6 @@ func (s *httpUpstreamService) httpClientForUpstreamRequest(client *http.Client, 
 // original response so account scheduling semantics do not change.
 type grokAccessDeniedFallbackTransport struct {
 	base http.RoundTripper
-}
-
-func httpClientWithGrokAccessDeniedFallback(client *http.Client) *http.Client {
-	if client == nil {
-		return nil
-	}
-	clone := *client
-	base := clone.Transport
-	if base == nil {
-		base = http.DefaultTransport
-	}
-	clone.Transport = &grokAccessDeniedFallbackTransport{base: base}
-	return &clone
 }
 
 func (t *grokAccessDeniedFallbackTransport) RoundTrip(req *http.Request) (*http.Response, error) {
@@ -1624,8 +1615,12 @@ func enableHTTP2KeepAlive(transport *http.Transport) error {
 //   - http/https: HTTP 代理，使用 HTTPProxyDialer（CONNECT 隧道 + utls 握手）
 //   - socks5: SOCKS5 代理，使用 SOCKS5ProxyDialer（SOCKS5 隧道 + utls 握手）
 func buildUpstreamTransportWithTLSFingerprint(settings poolSettings, proxyURL *url.URL, profile *tlsfingerprint.Profile) (*http.Transport, error) {
+	return buildUpstreamTransportWithTLSFingerprintTimeout(settings, proxyURL, profile, defaultUpstreamTLSHandshakeTimeout)
+}
+
+func buildUpstreamTransportWithTLSFingerprintTimeout(settings poolSettings, proxyURL *url.URL, profile *tlsfingerprint.Profile, tlsHandshakeTimeout time.Duration) (*http.Transport, error) {
 	transport := &http.Transport{
-		TLSHandshakeTimeout:   defaultUpstreamTLSHandshakeTimeout,
+		TLSHandshakeTimeout:   tlsHandshakeTimeout,
 		MaxIdleConns:          settings.maxIdleConns,
 		MaxIdleConnsPerHost:   settings.maxIdleConnsPerHost,
 		MaxConnsPerHost:       settings.maxConnsPerHost,
@@ -1637,12 +1632,42 @@ func buildUpstreamTransportWithTLSFingerprint(settings poolSettings, proxyURL *u
 		ForceAttemptHTTP2: false,
 	}
 
-	// 根据代理类型选择合适的 TLS 指纹 Dialer
+	// 根据代理类型选择合适的 TLS 指纹 Dialer。
+	// net/http.Transport 在设置 DialTLSContext 后会忽略 Transport.TLSHandshakeTimeout，
+	// 因此必须在自定义 DialTLSContext 路径中显式施加握手超时并在握手完成后解除 deadline，
+	// 避免对端停滞在 TLS 握手阶段同时不影响后续长流式传输。
 	if proxyURL == nil {
-		// 直连：使用 TLSFingerprintDialer
+		// 直连：使用 TLSFingerprintDialer（TCP 拨号复用标准超时与 keepalive，
+		// 拨号成功后仅在 TLS 握手窗口设置连接 deadline，握手完成立即清除）。
 		slog.Debug("tls_fingerprint_transport_direct")
-		dialer := tlsfingerprint.NewDialer(profile, publicHostsOnlyDialContext((&net.Dialer{}).DialContext))
-		transport.DialTLSContext = dialer.DialTLSContext
+		baseDial := publicHostsOnlyDialContext(newUpstreamDialer().DialContext)
+		dialWithHandshakeDeadline := func(ctx context.Context, network, addr string) (net.Conn, error) {
+			conn, err := baseDial(ctx, network, addr)
+			if err != nil {
+				return nil, err
+			}
+			if tlsHandshakeTimeout > 0 {
+				if err := conn.SetDeadline(time.Now().Add(tlsHandshakeTimeout)); err != nil {
+					_ = conn.Close()
+					return nil, err
+				}
+			}
+			return conn, nil
+		}
+		dialer := tlsfingerprint.NewDialer(profile, dialWithHandshakeDeadline)
+		transport.DialTLSContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+			conn, err := dialer.DialTLSContext(ctx, network, addr)
+			if err != nil {
+				return nil, err
+			}
+			if tlsHandshakeTimeout > 0 {
+				if err := conn.SetDeadline(time.Time{}); err != nil {
+					_ = conn.Close()
+					return nil, err
+				}
+			}
+			return conn, nil
+		}
 	} else {
 		scheme := strings.ToLower(proxyURL.Scheme)
 		switch scheme {
@@ -1650,7 +1675,7 @@ func buildUpstreamTransportWithTLSFingerprint(settings poolSettings, proxyURL *u
 			// SOCKS5 代理：使用 SOCKS5ProxyDialer
 			slog.Debug("tls_fingerprint_transport_socks5", "proxy", proxyURL.Host)
 			socks5Dialer := tlsfingerprint.NewSOCKS5ProxyDialer(profile, proxyURL)
-			transport.DialTLSContext = socks5Dialer.DialTLSContext
+			transport.DialTLSContext = wrapDialTLSWithHandshakeTimeout(socks5Dialer.DialTLSContext, tlsHandshakeTimeout)
 		case "https":
 			// The fingerprint dialer emits a plaintext CONNECT preface and cannot
 			// establish TLS to an HTTPS proxy. Keep proxy routing via net/http.
@@ -1659,7 +1684,7 @@ func buildUpstreamTransportWithTLSFingerprint(settings poolSettings, proxyURL *u
 			// HTTP/HTTPS 代理：使用 HTTPProxyDialer（CONNECT 隧道）
 			slog.Debug("tls_fingerprint_transport_http_connect", "proxy", proxyURL.Host)
 			httpDialer := tlsfingerprint.NewHTTPProxyDialer(profile, proxyURL)
-			transport.DialTLSContext = httpDialer.DialTLSContext
+			transport.DialTLSContext = wrapDialTLSWithHandshakeTimeout(httpDialer.DialTLSContext, tlsHandshakeTimeout)
 		default:
 			// 未知代理类型，回退到普通代理配置（无 TLS 指纹）
 			slog.Debug("tls_fingerprint_transport_unknown_scheme_fallback", "scheme", scheme)
@@ -1670,6 +1695,20 @@ func buildUpstreamTransportWithTLSFingerprint(settings poolSettings, proxyURL *u
 	}
 
 	return transport, nil
+}
+
+func wrapDialTLSWithHandshakeTimeout(
+	base func(ctx context.Context, network, addr string) (net.Conn, error),
+	timeout time.Duration,
+) func(ctx context.Context, network, addr string) (net.Conn, error) {
+	if base == nil || timeout <= 0 {
+		return base
+	}
+	return func(ctx context.Context, network, addr string) (net.Conn, error) {
+		dialCtx, cancel := context.WithTimeout(ctx, timeout)
+		defer cancel()
+		return base(dialCtx, network, addr)
+	}
 }
 
 // trackedBody 带跟踪功能的响应体包装器

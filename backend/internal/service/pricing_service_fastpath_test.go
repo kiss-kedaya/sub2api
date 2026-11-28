@@ -48,6 +48,27 @@ func TestPricingService_BaseNameIndexDeterministicConflictResolution(t *testing.
 	require.Nil(t, svc.GetIdentifiedModelPricing("nonexistent-model-20261201"))
 }
 
+func TestPricingService_BaseNameIndexDeterministicCaseOnlyCollision(t *testing.T) {
+	svc := NewPricingService(&config.Config{}, nil)
+	upper := &LiteLLMModelPricing{InputCostPerToken: 0.000001}
+	lower := &LiteLLMModelPricing{InputCostPerToken: 0.000009}
+	data := map[string]*LiteLLMModelPricing{
+		"Claude-Alpha-20250101": upper,
+		"claude-alpha-20250101": lower,
+		"CLAUDE-BETA-20250101":  nil,
+		"claude-beta-20250101":  lower,
+	}
+
+	// Repeat across many iterations so randomized Go map iteration visits keys in
+	// different orders; raw-key tie-breaking ("C" < "c") and non-nil preference
+	// must pick the same entry every time.
+	for i := 0; i < 50; i++ {
+		idx := svc.buildBaseNameIndex(data)
+		require.Same(t, upper, idx["claude-alpha"])
+		require.Same(t, lower, idx["claude-beta"])
+	}
+}
+
 func TestPricingService_BaseNameIndexFallsBackWhenPricingDataMutatedDirectly(t *testing.T) {
 	svc := NewPricingService(&config.Config{}, nil)
 	svc.pricingData["custom-direct-20250101"] = &LiteLLMModelPricing{InputCostPerToken: 1.5e-6}

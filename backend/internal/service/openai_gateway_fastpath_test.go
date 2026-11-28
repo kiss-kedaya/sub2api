@@ -6,8 +6,12 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
+	"strings"
 	"testing"
 	"time"
+	"unsafe"
+	"weak"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/apicompat"
@@ -149,5 +153,77 @@ func TestHandleStreamingResponse_ReusedAckChannelStopsCleanlyOnEarlyCancel(t *te
 		require.Error(t, err)
 	case <-time.After(3 * time.Second):
 		t.Fatal("handleStreamingResponse deadlocked on early cancel")
+	}
+}
+
+//go:noinline
+func observeLargeToolCallFrameAndDrop(t *testing.T, est *openAIPassthroughOutputEstimator) weak.Pointer[byte] {
+	t.Helper()
+	largeArg := strings.Repeat("patch-line-", 16<<10)
+	raw := []byte(`{"type":"response.output_item.done","output_index":0,"item":{"type":"function_call","call_id":"c_gc","name":"apply_patch","arguments":"` + largeArg + `"}}`)
+	frame := parseOpenAISSEDataFrame(raw, "response.output_item.done")
+	// Track the backing string parsed by gjson; storing name.Str directly would pin it.
+	wp := weak.Make(unsafe.StringData(frame.root.Raw))
+	est.observeFrame(frame, "response.output_item.done")
+	// Verify empty subsequent name preserves previous nameTokens, and new name replaces it.
+	est.observeFrame(parseOpenAISSEDataFrame([]byte(`{"type":"response.output_item.done","output_index":0,"item":{"type":"function_call","name":""}}`), "response.output_item.done"), "response.output_item.done")
+	return wp
+}
+
+func TestOpenAIPassthroughOutputEstimator_DoesNotRetainToolCallFrame(t *testing.T) {
+	var est openAIPassthroughOutputEstimator
+	wp := observeLargeToolCallFrameAndDrop(t, &est)
+	defer runtime.KeepAlive(&est)
+
+	require.Greater(t, est.tokens(), 0)
+	require.Eventually(t, func() bool {
+		runtime.GC()
+		return wp.Value() == nil
+	}, 2*time.Second, 5*time.Millisecond, "estimator must not retain large tool call SSE frame via name substring")
+	runtime.KeepAlive(&est)
+
+	// Verify later non-empty name replaces stored nameTokens cleanly.
+	var est2 openAIPassthroughOutputEstimator
+	est2.observeFrame(parseOpenAISSEDataFrame([]byte(`{"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","name":"short"}}`), "response.output_item.added"), "response.output_item.added")
+	before := est2.tokens()
+	est2.observeFrame(parseOpenAISSEDataFrame([]byte(`{"type":"response.output_item.done","output_index":0,"item":{"type":"function_call","name":"much_longer_tool_function_name_for_replacement"}}`), "response.output_item.done"), "response.output_item.done")
+	require.Greater(t, est2.tokens(), before)
+}
+
+func TestHandleStreamingResponse_EarlyReturnOnTerminalFrameDoesNotBlockOnOpenBody(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+
+	pr, pw := io.Pipe()
+	defer func() { _ = pw.Close() }()
+
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body:       pr,
+	}
+	svc := &OpenAIGatewayService{cfg: &config.Config{Gateway: config.GatewayConfig{MaxLineSize: defaultMaxLineSize}}}
+
+	done := make(chan error, 1)
+	go func() {
+		res, err := svc.handleStreamingResponse(c.Request.Context(), resp, c, &Account{ID: 8, Platform: PlatformOpenAI}, time.Now(), "gpt-5", "gpt-5")
+		if err == nil && (res == nil || res.usage == nil || res.usage.OutputTokens != 5) {
+			done <- io.ErrUnexpectedEOF
+			return
+		}
+		done <- err
+	}()
+
+	// Write terminal event and deliberately keep pw open (simulating upstream holding TCP open).
+	_, err := io.WriteString(pw, "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"ok\"}]}],\"usage\":{\"input_tokens\":10,\"output_tokens\":5}}}\n\n")
+	require.NoError(t, err)
+
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(3 * time.Second):
+		t.Fatal("handleStreamingResponse blocked on open upstream body after terminal frame")
 	}
 }

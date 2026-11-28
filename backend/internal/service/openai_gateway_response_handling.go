@@ -1169,11 +1169,9 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 				return finalizeStream()
 			}
 			if result, err, done := handleScanErr(ev.err); done {
-				markEventProcessed()
 				return result, err
 			}
 			processSSELine(ev.line, len(events) == 0)
-			markEventProcessed()
 			if streamEarlyErr != nil {
 				return resultWithUsage(), streamEarlyErr
 			}
@@ -1183,6 +1181,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 				_ = resp.Body.Close()
 				return finalizeStream()
 			}
+			markEventProcessed()
 
 		case <-intervalCh:
 			observeClientCancellation()

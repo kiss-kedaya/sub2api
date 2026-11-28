@@ -3365,8 +3365,8 @@ func (m *trimmedTextTokenMeter) tokens() int {
 }
 
 type passthroughFuncCallMeter struct {
-	name string
-	args trimmedTextTokenMeter
+	nameTokens int
+	args       trimmedTextTokenMeter
 }
 
 // openAIPassthroughOutputEstimator tracks billable stream output tokens for
@@ -3421,7 +3421,9 @@ func (e *openAIPassthroughOutputEstimator) observeFrame(frame openAISSEDataFrame
 		}
 		call := &e.funcCalls[idx]
 		if name := item.Get("name"); name.Type == gjson.String && name.Str != "" {
-			call.name = name.Str
+			// Compute token count immediately instead of storing name.Str, because
+			// gjson slices unescaped strings directly from the backing SSE frame.
+			call.nameTokens = estimateTokensForText(name.Str)
 		}
 		if eventType == "response.output_item.done" {
 			argField := "arguments"
@@ -3459,7 +3461,7 @@ func (e *openAIPassthroughOutputEstimator) tokens() int {
 	}
 	total := e.reasoning.tokens() + e.text.tokens() + e.refusal.tokens()
 	for i := range e.funcCalls {
-		total += estimateTokensForText(e.funcCalls[i].name)
+		total += e.funcCalls[i].nameTokens
 		total += e.funcCalls[i].args.tokens()
 	}
 	return total

@@ -79,25 +79,66 @@ func TestDecompressRequestBody_ZstdConcurrencyOneDoesNotLeakGoroutines(t *testin
 }
 
 //go:noinline
-func decompressAndDropRawSlice(t *testing.T, encoding string) weak.Pointer[byte] {
+func decompressAndDropRawSlice(t *testing.T, encoding string) (weak.Pointer[byte], any) {
 	t.Helper()
 	packed := compressAuditBody(t, encoding, bytes.Repeat([]byte("a"), 32<<10))
 	raw := append([]byte(nil), packed...)
 	wp := weak.Make(&raw[0])
-	if _, err := decompressRequestBody(encoding, raw); err != nil {
-		t.Fatal(err)
+
+	// Acquire, read, and release directly so we can return the released wrapper
+	// and keep it strongly reachable across runtime.GC(). Keeping the wrapper
+	// alive ensures the test catches any release path that forgets to clear its
+	// reference to raw even if sync.Pool evicts entries during GC.
+	switch encoding {
+	case "zstd":
+		p, err := acquireRequestZstdDecoder(raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := readDecompressedRequestBody(p.dec); err != nil {
+			releaseRequestZstdDecoder(p)
+			t.Fatal(err)
+		}
+		releaseRequestZstdDecoder(p)
+		return wp, p
+	case "gzip":
+		p, err := acquireRequestGzipReader(raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := readDecompressedRequestBody(p.gr); err != nil {
+			releaseRequestGzipReader(p)
+			t.Fatal(err)
+		}
+		releaseRequestGzipReader(p)
+		return wp, p
+	case "deflate":
+		p, err := acquireRequestZlibReader(raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := readDecompressedRequestBody(p.zr); err != nil {
+			releaseRequestZlibReader(p)
+			t.Fatal(err)
+		}
+		releaseRequestZlibReader(p)
+		return wp, p
+	default:
+		t.Fatalf("unexpected encoding %q", encoding)
+		return weak.Pointer[byte]{}, nil
 	}
-	return wp
 }
 
 func TestDecompressRequestBody_PooledDecodersReleaseRawSliceReference(t *testing.T) {
 	for _, encoding := range []string{"zstd", "gzip", "deflate"} {
 		t.Run(encoding, func(t *testing.T) {
-			wp := decompressAndDropRawSlice(t, encoding)
+			wp, holder := decompressAndDropRawSlice(t, encoding)
+			defer runtime.KeepAlive(holder)
 			deadline := time.Now().Add(2 * time.Second)
 			for time.Now().Before(deadline) {
 				runtime.GC()
 				if wp.Value() == nil {
+					runtime.KeepAlive(holder)
 					return
 				}
 				time.Sleep(5 * time.Millisecond)

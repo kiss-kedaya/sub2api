@@ -1372,27 +1372,42 @@ func (s *PricingService) lookupIdentifiedModelPricingLocked(lookupCandidates []s
 // buildBaseNameIndex precomputes a deterministic baseName -> pricing index when
 // pricing data is loaded so step 3 of lookupIdentifiedModelPricingLocked runs in
 // O(1) instead of scanning the entire pricing table on every cache/exact miss.
-// Tie-breaking prefers the canonical unversioned key (keyLower == keyBase), then
-// the lexicographically smallest key.
+// Tie-breaking prefers non-nil entries, then the canonical unversioned key
+// (keyLower == keyBase), then the lexicographically smallest lowercase key,
+// and finally the original key for case-only collisions.
 func (s *PricingService) buildBaseNameIndex(data map[string]*LiteLLMModelPricing) map[string]*LiteLLMModelPricing {
 	if len(data) == 0 {
 		return nil
 	}
+	type baseNameCandidate struct {
+		lower string
+		raw   string
+	}
 	index := make(map[string]*LiteLLMModelPricing, len(data))
-	chosenKey := make(map[string]string, len(data))
+	chosenKey := make(map[string]baseNameCandidate, len(data))
 	for key, pricing := range data {
 		keyLower := strings.ToLower(key)
 		keyBase := s.extractBaseName(keyLower)
-		prevKey, exists := chosenKey[keyBase]
+		prev, exists := chosenKey[keyBase]
 		if !exists {
-			chosenKey[keyBase] = keyLower
+			chosenKey[keyBase] = baseNameCandidate{lower: keyLower, raw: key}
 			index[keyBase] = pricing
 			continue
 		}
-		prevExact := prevKey == keyBase
+		prevPricing := index[keyBase]
+		if (pricing == nil) != (prevPricing == nil) {
+			if pricing != nil {
+				chosenKey[keyBase] = baseNameCandidate{lower: keyLower, raw: key}
+				index[keyBase] = pricing
+			}
+			continue
+		}
+		prevExact := prev.lower == keyBase
 		currExact := keyLower == keyBase
-		if (currExact && !prevExact) || (currExact == prevExact && keyLower < prevKey) {
-			chosenKey[keyBase] = keyLower
+		better := (currExact && !prevExact) ||
+			(currExact == prevExact && (keyLower < prev.lower || (keyLower == prev.lower && key < prev.raw)))
+		if better {
+			chosenKey[keyBase] = baseNameCandidate{lower: keyLower, raw: key}
 			index[keyBase] = pricing
 		}
 	}
