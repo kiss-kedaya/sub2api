@@ -67,6 +67,10 @@ const (
 	// defaultUpstreamTLSHandshakeTimeout: TLS 握手超时（10秒）
 	// 与建连超时同量级，避免 TCP 已连通但对端不推进握手时无限等待
 	defaultUpstreamTLSHandshakeTimeout = 10 * time.Second
+	// defaultUpstreamReadBufferSize / WriteBufferSize: 32KB 传输层读写缓冲，
+	// 降低大请求体与高频 SSE 流式响应的系统调用与缓冲切分次数。
+	defaultUpstreamReadBufferSize  = 32 * 1024
+	defaultUpstreamWriteBufferSize = 32 * 1024
 	// defaultMaxUpstreamClients: 默认最大客户端缓存数量
 	// 超出后会淘汰最久未使用的客户端
 	defaultMaxUpstreamClients = 5000
@@ -306,7 +310,9 @@ func (s *httpUpstreamService) Do(req *http.Request, proxyURL string, accountID i
 
 	// 执行请求
 	client := s.httpClientForUpstreamRequest(entry.client, req)
-	client = httpClientWithGrokAccessDeniedFallback(client)
+	if isGrokCLIProxyRequest(req) {
+		client = httpClientWithGrokAccessDeniedFallback(client)
+	}
 	releaseWrappedPayload := wrapUpstreamRequestPayloadForRelease(req)
 	resp, err := observedUpstreamRequest(client, req)
 	captureUpstreamHeadersForOps(req, resp)
@@ -382,7 +388,9 @@ func (s *httpUpstreamService) DoWithTLS(req *http.Request, proxyURL string, acco
 	}
 
 	client := s.httpClientForUpstreamRequest(entry.client, req)
-	client = httpClientWithGrokAccessDeniedFallback(client)
+	if isGrokCLIProxyRequest(req) {
+		client = httpClientWithGrokAccessDeniedFallback(client)
+	}
 	releaseWrappedPayload := wrapUpstreamRequestPayloadForRelease(req)
 	resp, err := observedUpstreamRequest(client, req)
 	captureUpstreamHeadersForOps(req, resp)
@@ -500,10 +508,13 @@ func isGrokCLICompatibilityAccessDenied(body []byte) bool {
 	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(payload.Error)), chatEndpointDeniedPrefix)
 }
 
+func isGrokCLIProxyRequest(req *http.Request) bool {
+	return req != nil && req.URL != nil && strings.EqualFold(strings.TrimSpace(req.URL.Hostname()), grokCLIProxyHost)
+}
+
 func isGrokCLIAccessDeniedFallbackCandidate(req *http.Request, resp *http.Response) bool {
-	return req != nil && req.URL != nil && req.GetBody != nil && resp != nil &&
+	return isGrokCLIProxyRequest(req) && req.GetBody != nil && resp != nil &&
 		resp.StatusCode == http.StatusForbidden &&
-		strings.EqualFold(strings.TrimSpace(req.URL.Hostname()), grokCLIProxyHost) &&
 		strings.EqualFold(strings.TrimSpace(req.Header.Get("X-XAI-Token-Auth")), "xai-grok-cli") &&
 		strings.HasPrefix(strings.ToLower(strings.TrimSpace(req.Header.Get("Authorization"))), "bearer ")
 }
@@ -578,7 +589,7 @@ type prefixedReadCloser struct {
 // validation; transport is stricter so we never silently advertise an older pin
 // than the binary default.
 func applyGrokCLIProxyHeaders(req *http.Request) {
-	if req == nil || req.URL == nil || !strings.EqualFold(strings.TrimSpace(req.URL.Hostname()), grokCLIProxyHost) {
+	if !isGrokCLIProxyRequest(req) {
 		return
 	}
 	if req.Header == nil {
@@ -640,6 +651,7 @@ func (s *httpUpstreamService) getClientEntryWithTLS(proxyURL string, accountID i
 	s.mu.RUnlock()
 
 	// 写锁慢路径
+	var evicted []*http.Client
 	s.mu.Lock()
 	if entry, ok := s.clients[cacheKey]; ok {
 		if s.shouldReuseEntry(entry, isolation, proxyKey, poolKey) {
@@ -656,15 +668,20 @@ func (s *httpUpstreamService) getClientEntryWithTLS(proxyURL string, accountID i
 			"cache_key", cacheKey,
 			"proxy_changed", entry.proxyKey != proxyKey,
 			"pool_changed", entry.poolKey != poolKey)
-		s.removeClientLocked(cacheKey, entry)
+		evicted = s.removeClientLocked(evicted, cacheKey, entry)
 	}
 
+	evictedIdle := false
 	// 超出缓存上限时尝试淘汰
 	if enforceLimit && s.maxUpstreamClients() > 0 {
-		s.evictIdleLocked(now)
+		evicted = s.evictIdleLocked(evicted, now)
+		evictedIdle = true
 		if len(s.clients) >= s.maxUpstreamClients() {
-			if !s.evictOldestIdleLocked() {
+			var ok bool
+			evicted, ok = s.evictOldestIdleLocked(evicted)
+			if !ok {
 				s.mu.Unlock()
+				closeIdleClients(evicted)
 				return nil, errUpstreamClientLimitReached
 			}
 		}
@@ -675,6 +692,7 @@ func (s *httpUpstreamService) getClientEntryWithTLS(proxyURL string, accountID i
 	transport, err := buildUpstreamTransportWithTLSFingerprint(settings, parsedProxy, profile)
 	if err != nil {
 		s.mu.Unlock()
+		closeIdleClients(evicted)
 		return nil, fmt.Errorf("build TLS fingerprint transport: %w", err)
 	}
 
@@ -694,9 +712,12 @@ func (s *httpUpstreamService) getClientEntryWithTLS(proxyURL string, accountID i
 	}
 	s.clients[cacheKey] = entry
 
-	s.evictIdleLocked(now)
-	s.evictOverLimitLocked()
+	if !evictedIdle {
+		evicted = s.evictIdleLocked(evicted, now)
+	}
+	evicted, _ = s.evictOverLimitLocked(evicted)
 	s.mu.Unlock()
+	closeIdleClients(evicted)
 	return entry, nil
 }
 
@@ -803,6 +824,7 @@ func (s *httpUpstreamService) getClientEntry(proxyURL string, accountID int64, a
 	s.mu.RUnlock()
 
 	// 写锁慢路径：创建或重建客户端
+	var evicted []*http.Client
 	s.mu.Lock()
 	if entry, ok := s.clients[cacheKey]; ok {
 		if s.shouldReuseEntry(entry, isolation, proxyKey, poolKey) {
@@ -813,15 +835,20 @@ func (s *httpUpstreamService) getClientEntry(proxyURL string, accountID int64, a
 			s.mu.Unlock()
 			return entry, nil
 		}
-		s.removeClientLocked(cacheKey, entry)
+		evicted = s.removeClientLocked(evicted, cacheKey, entry)
 	}
 
+	evictedIdle := false
 	// 超出缓存上限时尝试淘汰，无法淘汰则拒绝新建
 	if enforceLimit && s.maxUpstreamClients() > 0 {
-		s.evictIdleLocked(now)
+		evicted = s.evictIdleLocked(evicted, now)
+		evictedIdle = true
 		if len(s.clients) >= s.maxUpstreamClients() {
-			if !s.evictOldestIdleLocked() {
+			var ok bool
+			evicted, ok = s.evictOldestIdleLocked(evicted)
+			if !ok {
 				s.mu.Unlock()
+				closeIdleClients(evicted)
 				return nil, errUpstreamClientLimitReached
 			}
 		}
@@ -831,6 +858,7 @@ func (s *httpUpstreamService) getClientEntry(proxyURL string, accountID int64, a
 	transport, err := buildUpstreamTransport(settings, parsedProxy, protocolMode)
 	if err != nil {
 		s.mu.Unlock()
+		closeIdleClients(evicted)
 		return nil, fmt.Errorf("build transport: %w", err)
 	}
 	client := &http.Client{Transport: transport}
@@ -849,10 +877,13 @@ func (s *httpUpstreamService) getClientEntry(proxyURL string, accountID int64, a
 	}
 	s.clients[cacheKey] = entry
 
-	// 执行淘汰策略：先淘汰空闲超时的，再淘汰超出数量限制的
-	s.evictIdleLocked(now)
-	s.evictOverLimitLocked()
+	// 执行淘汰策略：先淘汰空闲超时的（若上面未执行过），再淘汰超出数量限制的
+	if !evictedIdle {
+		evicted = s.evictIdleLocked(evicted, now)
+	}
+	evicted, _ = s.evictOverLimitLocked(evicted)
 	s.mu.Unlock()
+	closeIdleClients(evicted)
 	return entry, nil
 }
 
@@ -871,30 +902,32 @@ func (s *httpUpstreamService) shouldReuseEntry(entry *upstreamClientEntry, isola
 	return true
 }
 
-// removeClientLocked 移除客户端（需持有锁）
-// 从缓存中删除并关闭空闲连接
-//
-// 参数:
-//   - key: 缓存键
-//   - entry: 客户端条目
-func (s *httpUpstreamService) removeClientLocked(key string, entry *upstreamClientEntry) {
-	delete(s.clients, key)
-	if entry != nil && entry.client != nil {
-		// 关闭空闲连接，释放系统资源
-		// 注意：这不会中断活跃连接
-		entry.client.CloseIdleConnections()
+// closeIdleClients 在全局锁外批量关闭已淘汰客户端的空闲连接，避免 CloseIdleConnections
+// 拉长 s.mu 写锁临界区。
+func closeIdleClients(clients []*http.Client) {
+	for _, client := range clients {
+		if client != nil {
+			// 关闭空闲连接，释放系统资源；不会中断活跃连接
+			client.CloseIdleConnections()
+		}
 	}
 }
 
+// removeClientLocked 从缓存中删除客户端并收集待关闭实例（需持有锁，关闭在锁外执行）。
+func (s *httpUpstreamService) removeClientLocked(evicted []*http.Client, key string, entry *upstreamClientEntry) []*http.Client {
+	delete(s.clients, key)
+	if entry != nil && entry.client != nil {
+		evicted = append(evicted, entry.client)
+	}
+	return evicted
+}
+
 // evictIdleLocked 淘汰空闲超时的客户端（需持有锁）
-// 遍历所有客户端，移除超过 TTL 且无活跃请求的条目
-//
-// 参数:
-//   - now: 当前时间
-func (s *httpUpstreamService) evictIdleLocked(now time.Time) {
+// 遍历所有客户端，移除超过 TTL 且无活跃请求的条目，返回待在锁外关闭的客户端列表。
+func (s *httpUpstreamService) evictIdleLocked(evicted []*http.Client, now time.Time) []*http.Client {
 	ttl := s.clientIdleTTL()
 	if ttl <= 0 {
-		return
+		return evicted
 	}
 	// 计算淘汰截止时间
 	cutoff := now.Add(-ttl).UnixNano()
@@ -905,13 +938,14 @@ func (s *httpUpstreamService) evictIdleLocked(now time.Time) {
 		}
 		// 淘汰超时的空闲客户端
 		if atomic.LoadInt64(&entry.lastUsed) <= cutoff {
-			s.removeClientLocked(key, entry)
+			evicted = s.removeClientLocked(evicted, key, entry)
 		}
 	}
+	return evicted
 }
 
 // evictOldestIdleLocked 淘汰最久未使用且无活跃请求的客户端（需持有锁）
-func (s *httpUpstreamService) evictOldestIdleLocked() bool {
+func (s *httpUpstreamService) evictOldestIdleLocked(evicted []*http.Client) ([]*http.Client, bool) {
 	var (
 		oldestKey   string
 		oldestEntry *upstreamClientEntry
@@ -932,28 +966,30 @@ func (s *httpUpstreamService) evictOldestIdleLocked() bool {
 	}
 	// 所有客户端都有活跃请求，无法淘汰
 	if oldestEntry == nil {
-		return false
+		return evicted, false
 	}
-	s.removeClientLocked(oldestKey, oldestEntry)
-	return true
+	evicted = s.removeClientLocked(evicted, oldestKey, oldestEntry)
+	return evicted, true
 }
 
 // evictOverLimitLocked 淘汰超出数量限制的客户端（需持有锁）
 // 使用 LRU 策略，优先淘汰最久未使用且无活跃请求的客户端
-func (s *httpUpstreamService) evictOverLimitLocked() bool {
+func (s *httpUpstreamService) evictOverLimitLocked(evicted []*http.Client) ([]*http.Client, bool) {
 	maxClients := s.maxUpstreamClients()
 	if maxClients <= 0 {
-		return false
+		return evicted, false
 	}
-	evicted := false
+	hasEvicted := false
 	// 循环淘汰直到满足数量限制
 	for len(s.clients) > maxClients {
-		if !s.evictOldestIdleLocked() {
-			return evicted
+		var ok bool
+		evicted, ok = s.evictOldestIdleLocked(evicted)
+		if !ok {
+			return evicted, hasEvicted
 		}
-		evicted = true
+		hasEvicted = true
 	}
-	return evicted
+	return evicted, hasEvicted
 }
 
 // getIsolationMode 获取连接池隔离模式
@@ -1503,6 +1539,8 @@ func buildUpstreamTransport(settings poolSettings, proxyURL *url.URL, protocolMo
 		MaxConnsPerHost:       settings.maxConnsPerHost,
 		IdleConnTimeout:       settings.idleConnTimeout,
 		ResponseHeaderTimeout: settings.responseHeaderTimeout,
+		ReadBufferSize:        defaultUpstreamReadBufferSize,
+		WriteBufferSize:       defaultUpstreamWriteBufferSize,
 	}
 	switch protocolMode {
 	case upstreamProtocolModeLongStreamH2:
@@ -1587,11 +1625,14 @@ func enableHTTP2KeepAlive(transport *http.Transport) error {
 //   - socks5: SOCKS5 代理，使用 SOCKS5ProxyDialer（SOCKS5 隧道 + utls 握手）
 func buildUpstreamTransportWithTLSFingerprint(settings poolSettings, proxyURL *url.URL, profile *tlsfingerprint.Profile) (*http.Transport, error) {
 	transport := &http.Transport{
+		TLSHandshakeTimeout:   defaultUpstreamTLSHandshakeTimeout,
 		MaxIdleConns:          settings.maxIdleConns,
 		MaxIdleConnsPerHost:   settings.maxIdleConnsPerHost,
 		MaxConnsPerHost:       settings.maxConnsPerHost,
 		IdleConnTimeout:       settings.idleConnTimeout,
 		ResponseHeaderTimeout: settings.responseHeaderTimeout,
+		ReadBufferSize:        defaultUpstreamReadBufferSize,
+		WriteBufferSize:       defaultUpstreamWriteBufferSize,
 		// 禁用默认的 TLS，我们使用自定义的 DialTLSContext
 		ForceAttemptHTTP2: false,
 	}
@@ -1665,6 +1706,132 @@ func wrapTrackedBody(body io.ReadCloser, onClose func()) io.ReadCloser {
 	return &trackedBody{ReadCloser: body, onClose: onClose}
 }
 
+type pooledUpstreamGzipReader struct {
+	gr *gzip.Reader
+	br *bufio.Reader
+}
+
+var (
+	upstreamZstdDecoderPool sync.Pool
+	upstreamZstdBufPool     sync.Pool
+	upstreamGzipReaderPool  sync.Pool
+	upstreamBrotliPool      sync.Pool
+	upstreamFlatePool       sync.Pool
+)
+
+func acquireUpstreamZstdDecoder(r io.Reader) (*zstd.Decoder, error) {
+	if dec, ok := upstreamZstdDecoderPool.Get().(*zstd.Decoder); ok && dec != nil {
+		if err := dec.Reset(r); err != nil {
+			dec.Close()
+			return nil, err
+		}
+		return dec, nil
+	}
+	return zstd.NewReader(r, zstd.WithDecoderConcurrency(1))
+}
+
+func releaseUpstreamZstdDecoder(dec *zstd.Decoder) {
+	if dec == nil {
+		return
+	}
+	if err := dec.Reset(nil); err != nil {
+		dec.Close()
+		return
+	}
+	upstreamZstdDecoderPool.Put(dec)
+}
+
+func acquireUpstreamBufioReader(r io.Reader) *bufio.Reader {
+	if br, ok := upstreamZstdBufPool.Get().(*bufio.Reader); ok && br != nil {
+		br.Reset(r)
+		return br
+	}
+	return bufio.NewReader(r)
+}
+
+func releaseUpstreamBufioReader(br *bufio.Reader) {
+	if br == nil {
+		return
+	}
+	br.Reset(nil)
+	upstreamZstdBufPool.Put(br)
+}
+
+func acquireUpstreamGzipReader(r io.Reader) (*pooledUpstreamGzipReader, error) {
+	var p *pooledUpstreamGzipReader
+	if pooled, ok := upstreamGzipReaderPool.Get().(*pooledUpstreamGzipReader); ok && pooled != nil {
+		p = pooled
+		p.br.Reset(r)
+	} else {
+		p = &pooledUpstreamGzipReader{br: bufio.NewReader(r)}
+	}
+	var err error
+	if p.gr == nil {
+		p.gr, err = gzip.NewReader(p.br)
+	} else {
+		err = p.gr.Reset(p.br)
+	}
+	if err != nil {
+		p.br.Reset(nil)
+		if p.gr != nil {
+			p.gr.Header = gzip.Header{}
+		}
+		upstreamGzipReaderPool.Put(p)
+		return nil, err
+	}
+	return p, nil
+}
+
+func releaseUpstreamGzipReader(p *pooledUpstreamGzipReader) {
+	if p == nil {
+		return
+	}
+	if p.gr != nil {
+		_ = p.gr.Close()
+		p.gr.Header = gzip.Header{}
+	}
+	// p.br implements flate.Reader so both gzip.Reader.r and its internal flate
+	// decompressor read exclusively from p.br; Reset(nil) severs the body reference.
+	p.br.Reset(nil)
+	upstreamGzipReaderPool.Put(p)
+}
+
+func acquireUpstreamBrotliReader(r io.Reader) *brotli.Reader {
+	if br, ok := upstreamBrotliPool.Get().(*brotli.Reader); ok && br != nil {
+		_ = br.Reset(r)
+		return br
+	}
+	return brotli.NewReader(r)
+}
+
+func releaseUpstreamBrotliReader(br *brotli.Reader) {
+	if br == nil {
+		return
+	}
+	_ = br.Reset(nil)
+	upstreamBrotliPool.Put(br)
+}
+
+func acquireUpstreamFlateReader(r io.Reader) io.ReadCloser {
+	if fr, ok := upstreamFlatePool.Get().(io.ReadCloser); ok && fr != nil {
+		if resetter, ok := fr.(flate.Resetter); ok && resetter.Reset(r, nil) == nil {
+			return fr
+		}
+		_ = fr.Close()
+	}
+	return flate.NewReader(r)
+}
+
+func releaseUpstreamFlateReader(fr io.ReadCloser) {
+	if fr == nil {
+		return
+	}
+	_ = fr.Close()
+	if resetter, ok := fr.(flate.Resetter); ok && resetter.Reset(nil, nil) == nil {
+		upstreamFlatePool.Put(fr)
+	}
+}
+
 // decompressResponseBody 根据 Content-Encoding 解压响应体。
 // 当请求显式设置了 accept-encoding 时，Go 的 Transport 不会自动解压，需要手动处理。
 // 解压成功后会删除 Content-Encoding 和 Content-Length header（长度已不准确）。
@@ -1679,20 +1846,38 @@ func decompressResponseBody(resp *http.Response) {
 
 	originalBody := resp.Body
 	var reader io.Reader
+	var release func()
 	switch ce {
 	case "gzip":
-		gr, err := gzip.NewReader(resp.Body)
+		p, err := acquireUpstreamGzipReader(resp.Body)
 		if err != nil {
 			return // 解压失败，保持原样
 		}
-		reader = gr
+		reader = p.gr
+		release = func() {
+			releaseUpstreamGzipReader(p)
+		}
 	case "br":
-		reader = brotli.NewReader(resp.Body)
+		br := acquireUpstreamBrotliReader(resp.Body)
+		reader = br
+		release = func() {
+			releaseUpstreamBrotliReader(br)
+		}
 	case "deflate":
-		reader = flate.NewReader(resp.Body)
+		fr := acquireUpstreamFlateReader(resp.Body)
+		reader = fr
+		release = func() {
+			releaseUpstreamFlateReader(fr)
+		}
 	case "zstd":
-		bufferedBody := bufio.NewReader(resp.Body)
-		resp.Body = &decompressedBody{reader: bufferedBody, closer: originalBody}
+		bufferedBody := acquireUpstreamBufioReader(resp.Body)
+		resp.Body = &decompressedBody{
+			reader: bufferedBody,
+			closer: originalBody,
+			release: func() {
+				releaseUpstreamBufioReader(bufferedBody)
+			},
+		}
 
 		headerBytes, _ := bufferedBody.Peek(zstd.HeaderMaxSize)
 		var header zstd.Header
@@ -1701,29 +1886,33 @@ func decompressResponseBody(resp *http.Response) {
 			return
 		}
 
-		zr, err := zstd.NewReader(bufferedBody)
+		zr, err := acquireUpstreamZstdDecoder(bufferedBody)
 		if err != nil {
 			slog.Warn("zstd_decompress_failed", "error", err)
 			return
 		}
-		reader = &zstdResponseReader{ReadCloser: zr.IOReadCloser()}
+		reader = &zstdResponseReader{reader: zr}
+		release = func() {
+			releaseUpstreamZstdDecoder(zr)
+			releaseUpstreamBufioReader(bufferedBody)
+		}
 	default:
 		return
 	}
 
-	resp.Body = &decompressedBody{reader: reader, closer: originalBody}
+	resp.Body = &decompressedBody{reader: reader, closer: originalBody, release: release}
 	resp.Header.Del("Content-Encoding")
 	resp.Header.Del("Content-Length") // 解压后长度不确定
 	resp.ContentLength = -1
 }
 
 type zstdResponseReader struct {
-	io.ReadCloser
+	reader   io.Reader
 	warnOnce sync.Once
 }
 
 func (r *zstdResponseReader) Read(p []byte) (int, error) {
-	n, err := r.ReadCloser.Read(p)
+	n, err := r.reader.Read(p)
 	if err != nil && !errors.Is(err, io.EOF) {
 		r.warnOnce.Do(func() {
 			slog.Warn("zstd_decompress_failed", "error", err)
@@ -1736,6 +1925,7 @@ func (r *zstdResponseReader) Read(p []byte) (int, error) {
 type decompressedBody struct {
 	reader   io.Reader
 	closer   io.Closer
+	release  func()
 	readMu   sync.Mutex
 	once     sync.Once
 	closed   bool
@@ -1753,15 +1943,19 @@ func (d *decompressedBody) Read(p []byte) (int, error) {
 
 func (d *decompressedBody) Close() error {
 	d.once.Do(func() {
-		// Interrupt network input before waiting for Read or closing a decoder:
-		// zstd Close drains its pipeline, and decoder state is not Read/Close safe.
+		// Interrupt network input before waiting for Read or releasing a pooled decoder:
+		// decoder state is not Read/Reset/Close safe concurrently.
 		d.closeErr = d.closer.Close()
 		d.readMu.Lock()
 		defer d.readMu.Unlock()
 		d.closed = true
-		if rc, ok := d.reader.(io.Closer); ok {
+		if d.release != nil {
+			d.release()
+			d.release = nil
+		} else if rc, ok := d.reader.(io.Closer); ok {
 			_ = rc.Close()
 		}
+		d.reader = nil
 	})
 	return d.closeErr
 }

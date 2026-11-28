@@ -626,6 +626,7 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthrough(
 		keepaliveTimer.Reset(keepaliveInterval)
 	}
 	inPartialEvent := false
+	var writeBuf []byte
 
 	goneResult := func(cause error) (*streamingResult, error) {
 		return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: true}, newAnthropicClientGoneError(anthropicGoneStream, cause)
@@ -725,7 +726,8 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthrough(
 			if data, ok := extractAnthropicSSEDataLine(line); ok {
 				trimmed := strings.TrimSpace(data)
 				observer.ObserveAnthropic([]byte(trimmed))
-				if anthropicStreamEventIsTerminal("", trimmed) {
+				if (trimmed == "[DONE]" || strings.Contains(trimmed, "message_stop") || strings.Contains(trimmed, `\u`)) &&
+					anthropicStreamEventIsTerminal("", trimmed) {
 					sawTerminalEvent = true
 				}
 				if firstTokenMs == nil && trimmed != "" && trimmed != "[DONE]" {
@@ -742,35 +744,49 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthrough(
 			}
 
 			if !clientDisconnected {
-				restored := string(reverseToolNamesIfPresent(c, []byte(line)))
 				// 写失败：立即关闭上游，不再排空。本行的 usage 已合并，已读入队列的帧继续处理。
-				if _, err := io.WriteString(w, restored); err != nil {
-					markClientGone("client write failed")
-				} else if _, err := io.WriteString(w, "\n"); err != nil {
-					markClientGone("client write failed")
-				} else if line == "" {
-					// 按 SSE 事件边界刷出，减少每行 flush 带来的 syscall 开销。
-					flusher.Flush()
-					lastDataAt = time.Now()
-					resetKeepaliveTimer()
-					inPartialEvent = false
+				// 单次写出整行（含 '\n'），保持 opsCaptureWriter #725 完整 SSE 行快路径生效，
+				// 避免将正文与 "\n" 拆成两次写入导致击穿快路径退化为逐字节 state.probe 缓冲。
+				if line == "" {
+					if _, err := io.WriteString(w, "\n"); err != nil {
+						markClientGone("client write failed")
+					} else {
+						// 按 SSE 事件边界刷出，减少每行 flush 带来的 syscall 开销。
+						flusher.Flush()
+						lastDataAt = time.Now()
+						resetKeepaliveTimer()
+						inPartialEvent = false
+					}
 				} else {
-					inPartialEvent = true
-					if observedBytes > 0 {
-						if topUpErr := streamBalanceGuard.ObserveStreamingOutput(guardCtx, observedBytes); topUpErr != nil {
-							if inPartialEvent {
-								_, _ = io.WriteString(w, "\n")
+					writeBuf = append(writeBuf[:0], line...)
+					out := reverseToolNamesIfPresent(c, writeBuf)
+					out = append(out, '\n')
+					_, writeErr := w.Write(out)
+					if cap(out) <= 64*1024 {
+						writeBuf = out
+					} else if cap(writeBuf) > 64*1024 {
+						writeBuf = nil
+					}
+					if writeErr != nil {
+						markClientGone("client write failed")
+					} else {
+						inPartialEvent = true
+						if observedBytes > 0 {
+							if topUpErr := streamBalanceGuard.ObserveStreamingOutput(guardCtx, observedBytes); topUpErr != nil {
+								if inPartialEvent {
+									_, _ = io.WriteString(w, "\n")
+								}
+								flusher.Flush()
+								_ = resp.Body.Close()
+								logger.LegacyPrintf("service.gateway", "[Anthropic passthrough] Stream output hold top-up failed, aborting upstream: account=%d error=%v", account.ID, topUpErr)
+								return &streamingResult{
+									usage:            usage,
+									firstTokenMs:     firstTokenMs,
+									clientDisconnect: clientDisconnected,
+									incompleteStream: !sawTerminalEvent,
+									progress:         progress,
+								}, wrapStreamOutputHoldTopUpFailure(topUpErr)
 							}
-							flusher.Flush()
-							_ = resp.Body.Close()
-							logger.LegacyPrintf("service.gateway", "[Anthropic passthrough] Stream output hold top-up failed, aborting upstream: account=%d error=%v", account.ID, topUpErr)
-							return &streamingResult{
-								usage:            usage,
-								firstTokenMs:     firstTokenMs,
-								clientDisconnect: clientDisconnected,
-								incompleteStream: !sawTerminalEvent,
-								progress:         progress,
-							}, wrapStreamOutputHoldTopUpFailure(topUpErr)
 						}
 					}
 				}
@@ -802,7 +818,7 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthrough(
 				resetKeepaliveTimer()
 				continue
 			}
-			if _, err := fmt.Fprint(w, "event: ping\ndata: {\"type\": \"ping\"}\n\n"); err != nil {
+			if _, err := io.WriteString(w, "event: ping\ndata: {\"type\": \"ping\"}\n\n"); err != nil {
 				markClientGone("keepalive write failed")
 				continue
 			}
@@ -889,11 +905,18 @@ func parseSSEUsagePassthrough(data string, usage *ClaudeUsage) {
 	if usage == nil || data == "" || data == "[DONE]" {
 		return
 	}
+	// Fast path: non-terminal deltas (e.g. content_block_delta) without usage or
+	// stop_reason cannot mutate ClaudeUsage; avoid 8x gjson.Get per frame.
+	if !strings.Contains(data, `"usage"`) && !strings.Contains(data, `"stop_reason"`) && !strings.Contains(data, `\u`) {
+		return
+	}
 
 	parsed := gjson.Parse(data)
-	switch parsed.Get("type").String() {
+	eventType := parsed.Get("type").String()
+	var msgUsage, topUsage gjson.Result
+	switch eventType {
 	case "message_start":
-		msgUsage := parsed.Get("message.usage")
+		msgUsage = parsed.Get("message.usage")
 		if msgUsage.Exists() {
 			usage.InputTokens = int(msgUsage.Get("input_tokens").Int())
 			usage.OutputTokens = int(msgUsage.Get("output_tokens").Int())
@@ -909,61 +932,82 @@ func parseSSEUsagePassthrough(data string, usage *ClaudeUsage) {
 			}
 			mergeAnthropicWebSearchRequests(usage, msgUsage)
 		}
+		topUsage = parsed.Get("usage")
 	case "message_delta":
 		// 违规拒答的 message_delta 可以不带 usage，所以 stop_reason 要在 usage 判断之前读。
 		usage.noteStopReason(parsed.Get("delta.stop_reason").String())
-		deltaUsage := parsed.Get("usage")
-		if deltaUsage.Exists() {
+		topUsage = parsed.Get("usage")
+		if topUsage.Exists() {
 			// An explicit input_tokens=0 is only authoritative when the same
 			// event restates the cache split (Kiro-style final usage, upstream
 			// issue #8407). A bare placeholder zero - what re-serializing
 			// relays emit - must keep the message_start input, otherwise the
 			// whole uncached-input bucket disappears from billing.
-			if v := deltaUsage.Get("input_tokens"); v.Exists() && v.Type != gjson.Null {
-				if v.Int() != 0 || anthropicDeltaCarriesPositiveCacheUsage(deltaUsage) {
+			if v := topUsage.Get("input_tokens"); v.Exists() && v.Type != gjson.Null {
+				if v.Int() != 0 || anthropicDeltaCarriesPositiveCacheUsage(topUsage) {
 					usage.InputTokens = int(v.Int())
 				}
 			}
-			if v := deltaUsage.Get("output_tokens"); v.Exists() && v.Type != gjson.Null {
+			if v := topUsage.Get("output_tokens"); v.Exists() && v.Type != gjson.Null {
 				usage.OutputTokens = int(v.Int())
 			}
-			if v := deltaUsage.Get("cache_creation_input_tokens"); v.Exists() && v.Type != gjson.Null {
+			if v := topUsage.Get("cache_creation_input_tokens"); v.Exists() && v.Type != gjson.Null {
 				usage.CacheCreationInputTokens = int(v.Int())
-				if v.Int() == 0 && !deltaUsage.Get("cache_creation").IsObject() {
+				if v.Int() == 0 && !topUsage.Get("cache_creation").IsObject() {
 					usage.CacheCreation5mTokens = 0
 					usage.CacheCreation1hTokens = 0
 				}
 			}
-			if v := deltaUsage.Get("cache_read_input_tokens"); v.Exists() && v.Type != gjson.Null {
+			if v := topUsage.Get("cache_read_input_tokens"); v.Exists() && v.Type != gjson.Null {
 				usage.CacheReadInputTokens = int(v.Int())
 			}
 
-			cc5m := deltaUsage.Get("cache_creation.ephemeral_5m_input_tokens")
-			cc1h := deltaUsage.Get("cache_creation.ephemeral_1h_input_tokens")
+			cc5m := topUsage.Get("cache_creation.ephemeral_5m_input_tokens")
+			cc1h := topUsage.Get("cache_creation.ephemeral_1h_input_tokens")
 			if cc5m.Exists() {
 				usage.CacheCreation5mTokens = int(cc5m.Int())
 			}
 			if cc1h.Exists() {
 				usage.CacheCreation1hTokens = int(cc1h.Int())
 			}
-			mergeAnthropicWebSearchRequests(usage, deltaUsage)
+			mergeAnthropicWebSearchRequests(usage, topUsage)
+		}
+		if strings.Contains(data, `"message"`) || strings.Contains(data, `\u`) {
+			msgUsage = parsed.Get("message.usage")
+		}
+	default:
+		// Non-terminal/other frames (e.g. content_block_delta whose text happens
+		// to contain "usage" or "\u"): verify once and bail out if no usage node exists.
+		topUsage = parsed.Get("usage")
+		if strings.Contains(data, `"message"`) || strings.Contains(data, `\u`) {
+			msgUsage = parsed.Get("message.usage")
+		}
+		if !topUsage.Exists() && !msgUsage.Exists() {
+			return
 		}
 	}
 
 	if usage.CacheReadInputTokens == 0 {
-		if cached := parsed.Get("message.usage.cached_tokens").Int(); cached > 0 {
-			usage.CacheReadInputTokens = int(cached)
+		if msgUsage.Exists() {
+			if cached := msgUsage.Get("cached_tokens").Int(); cached > 0 {
+				usage.CacheReadInputTokens = int(cached)
+			}
 		}
-		if cached := parsed.Get("usage.cached_tokens").Int(); usage.CacheReadInputTokens == 0 && cached > 0 {
-			usage.CacheReadInputTokens = int(cached)
+		if usage.CacheReadInputTokens == 0 && topUsage.Exists() {
+			if cached := topUsage.Get("cached_tokens").Int(); cached > 0 {
+				usage.CacheReadInputTokens = int(cached)
+			}
 		}
 	}
 	if usage.CacheCreationInputTokens == 0 {
-		cc5m := parsed.Get("message.usage.cache_creation.ephemeral_5m_input_tokens").Int()
-		cc1h := parsed.Get("message.usage.cache_creation.ephemeral_1h_input_tokens").Int()
-		if cc5m == 0 && cc1h == 0 {
-			cc5m = parsed.Get("usage.cache_creation.ephemeral_5m_input_tokens").Int()
-			cc1h = parsed.Get("usage.cache_creation.ephemeral_1h_input_tokens").Int()
+		var cc5m, cc1h int64
+		if msgUsage.Exists() {
+			cc5m = msgUsage.Get("cache_creation.ephemeral_5m_input_tokens").Int()
+			cc1h = msgUsage.Get("cache_creation.ephemeral_1h_input_tokens").Int()
+		}
+		if cc5m == 0 && cc1h == 0 && topUsage.Exists() {
+			cc5m = topUsage.Get("cache_creation.ephemeral_5m_input_tokens").Int()
+			cc1h = topUsage.Get("cache_creation.ephemeral_1h_input_tokens").Int()
 		}
 		total := cc5m + cc1h
 		if total > 0 {
@@ -976,9 +1020,9 @@ func parseSSEUsagePassthrough(data string, usage *ClaudeUsage) {
 	// uncached input. prompt_tokens remains the total in both events. Normalize
 	// to ClaudeUsage's mutually-exclusive buckets so downstream billing does not
 	// subtract cache tokens from an already-uncached value.
-	usageNode := parsed.Get("usage")
-	if parsed.Get("type").String() == "message_start" {
-		usageNode = parsed.Get("message.usage")
+	usageNode := topUsage
+	if eventType == "message_start" {
+		usageNode = msgUsage
 	}
 	mergeAnthropicWebSearchRequests(usage, usageNode)
 	normalizeAnthropicCompatiblePromptUsage(usageNode, usage)

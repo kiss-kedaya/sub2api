@@ -312,12 +312,14 @@ type openAIImageFallbackLogKey struct {
 
 // PricingService 动态价格服务
 type PricingService struct {
-	cfg          *config.Config
-	remoteClient PricingRemoteClient
-	mu           sync.RWMutex
-	pricingData  map[string]*LiteLLMModelPricing
-	lastUpdated  time.Time
-	localHash    string
+	cfg                    *config.Config
+	remoteClient           PricingRemoteClient
+	mu                     sync.RWMutex
+	pricingData            map[string]*LiteLLMModelPricing
+	baseNameIndex          map[string]*LiteLLMModelPricing
+	baseNameIndexSourceLen int
+	lastUpdated            time.Time
+	localHash              string
 	// fallback/override 文件在最近一次成功重建时的内容指纹，定时器据此判断是否
 	// 需要从本地目录缓存重建叠加层。
 	customFilesHash string
@@ -624,9 +626,13 @@ func (s *PricingService) reloadCustomPricingLayers() error {
 		}
 	}
 
+	baseNameIndex := s.buildBaseNameIndex(data)
+
 	s.mu.Lock()
 	warnDroppedLongContextLadders(s.pricingData, data)
 	s.pricingData = data
+	s.baseNameIndex = baseNameIndex
+	s.baseNameIndexSourceLen = len(data)
 	s.customFilesHash = fingerprint
 	s.resetImageFallbackLogCache()
 	s.mu.Unlock()
@@ -691,10 +697,14 @@ func (s *PricingService) downloadPricingData() error {
 		logger.LegacyPrintf("service.pricing", "[Pricing] Failed to save hash: %v", err)
 	}
 
+	baseNameIndex := s.buildBaseNameIndex(data)
+
 	// 更新内存数据
 	s.mu.Lock()
 	warnDroppedLongContextLadders(s.pricingData, data)
 	s.pricingData = data
+	s.baseNameIndex = baseNameIndex
+	s.baseNameIndexSourceLen = len(data)
 	s.lastUpdated = time.Now()
 	s.localHash = syncHash
 	s.customFilesHash = customFilesHash
@@ -1133,9 +1143,13 @@ func (s *PricingService) loadPricingData(filePath string) error {
 	hash := sha256.Sum256(data)
 	hashStr := hex.EncodeToString(hash[:])
 
+	baseNameIndex := s.buildBaseNameIndex(pricingData)
+
 	s.mu.Lock()
 	warnDroppedLongContextLadders(s.pricingData, pricingData)
 	s.pricingData = pricingData
+	s.baseNameIndex = baseNameIndex
+	s.baseNameIndexSourceLen = len(pricingData)
 	s.localHash = hashStr
 	s.customFilesHash = customFilesHash
 	s.resetImageFallbackLogCache()
@@ -1342,6 +1356,9 @@ func (s *PricingService) lookupIdentifiedModelPricingLocked(lookupCandidates []s
 	// 3. 尝试模糊匹配（去掉版本号后缀）
 	// claude-opus-4-5-20251101 -> claude-opus-4.5
 	baseName := s.extractBaseName(lookupCandidates[0])
+	if s.baseNameIndex != nil && s.baseNameIndexSourceLen == len(s.pricingData) {
+		return s.baseNameIndex[baseName]
+	}
 	for key, pricing := range s.pricingData {
 		keyBase := s.extractBaseName(strings.ToLower(key))
 		if keyBase == baseName {
@@ -1350,6 +1367,36 @@ func (s *PricingService) lookupIdentifiedModelPricingLocked(lookupCandidates []s
 	}
 
 	return nil
+}
+
+// buildBaseNameIndex precomputes a deterministic baseName -> pricing index when
+// pricing data is loaded so step 3 of lookupIdentifiedModelPricingLocked runs in
+// O(1) instead of scanning the entire pricing table on every cache/exact miss.
+// Tie-breaking prefers the canonical unversioned key (keyLower == keyBase), then
+// the lexicographically smallest key.
+func (s *PricingService) buildBaseNameIndex(data map[string]*LiteLLMModelPricing) map[string]*LiteLLMModelPricing {
+	if len(data) == 0 {
+		return nil
+	}
+	index := make(map[string]*LiteLLMModelPricing, len(data))
+	chosenKey := make(map[string]string, len(data))
+	for key, pricing := range data {
+		keyLower := strings.ToLower(key)
+		keyBase := s.extractBaseName(keyLower)
+		prevKey, exists := chosenKey[keyBase]
+		if !exists {
+			chosenKey[keyBase] = keyLower
+			index[keyBase] = pricing
+			continue
+		}
+		prevExact := prevKey == keyBase
+		currExact := keyLower == keyBase
+		if (currExact && !prevExact) || (currExact == prevExact && keyLower < prevKey) {
+			chosenKey[keyBase] = keyLower
+			index[keyBase] = pricing
+		}
+	}
+	return index
 }
 
 // GetIdentifiedModelPricing 在价格表中确定性地识别模型，识别不到时返回 nil。

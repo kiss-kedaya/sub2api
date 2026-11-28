@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/apicompat"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
@@ -2298,9 +2299,10 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 	responseID := ""
 	ttftMode := s.openAITTFTMode(ctx)
 	clientDisconnected := false
-	// Output the upstream produced, kept so a stream that ends without a terminal
-	// frame is billed from an estimate instead of being dropped for free.
-	streamOutputAccumulator := apicompat.NewBufferedResponseAccumulator()
+	// Output the upstream produced, kept via lightweight token meters so a stream
+	// that ends without a terminal frame is billed from an estimate without
+	// retaining response text or unmarshaling every delta into ResponsesStreamEvent.
+	var streamOutputEstimator openAIPassthroughOutputEstimator
 	streamAccountID := int64(0)
 	if account != nil {
 		streamAccountID = account.ID
@@ -2391,8 +2393,20 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 	}
 	defer flushPendingOutput()
 	eventInProgress := false
+	var writeBuf []byte
 	writeForwardedLine := func(line string) bool {
-		if _, err := fmt.Fprintln(w, line); err != nil {
+		var err error
+		if line == "" {
+			_, err = io.WriteString(w, "\n")
+		} else {
+			writeBuf = append(writeBuf[:0], line...)
+			writeBuf = append(writeBuf, '\n')
+			_, err = w.Write(writeBuf)
+			if cap(writeBuf) > 64*1024 {
+				writeBuf = nil
+			}
+		}
+		if err != nil {
 			markClientDisconnected()
 			return false
 		}
@@ -2451,7 +2465,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 		if !writePendingLines() || !terminateOpenEvent() {
 			return
 		}
-		if _, err := fmt.Fprint(w, buildOpenAIResponseFailedSSE(responseID, originalModel, bareErrorPayload, failedMessage)); err != nil {
+		if _, err := io.WriteString(w, buildOpenAIResponseFailedSSE(responseID, originalModel, bareErrorPayload, failedMessage)); err != nil {
 			markClientDisconnected()
 			return
 		}
@@ -2492,7 +2506,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 		if incompleteStream {
 			// No terminal frame means no real usage can arrive. Keep a lower-bound
 			// estimate of what the upstream already produced so it is not free.
-			incompleteOutputTokens = estimateIncompleteStreamOutputTokens(streamOutputAccumulator)
+			incompleteOutputTokens = streamOutputEstimator.tokens()
 		}
 		return &openaiStreamingResultPassthrough{
 			usage:                    usage,
@@ -2552,7 +2566,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 				s.markOpenAIStreamFinalFailure(c, account, true, upstreamRequestID, true)
 				stopKeepalive()
 				if !clientDisconnected && writePendingLines() {
-					if _, err := fmt.Fprint(w, line+"\n\n"); err != nil {
+					if _, err := io.WriteString(w, line+"\n\n"); err != nil {
 						markClientDisconnected()
 					} else {
 						flushPending = true
@@ -2781,8 +2795,10 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 				firstTokenMs = &ms
 			}
 			s.parseSSEUsageBytesWithType(dataBytes, eventType, usage)
-			observePassthroughStreamOutput(streamOutputAccumulator, eventType, dataBytes)
-			lineObservedOutputBytes = responsesSSEDataOutputBytes(eventType, dataBytes)
+			streamOutputEstimator.observeFrame(frame, eventType)
+			if streamBalanceGuard != nil {
+				lineObservedOutputBytes = responsesSSEDataOutputBytes(eventType, dataBytes)
+			}
 		}
 		if line == "" {
 			pendingSSEEventType = ""
@@ -3267,4 +3283,184 @@ func writeOpenAIPassthroughResponseHeaders(dst http.Header, src http.Header, fil
 		// diagnostic. Rewriting it would corrupt the client's next turn.
 		dst.Add(turnStateKey, v)
 	}
+}
+
+// trimmedTextTokenMeter counts runes and ASCII runes of a streamed string after
+// trimming leading and trailing Unicode whitespace, matching estimateTokensForText
+// without retaining the underlying text.
+type trimmedTextTokenMeter struct {
+	started           bool
+	runes             int
+	ascii             int
+	pendingSpaceRunes int
+	pendingSpaceASCII int
+}
+
+func (m *trimmedTextTokenMeter) reset() {
+	*m = trimmedTextTokenMeter{}
+}
+
+func (m *trimmedTextTokenMeter) add(s string) {
+	if s == "" {
+		return
+	}
+	for i := 0; i < len(s); i++ {
+		b := s[i]
+		if b >= 0x80 {
+			for _, r := range s[i:] {
+				m.addRune(r)
+			}
+			return
+		}
+		if b == ' ' || b == '\t' || b == '\n' || b == '\v' || b == '\f' || b == '\r' {
+			if m.started {
+				m.pendingSpaceRunes++
+				m.pendingSpaceASCII++
+			}
+			continue
+		}
+		m.started = true
+		if m.pendingSpaceRunes > 0 {
+			m.runes += m.pendingSpaceRunes
+			m.ascii += m.pendingSpaceASCII
+			m.pendingSpaceRunes = 0
+			m.pendingSpaceASCII = 0
+		}
+		m.runes++
+		m.ascii++
+	}
+}
+
+func (m *trimmedTextTokenMeter) addRune(r rune) {
+	if unicode.IsSpace(r) {
+		if m.started {
+			m.pendingSpaceRunes++
+			if r <= 0x7f {
+				m.pendingSpaceASCII++
+			}
+		}
+		return
+	}
+	m.started = true
+	if m.pendingSpaceRunes > 0 {
+		m.runes += m.pendingSpaceRunes
+		m.ascii += m.pendingSpaceASCII
+		m.pendingSpaceRunes = 0
+		m.pendingSpaceASCII = 0
+	}
+	m.runes++
+	if r <= 0x7f {
+		m.ascii++
+	}
+}
+
+func (m *trimmedTextTokenMeter) tokens() int {
+	if m.runes == 0 {
+		return 0
+	}
+	if float64(m.ascii)/float64(m.runes) >= 0.8 {
+		return (m.runes + 3) / 4
+	}
+	return m.runes
+}
+
+type passthroughFuncCallMeter struct {
+	name string
+	args trimmedTextTokenMeter
+}
+
+// openAIPassthroughOutputEstimator tracks billable stream output tokens for
+// incomplete passthrough streams without retaining full response text or running
+// per-frame json.Unmarshal into apicompat.ResponsesStreamEvent.
+type openAIPassthroughOutputEstimator struct {
+	text                 trimmedTextTokenMeter
+	refusal              trimmedTextTokenMeter
+	reasoning            trimmedTextTokenMeter
+	funcCalls            []passthroughFuncCallMeter
+	outputIndexToFuncIdx map[int]int
+}
+
+func (e *openAIPassthroughOutputEstimator) observeFrame(frame openAISSEDataFrame, eventType string) {
+	if e == nil || !frame.validJSON {
+		return
+	}
+	if eventType == "" {
+		eventType = frame.eventType
+	}
+	switch eventType {
+	case "response.output_text.delta":
+		if delta := frame.root.Get("delta"); delta.Type == gjson.String && delta.Str != "" {
+			e.text.add(delta.Str)
+		}
+	case "response.refusal.delta":
+		if delta := frame.root.Get("delta"); delta.Type == gjson.String && delta.Str != "" {
+			e.refusal.add(delta.Str)
+		}
+	case "response.reasoning_summary_text.delta", "response.reasoning_text.delta":
+		if delta := frame.root.Get("delta"); delta.Type == gjson.String && delta.Str != "" {
+			e.reasoning.add(delta.Str)
+		}
+	case "response.output_item.added", "response.output_item.done":
+		item := frame.root.Get("item")
+		if !item.IsObject() {
+			return
+		}
+		itemType := item.Get("type").String()
+		if itemType != "function_call" && itemType != "custom_tool_call" {
+			return
+		}
+		outputIndex := int(frame.root.Get("output_index").Int())
+		if e.outputIndexToFuncIdx == nil {
+			e.outputIndexToFuncIdx = make(map[int]int)
+		}
+		idx, exists := e.outputIndexToFuncIdx[outputIndex]
+		if !exists {
+			idx = len(e.funcCalls)
+			e.outputIndexToFuncIdx[outputIndex] = idx
+			e.funcCalls = append(e.funcCalls, passthroughFuncCallMeter{})
+		}
+		call := &e.funcCalls[idx]
+		if name := item.Get("name"); name.Type == gjson.String && name.Str != "" {
+			call.name = name.Str
+		}
+		if eventType == "response.output_item.done" {
+			argField := "arguments"
+			if itemType == "custom_tool_call" {
+				argField = "input"
+			}
+			if arguments := item.Get(argField); arguments.Type == gjson.String && arguments.Str != "" {
+				call.args.reset()
+				call.args.add(arguments.Str)
+			}
+		}
+	case "response.function_call_arguments.delta", "response.custom_tool_call_input.delta":
+		if delta := frame.root.Get("delta"); delta.Type == gjson.String && delta.Str != "" {
+			if idx, ok := e.outputIndexToFuncIdx[int(frame.root.Get("output_index").Int())]; ok {
+				e.funcCalls[idx].args.add(delta.Str)
+			}
+		}
+	case "response.function_call_arguments.done", "response.custom_tool_call_input.done":
+		argField := "arguments"
+		if eventType == "response.custom_tool_call_input.done" {
+			argField = "input"
+		}
+		if completed := frame.root.Get(argField); completed.Type == gjson.String && completed.Str != "" {
+			if idx, ok := e.outputIndexToFuncIdx[int(frame.root.Get("output_index").Int())]; ok {
+				e.funcCalls[idx].args.reset()
+				e.funcCalls[idx].args.add(completed.Str)
+			}
+		}
+	}
+}
+
+func (e *openAIPassthroughOutputEstimator) tokens() int {
+	if e == nil {
+		return 0
+	}
+	total := e.reasoning.tokens() + e.text.tokens() + e.refusal.tokens()
+	for i := range e.funcCalls {
+		total += estimateTokensForText(e.funcCalls[i].name)
+		total += e.funcCalls[i].args.tokens()
+	}
+	return total
 }

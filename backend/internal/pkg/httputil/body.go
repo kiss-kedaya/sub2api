@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"unsafe"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ipnotice"
@@ -216,29 +217,167 @@ func ReadLenientJSONRequestBodyWithPrealloc(req *http.Request, maxNormalizedByte
 	return body, nil
 }
 
+type pooledRequestZstdDecoder struct {
+	dec *zstd.Decoder
+	br  bytes.Reader
+}
+
+type pooledRequestGzipReader struct {
+	gr *gzip.Reader
+	br bytes.Reader
+}
+
+type pooledRequestZlibReader struct {
+	zr io.ReadCloser
+	br bytes.Reader
+}
+
+var (
+	requestZstdDecoderPool sync.Pool
+	requestGzipReaderPool  sync.Pool
+	requestZlibReaderPool  sync.Pool
+)
+
+func acquireRequestZstdDecoder(raw []byte) (*pooledRequestZstdDecoder, error) {
+	var p *pooledRequestZstdDecoder
+	if pooled, ok := requestZstdDecoderPool.Get().(*pooledRequestZstdDecoder); ok && pooled != nil {
+		p = pooled
+	} else {
+		p = &pooledRequestZstdDecoder{}
+	}
+	p.br.Reset(raw)
+	var err error
+	if p.dec == nil {
+		p.dec, err = zstd.NewReader(&p.br, zstd.WithDecoderConcurrency(1))
+	} else {
+		err = p.dec.Reset(&p.br)
+	}
+	if err != nil {
+		p.br.Reset(nil)
+		if p.dec != nil {
+			p.dec.Close()
+			p.dec = nil
+		}
+		return nil, err
+	}
+	return p, nil
+}
+
+func releaseRequestZstdDecoder(p *pooledRequestZstdDecoder) {
+	if p == nil {
+		return
+	}
+	var resetErr error
+	if p.dec != nil {
+		resetErr = p.dec.Reset(nil)
+	}
+	p.br.Reset(nil)
+	if resetErr != nil {
+		p.dec.Close()
+		p.dec = nil
+		return
+	}
+	requestZstdDecoderPool.Put(p)
+}
+
+func acquireRequestGzipReader(raw []byte) (*pooledRequestGzipReader, error) {
+	var p *pooledRequestGzipReader
+	if pooled, ok := requestGzipReaderPool.Get().(*pooledRequestGzipReader); ok && pooled != nil {
+		p = pooled
+	} else {
+		p = &pooledRequestGzipReader{}
+	}
+	p.br.Reset(raw)
+	var err error
+	if p.gr == nil {
+		p.gr, err = gzip.NewReader(&p.br)
+	} else {
+		err = p.gr.Reset(&p.br)
+	}
+	if err != nil {
+		p.br.Reset(nil)
+		if p.gr != nil {
+			p.gr.Header = gzip.Header{}
+		}
+		requestGzipReaderPool.Put(p)
+		return nil, err
+	}
+	return p, nil
+}
+
+func releaseRequestGzipReader(p *pooledRequestGzipReader) {
+	if p == nil {
+		return
+	}
+	if p.gr != nil {
+		_ = p.gr.Close()
+		p.gr.Header = gzip.Header{}
+	}
+	// *bytes.Reader implements flate.Reader so both gzip.Reader.r and its internal
+	// flate decompressor hold only &p.br; Reset(nil) severs the raw slice reference.
+	p.br.Reset(nil)
+	requestGzipReaderPool.Put(p)
+}
+
+func acquireRequestZlibReader(raw []byte) (*pooledRequestZlibReader, error) {
+	var p *pooledRequestZlibReader
+	if pooled, ok := requestZlibReaderPool.Get().(*pooledRequestZlibReader); ok && pooled != nil {
+		p = pooled
+	} else {
+		p = &pooledRequestZlibReader{}
+	}
+	p.br.Reset(raw)
+	var err error
+	if p.zr == nil {
+		p.zr, err = zlib.NewReader(&p.br)
+	} else if resetter, ok := p.zr.(zlib.Resetter); ok {
+		err = resetter.Reset(&p.br, nil)
+	} else {
+		_ = p.zr.Close()
+		p.zr, err = zlib.NewReader(&p.br)
+	}
+	if err != nil {
+		p.br.Reset(nil)
+		requestZlibReaderPool.Put(p)
+		return nil, err
+	}
+	return p, nil
+}
+
+func releaseRequestZlibReader(p *pooledRequestZlibReader) {
+	if p == nil {
+		return
+	}
+	if p.zr != nil {
+		_ = p.zr.Close()
+	}
+	p.br.Reset(nil)
+	requestZlibReaderPool.Put(p)
+}
+
 func decompressRequestBody(encoding string, raw []byte) ([]byte, error) {
 	switch encoding {
 	case "zstd":
-		dec, err := zstd.NewReader(bytes.NewReader(raw))
+		p, err := acquireRequestZstdDecoder(raw)
 		if err != nil {
 			return nil, err
 		}
-		defer dec.Close()
-		return readDecompressedRequestBody(dec)
+		defer releaseRequestZstdDecoder(p)
+		return readDecompressedRequestBody(p.dec)
 	case "gzip", "x-gzip":
-		gr, err := gzip.NewReader(bytes.NewReader(raw))
+		p, err := acquireRequestGzipReader(raw)
 		if err != nil {
 			return nil, err
 		}
-		defer func() { _ = gr.Close() }()
-		return readDecompressedRequestBody(gr)
+		defer releaseRequestGzipReader(p)
+		return readDecompressedRequestBody(p.gr)
 	case "deflate":
-		zr, err := zlib.NewReader(bytes.NewReader(raw))
+		p, err := acquireRequestZlibReader(raw)
 		if err != nil {
 			return nil, err
 		}
-		defer func() { _ = zr.Close() }()
-		return readDecompressedRequestBody(zr)
+		defer releaseRequestZlibReader(p)
+		return readDecompressedRequestBody(p.zr)
 	default:
 		return nil, errors.New("unsupported Content-Encoding")
 	}
