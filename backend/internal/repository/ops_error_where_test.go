@@ -9,10 +9,10 @@ import (
 
 func TestBuildOpsErrorLogsWhere_RequestIDMatchesEitherColumn(t *testing.T) {
 	where, args := buildOpsErrorLogsWhere(&service.OpsErrorLogFilter{RequestID: "fcfb9013"})
-	if !strings.Contains(where, "e.request_id") || !strings.Contains(where, "e.client_request_id") || !strings.Contains(where, "ILIKE") {
-		t.Fatalf("request id search should hit both columns: %s", where)
+	if !strings.Contains(where, "e.request_id = $1") || !strings.Contains(where, "e.client_request_id = $1") {
+		t.Fatalf("default request id search should use exact match on both columns: %s", where)
 	}
-	if len(args) != 1 || args[0] != "%fcfb9013%" {
+	if len(args) != 1 || args[0] != "fcfb9013" {
 		t.Fatalf("args %+v", args)
 	}
 }
@@ -165,8 +165,11 @@ func TestBuildOpsErrorLogsWhere_UserOwnershipIsDirectOnly(t *testing.T) {
 func TestBuildOpsErrorLogsWhere_RequestIDSearchModes(t *testing.T) {
 	for _, tc := range []struct{ input, operator, pattern string }{
 		{"=client:uuid", "=", "uuid"},
-		{"^local:abc%_", "ILIKE", "abc\\%\\_%"},
-		{"part%_", "ILIKE", "%part\\%\\_%"},
+		{"client:uuid", "=", "uuid"},
+		{"=*literal", "=", "*literal"},
+		{"^local:abc%_", "LIKE", "abc\\%\\_%"},
+		{"part%_", "=", "part%_"},
+		{"*part%_", "ILIKE", "%part\\%\\_%"},
 	} {
 		t.Run(tc.input, func(t *testing.T) {
 			where, args := buildOpsErrorLogsWhere(&service.OpsErrorLogFilter{RequestID: tc.input})
@@ -175,6 +178,15 @@ func TestBuildOpsErrorLogsWhere_RequestIDSearchModes(t *testing.T) {
 			}
 			if len(args) != 1 || args[0] != tc.pattern {
 				t.Fatalf("unexpected arguments: %v", args)
+			}
+		})
+	}
+
+	for _, emptyInput := range []string{"=", "^", "*", "=client:", "^local:", "client:", "local:"} {
+		t.Run("empty_"+emptyInput, func(t *testing.T) {
+			where, args := buildOpsErrorLogsWhere(&service.OpsErrorLogFilter{RequestID: emptyInput})
+			if !strings.Contains(where, " AND FALSE") || strings.Contains(where, "e.request_id") || len(args) != 0 {
+				t.Fatalf("sigil-only or prefix-only request id %q must fail closed with FALSE, got where=%s args=%v", emptyInput, where, args)
 			}
 		})
 	}

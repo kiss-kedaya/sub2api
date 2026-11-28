@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -309,7 +310,7 @@ func (s *OpsCleanupService) runScheduled() {
 	counts, err := s.runCleanupOnce(ctx)
 	if err != nil {
 		s.recordHeartbeatError(runAt, time.Since(startedAt), err)
-		logger.LegacyPrintf("service.ops_cleanup", "[OpsCleanup] cleanup failed: %v", err)
+		logger.LegacyPrintf("service.ops_cleanup", "[OpsCleanup] cleanup failed (deleted_counts=%s): %v", counts.String(), err)
 		return
 	}
 	s.recordHeartbeatSuccess(runAt, time.Since(startedAt), counts)
@@ -339,16 +340,21 @@ func (s *OpsCleanupService) runCleanupOnce(ctx context.Context) (opsCleanupDelet
 		{effective.HourlyMetricsRetentionDays, "ops_metrics_daily", "bucket_date", true, &out.dailyPreagg},
 	}
 
+	// Per-table fault isolation: one table failing (e.g. heavy ops_error_logs
+	// timing out) must not skip the remaining Ops tables or channel monitor
+	// daily maintenance. Record each error, keep going, and aggregate at end.
+	var errs []error
 	for _, t := range targets {
 		cutoff, truncate, ok := opsCleanupPlan(now, t.retentionDays)
 		if !ok {
 			continue
 		}
 		n, err := opsCleanupRunOne(ctx, s.db, truncate, cutoff, t.table, t.timeCol, t.castDate, opsCleanupBatchSize)
-		if err != nil {
-			return out, err
-		}
 		*t.counter = n
+		if err != nil {
+			logger.LegacyPrintf("service.ops_cleanup", "[OpsCleanup] table %s cleanup failed (deleted=%d): %v", t.table, n, err)
+			errs = append(errs, fmt.Errorf("%s: %w", t.table, err))
+		}
 	}
 
 	// Channel monitor 每日维护（聚合昨日明细 + 软删过期明细/聚合）。
@@ -360,7 +366,7 @@ func (s *OpsCleanupService) runCleanupOnce(ctx context.Context) (opsCleanupDelet
 		}
 	}
 
-	return out, nil
+	return out, errors.Join(errs...)
 }
 
 func (s *OpsCleanupService) tryAcquireLeaderLock(ctx context.Context) (func(), bool) {

@@ -170,9 +170,11 @@ func (r *usageLogRepository) ListWithFilters(ctx context.Context, params paginat
 	return logs, page, nil
 }
 
-// Exact IDs use the btree indexes; prefixes/fragments use the trigram GIN indexes
-// (migrations 256 & 348). User-scoped callers set includeUpstream=false so regular
-// users can search request_id, X-Request-Id, X-Client-Request-Id, and response_msg_id
+// Exact IDs (default and "=id") use the btree indexes on every PostgreSQL locale.
+// Prefixes ("^id") use case-sensitive LIKE '...%' so callers do not depend on
+// pg_trgm GIN indexes, while "*id" retains explicit substring ILIKE '%...%' on
+// demand. User-scoped callers set includeUpstream=false so regular users can
+// search request_id, X-Request-Id, X-Client-Request-Id, and response_msg_id
 // without probing admin-only upstream_request_id values.
 func appendUsageRequestIDCondition(conditions []string, args []any, input string) ([]string, []any) {
 	return appendUsageRequestIDConditionWithOptions(conditions, args, input, true)
@@ -184,33 +186,56 @@ func appendUsageRequestIDConditionWithOptions(conditions []string, args []any, i
 		return conditions, args
 	}
 	pos := len(args) + 1
-	if strings.HasPrefix(input, "=") {
+	if strings.HasPrefix(input, "*") {
 		id := strings.TrimSpace(input[1:])
-		base := service.NormalizeUsageRequestIDKey(id)
-		if includeUpstream {
-			conditions = append(conditions, fmt.Sprintf("(request_id IN ($%d, $%d, $%d) OR response_request_id = $%d OR client_request_id = $%d OR response_msg_id = $%d OR upstream_request_id = $%d)", pos, pos+1, pos+2, pos+3, pos, pos+3, pos+3))
-		} else {
-			conditions = append(conditions, fmt.Sprintf("(request_id IN ($%d, $%d, $%d) OR response_request_id = $%d OR client_request_id = $%d OR response_msg_id = $%d)", pos, pos+1, pos+2, pos+3, pos, pos+3))
+		if id == "" {
+			// Non-empty request_id filter with empty wildcard target must fail closed
+			// rather than dropping the predicate (important for both reads and cleanup deletes).
+			return append(conditions, "FALSE"), args
 		}
-		return conditions, append(args, base, "client:"+base, "local:"+base, id)
+		pattern := "%" + escapeLikePattern(id) + "%"
+		if includeUpstream {
+			conditions = append(conditions, fmt.Sprintf("(request_id ILIKE $%d OR response_request_id ILIKE $%d OR client_request_id ILIKE $%d OR response_msg_id ILIKE $%d OR upstream_request_id ILIKE $%d)", pos, pos, pos, pos, pos))
+		} else {
+			conditions = append(conditions, fmt.Sprintf("(request_id ILIKE $%d OR response_request_id ILIKE $%d OR client_request_id ILIKE $%d OR response_msg_id ILIKE $%d)", pos, pos, pos, pos))
+		}
+		return conditions, append(args, pattern)
 	}
-	pattern := "%" + escapeLikePattern(input) + "%"
 	if strings.HasPrefix(input, "^") {
 		id := strings.TrimSpace(input[1:])
 		base := service.NormalizeUsageRequestIDKey(id)
+		if id == "" || base == "" {
+			return append(conditions, "FALSE"), args
+		}
+		clientCond := fmt.Sprintf("client_request_id LIKE $%d", pos)
+		if id != base {
+			clientCond = fmt.Sprintf("(client_request_id LIKE $%d OR client_request_id LIKE $%d)", pos, pos+3)
+		}
 		if includeUpstream {
-			conditions = append(conditions, fmt.Sprintf("(request_id ILIKE $%d OR request_id ILIKE $%d OR request_id ILIKE $%d OR response_request_id ILIKE $%d OR client_request_id ILIKE $%d OR response_msg_id ILIKE $%d OR upstream_request_id ILIKE $%d)", pos, pos+1, pos+2, pos+3, pos, pos+3, pos+3))
+			conditions = append(conditions, fmt.Sprintf("(request_id LIKE $%d OR request_id LIKE $%d OR request_id LIKE $%d OR response_request_id LIKE $%d OR %s OR response_msg_id LIKE $%d OR upstream_request_id LIKE $%d)", pos, pos+1, pos+2, pos+3, clientCond, pos+3, pos+3))
 		} else {
-			conditions = append(conditions, fmt.Sprintf("(request_id ILIKE $%d OR request_id ILIKE $%d OR request_id ILIKE $%d OR response_request_id ILIKE $%d OR client_request_id ILIKE $%d OR response_msg_id ILIKE $%d)", pos, pos+1, pos+2, pos+3, pos, pos+3))
+			conditions = append(conditions, fmt.Sprintf("(request_id LIKE $%d OR request_id LIKE $%d OR request_id LIKE $%d OR response_request_id LIKE $%d OR %s OR response_msg_id LIKE $%d)", pos, pos+1, pos+2, pos+3, clientCond, pos+3))
 		}
 		return conditions, append(args, escapeLikePattern(base)+"%", escapeLikePattern("client:"+base)+"%", escapeLikePattern("local:"+base)+"%", escapeLikePattern(id)+"%")
 	}
-	if includeUpstream {
-		conditions = append(conditions, fmt.Sprintf("(request_id ILIKE $%d OR response_request_id ILIKE $%d OR client_request_id ILIKE $%d OR response_msg_id ILIKE $%d OR upstream_request_id ILIKE $%d)", pos, pos, pos, pos, pos))
-	} else {
-		conditions = append(conditions, fmt.Sprintf("(request_id ILIKE $%d OR response_request_id ILIKE $%d OR client_request_id ILIKE $%d OR response_msg_id ILIKE $%d)", pos, pos, pos, pos))
+	id := input
+	if strings.HasPrefix(input, "=") {
+		id = strings.TrimSpace(input[1:])
 	}
-	return conditions, append(args, pattern)
+	base := service.NormalizeUsageRequestIDKey(id)
+	if id == "" || base == "" {
+		return append(conditions, "FALSE"), args
+	}
+	clientCond := fmt.Sprintf("client_request_id = $%d", pos)
+	if id != base {
+		clientCond = fmt.Sprintf("client_request_id IN ($%d, $%d)", pos, pos+3)
+	}
+	if includeUpstream {
+		conditions = append(conditions, fmt.Sprintf("(request_id IN ($%d, $%d, $%d) OR response_request_id = $%d OR %s OR response_msg_id = $%d OR upstream_request_id = $%d)", pos, pos+1, pos+2, pos+3, clientCond, pos+3, pos+3))
+	} else {
+		conditions = append(conditions, fmt.Sprintf("(request_id IN ($%d, $%d, $%d) OR response_request_id = $%d OR %s OR response_msg_id = $%d)", pos, pos+1, pos+2, pos+3, clientCond, pos+3))
+	}
+	return conditions, append(args, base, "client:"+base, "local:"+base, id)
 }
 
 func upstreamModelMismatchCondition(column string, mismatch bool) string {

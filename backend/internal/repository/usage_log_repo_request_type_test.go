@@ -467,9 +467,9 @@ func TestUsageLogRepositoryListWithFiltersRequestID(t *testing.T) {
 
 	filters := usagestats.UsageLogFilters{RequestID: " req-0123 "}
 
-	// 片段匹配：request_id 与 upstream_request_id 任一命中即可，参数已 trim 并加通配装饰符。
-	mock.ExpectQuery("SELECT .* FROM usage_logs WHERE \\(request_id ILIKE \\$1 OR response_request_id ILIKE \\$1 OR client_request_id ILIKE \\$1 OR response_msg_id ILIKE \\$1 OR upstream_request_id ILIKE \\$1\\) ORDER BY id DESC LIMIT \\$2 OFFSET \\$3").
-		WithArgs("%req-0123%", 21, 0).
+	// 默认精确匹配：命中 btree 索引（支持裸 ID 与 client:/local: 前缀变体）。
+	mock.ExpectQuery("SELECT .* FROM usage_logs WHERE \\(request_id IN \\(\\$1, \\$2, \\$3\\) OR response_request_id = \\$4 OR client_request_id = \\$1 OR response_msg_id = \\$4 OR upstream_request_id = \\$4\\) ORDER BY id DESC LIMIT \\$5 OFFSET \\$6").
+		WithArgs("req-0123", "client:req-0123", "local:req-0123", "req-0123", 21, 0).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}))
 
 	logs, page, err := repo.ListWithFilters(context.Background(), pagination.PaginationParams{Page: 1, PageSize: 20}, filters)
@@ -483,8 +483,8 @@ func TestUsageLogRepositoryListWithFiltersRequestIDEscapesLikeWildcards(t *testi
 	db, mock := newSQLMock(t)
 	repo := &usageLogRepository{sql: db}
 
-	// `%` / `_` / `\` 必须先转义，否则 `%` 拼成 '%%%' 会命中全表。
-	filters := usagestats.UsageLogFilters{RequestID: ` 100%_\x `}
+	// 显式 * 包含匹配中 `%` / `_` / `\` 必须先转义，否则 `%` 拼成 '%%%' 会命中全表。
+	filters := usagestats.UsageLogFilters{RequestID: ` *100%_\x `}
 
 	mock.ExpectQuery("SELECT .* FROM usage_logs WHERE \\(request_id ILIKE \\$1 OR response_request_id ILIKE \\$1 OR client_request_id ILIKE \\$1 OR response_msg_id ILIKE \\$1 OR upstream_request_id ILIKE \\$1\\) ORDER BY id DESC LIMIT \\$2 OFFSET \\$3").
 		WithArgs(`%100\%\_\\x%`, 21, 0).
@@ -500,11 +500,11 @@ func TestUsageLogRepositoryListWithFiltersRequestIDMatchesClientPrefixFragment(t
 	db, mock := newSQLMock(t)
 	repo := &usageLogRepository{sql: db}
 
-	// 落库的 request_id 形如 client:<uuid>，片段搜索要能命中该前缀，代码不做任何前缀剥离。
+	// 落库的 request_id 形如 client:<uuid>，默认精确查询归一为裸 ID 并同时匹配 client:/local: 与原始 client_request_id。
 	filters := usagestats.UsageLogFilters{RequestID: "client:0f3a"}
 
-	mock.ExpectQuery("SELECT .* FROM usage_logs WHERE \\(request_id ILIKE \\$1 OR response_request_id ILIKE \\$1 OR client_request_id ILIKE \\$1 OR response_msg_id ILIKE \\$1 OR upstream_request_id ILIKE \\$1\\) ORDER BY id DESC LIMIT \\$2 OFFSET \\$3").
-		WithArgs("%client:0f3a%", 21, 0).
+	mock.ExpectQuery("SELECT .* FROM usage_logs WHERE \\(request_id IN \\(\\$1, \\$2, \\$3\\) OR response_request_id = \\$4 OR client_request_id IN \\(\\$1, \\$4\\) OR response_msg_id = \\$4 OR upstream_request_id = \\$4\\) ORDER BY id DESC LIMIT \\$5 OFFSET \\$6").
+		WithArgs("0f3a", "client:0f3a", "local:0f3a", "client:0f3a", 21, 0).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}))
 
 	_, _, err := repo.ListWithFilters(context.Background(), pagination.PaginationParams{Page: 1, PageSize: 20}, filters)
