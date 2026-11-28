@@ -211,16 +211,25 @@
       <!-- Direct paste input (always available for both logged-in & guest users) -->
       <div class="flex flex-wrap items-center gap-2.5">
         <div class="relative min-w-[220px] flex-1">
+          <!-- Use type="text" + CSS text-security instead of type="password" so browser password
+               managers never classify this page as a login form and autofill the sidebar search box. -->
           <input
             ref="pasteInputRef"
             v-model="draftPasteKey"
             data-testid="docs-apikey-paste-input"
-            type="password"
+            type="text"
+            name="docs-apikey-paste"
             autocomplete="off"
+            autocorrect="off"
+            autocapitalize="off"
             spellcheck="false"
+            data-lpignore="true"
+            data-1p-ignore="true"
+            data-bwignore="true"
+            data-form-type="other"
             :placeholder="t('docs.agentSetup.keyBarPastePlaceholder')"
             :aria-label="t('docs.agentSetup.keyBarPastePlaceholder')"
-            class="h-10 w-full rounded-xl border border-slate-200 bg-slate-50/70 px-3.5 pr-20 font-mono text-[13px] text-slate-900 outline-hidden transition focus:border-primary focus:bg-white focus:ring-2 focus:ring-primary/20 dark:border-dark-700 dark:bg-dark-950 dark:text-slate-100"
+            class="secret-mask-input h-10 w-full rounded-xl border border-slate-200 bg-slate-50/70 px-3.5 pr-20 font-mono text-[13px] text-slate-900 outline-hidden transition focus:border-primary focus:bg-white focus:ring-2 focus:ring-primary/20 dark:border-dark-700 dark:bg-dark-950 dark:text-slate-100"
             @keydown.enter.prevent="applyDraftPaste"
           />
           <button

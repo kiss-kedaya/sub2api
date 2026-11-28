@@ -21,6 +21,15 @@
         <PageToolbar>
           <UInput
             v-model="searchQuery"
+            type="search"
+            name="admin-groups-search"
+            autocomplete="off"
+            autocorrect="off"
+            autocapitalize="off"
+            spellcheck="false"
+            data-lpignore="true"
+            data-1p-ignore="true"
+            data-form-type="other"
             icon="i-lucide-search"
             :placeholder="t('admin.groups.searchGroups')"
             class="w-96 max-w-full sm:w-72"

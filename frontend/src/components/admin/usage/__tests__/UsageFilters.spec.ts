@@ -314,8 +314,13 @@ describe('UsageFilters — 常用筛选与高级筛选', () => {
     // 改前是 <label class="input-label">，现在标签与描述由 UFormField 统一渲染
     expect(wrapper.find('label.input-label').exists()).toBe(false)
     expect(wrapper.findAll(BASE_FIELD_SELECTOR).length).toBeGreaterThan(10)
-    // 搜索类输入统一前置图标
-    expect(wrapper.get('[data-testid="usage-filters-common"] input[type="text"]').exists()).toBe(true)
+    // 搜索类输入统一前置图标，且显式声明 type="search" + 防自动填充属性避免串扰
+    const searchInput = wrapper.get('[data-testid="usage-filters-common"] input[type="search"]')
+    expect(searchInput.exists()).toBe(true)
+    expect(searchInput.attributes('autocomplete')).toBe('off')
+    expect(searchInput.attributes('data-lpignore')).toBe('true')
+    expect(searchInput.attributes('data-1p-ignore')).toBe('true')
+    expect(searchInput.attributes('data-form-type')).toBe('other')
     wrapper.unmount()
   })
 
@@ -450,7 +455,7 @@ describe('UsageFilters — user search dropdown', () => {
     const wrapper = mountFiltersExpanded()
 
     // Trigger focus (sets showUserDropdown = true) then input (fires debounceUserSearch)
-    const userInput = fieldByLabel(wrapper, 'User').get('input[type="text"]')
+    const userInput = fieldByLabel(wrapper, 'User').get('input[type="search"]')
     await userInput.trigger('focus')
     await userInput.setValue('test')
     await userInput.trigger('input')

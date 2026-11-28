@@ -980,8 +980,13 @@ const tableMeta = {
 // The Nuxt UI dashboard table look (customers page): an elevated header row with rounded ends,
 // hairline row dividers, and a tint on selected rows. Important (`!`) marks the properties the
 // legacy table-page skin also sets on bare th/td.
+// Only contain horizontal overscroll (prevents trackpad back-swipe on wide tables).
+// Never set overscroll-y-contain here: when DataTable sits inside a page-scrolled view
+// (such as /usage or /admin/usage) with horizontal overflow but no vertical overflow,
+// Chromium treats it as an active scroll container and blocks vertical mouse-wheel
+// chaining to the outer .console-panel-body.
 const tableUi = {
-  root: 'relative flex-1 min-h-0 overflow-auto overscroll-contain isolate',
+  root: 'relative flex-1 min-h-0 overflow-auto overscroll-x-contain isolate',
   base: 'w-full min-w-max border-separate border-spacing-0',
   thead: 'sticky top-0 z-2 [&>tr]:after:content-none',
   tbody: '[&>tr]:last:[&>td]:border-b-0!',

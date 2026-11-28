@@ -65,7 +65,7 @@
 
       <p v-if="error" role="alert" class="mx-4 my-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-500/10 dark:text-red-300">{{ error }}</p>
 
-      <div v-if="shown > 0" class="max-h-128 w-full overflow-auto overscroll-contain p-3 sm:p-0">
+      <div v-if="shown > 0" class="max-h-128 w-full overflow-auto overscroll-x-contain p-3 sm:p-0">
         <slot />
       </div>
       <div v-else-if="loading" role="status" class="flex items-center justify-center gap-2 px-4 py-8 text-sm text-muted">
