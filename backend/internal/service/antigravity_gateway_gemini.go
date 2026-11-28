@@ -455,6 +455,7 @@ handleSuccess:
 	var responseErr error
 	balanceAborted := false
 	goneOutputTokens := 0
+	hasFinalOutput := false
 
 	if stream {
 		// 客户端要求流式，直接透传
@@ -472,6 +473,7 @@ handleSuccess:
 			firstTokenMs = streamRes.firstTokenMs
 			clientDisconnect = streamRes.clientDisconnect
 			goneOutputTokens = streamRes.outputTokens
+			hasFinalOutput = streamRes.hasFinalOutput
 		}
 	} else {
 		// 客户端要求非流式，收集流式响应后返回
@@ -489,6 +491,7 @@ handleSuccess:
 			firstTokenMs = streamRes.firstTokenMs
 			clientDisconnect = streamRes.clientDisconnect
 			goneOutputTokens = streamRes.outputTokens
+			hasFinalOutput = streamRes.hasFinalOutput
 		}
 	}
 
@@ -502,7 +505,7 @@ handleSuccess:
 		if balanceAborted {
 			event = "antigravity_usage.balance_abort_estimated"
 		}
-		applyIncompleteGeminiUsage(event, account, forwardedModel, usage, goneOutputTokens, body)
+		applyIncompleteGeminiUsage(event, account, forwardedModel, usage, goneOutputTokens, body, hasFinalOutput)
 	}
 
 	// 判断是否为图片生成模型

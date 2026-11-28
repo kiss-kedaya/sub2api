@@ -181,6 +181,58 @@ func (m *geminiOutputMeter) tokens() int {
 	return m.runes
 }
 
+// geminiChunkHasFinishReason reports whether a raw (unwrapped) Gemini chunk
+// carries a non-empty finishReason, indicating that accompanying or subsequent
+// usageMetadata is authoritative final usage rather than a provisional count.
+func geminiChunkHasFinishReason(chunk []byte) bool {
+	if len(chunk) == 0 {
+		return false
+	}
+	found := false
+	gjson.GetBytes(chunk, "candidates").ForEach(func(_, candidate gjson.Result) bool {
+		if fr := strings.TrimSpace(candidate.Get("finishReason").String()); fr != "" {
+			found = true
+			return false
+		}
+		return true
+	})
+	return found
+}
+
+// geminiSSELineHasFinishReason reports whether one raw Gemini SSE data line
+// (with or without a Code Assist {"response":...} envelope) carries a non-empty
+// finishReason.
+func geminiSSELineHasFinishReason(line string) bool {
+	payload, ok := strings.CutPrefix(strings.TrimSpace(line), "data:")
+	if !ok {
+		return false
+	}
+	payload = strings.TrimSpace(payload)
+	if payload == "" || payload == "[DONE]" {
+		return false
+	}
+	if inner := gjson.Get(payload, "response"); inner.Type == gjson.JSON {
+		payload = inner.Raw
+	}
+	return geminiChunkHasFinishReason([]byte(payload))
+}
+
+// anthropicSSELineHasFinalOutput reports whether an Anthropic SSE data line is
+// a message_delta event carrying a numeric usage.output_tokens count (as opposed
+// to message_start's provisional placeholder).
+func anthropicSSELineHasFinalOutput(line string) bool {
+	payload, ok := strings.CutPrefix(strings.TrimSpace(line), "data:")
+	if !ok {
+		return false
+	}
+	event := gjson.Parse(strings.TrimSpace(payload))
+	if event.Get("type").String() != "message_delta" {
+		return false
+	}
+	out := event.Get("usage.output_tokens")
+	return out.Exists() && out.Type == gjson.Number && out.Int() > 0
+}
+
 // geminiUsageReported reports whether the upstream gave any usage figure at all.
 func geminiUsageReported(usage *ClaudeUsage) bool {
 	return usage != nil && (usage.InputTokens > 0 || usage.OutputTokens > 0 ||
@@ -188,18 +240,21 @@ func geminiUsageReported(usage *ClaudeUsage) bool {
 }
 
 // fillIncompleteGeminiUsage applies the estimates field by field and returns what it
-// filled in (0 when untouched). Output is raised to the observed estimate whenever
-// the upstream reported less than what was actually delivered (for example a
-// provisional message_start output_tokens=1 or early candidatesTokenCount before a
-// mid-stream balance abort). Input is filled from the request only when the upstream
-// reported no input side at all: InputTokens takes the normal share and
+// filled in (0 when untouched). When hasFinalOutput is true, a positive upstream
+// OutputTokens is authoritative and preserved verbatim (even if the client leaves
+// afterward); when hasFinalOutput is false (no output reported yet, or only
+// provisional counts like message_start output_tokens=1 or interim
+// candidatesTokenCount before finishReason), OutputTokens is raised to outputTokens
+// whenever outputTokens is larger. Input is filled from the request only when the
+// upstream reported no input side at all: InputTokens takes the normal share and
 // CacheReadInputTokens the cache share, flagged as an estimate so a model without a
 // cache price bills it at the input price.
-func fillIncompleteGeminiUsage(usage *ClaudeUsage, outputTokens int, requestBody []byte) (filledOutput, filledInput int) {
+func fillIncompleteGeminiUsage(usage *ClaudeUsage, outputTokens int, requestBody []byte, hasFinalOutput bool) (filledOutput, filledInput int) {
 	if usage == nil {
 		return 0, 0
 	}
-	if outputTokens > 0 && outputTokens > usage.OutputTokens && usage.ImageOutputTokens == 0 {
+	if outputTokens > 0 && usage.ImageOutputTokens == 0 &&
+		(usage.OutputTokens == 0 || (!hasFinalOutput && outputTokens > usage.OutputTokens)) {
 		usage.OutputTokens = outputTokens
 		filledOutput = outputTokens
 	}
@@ -216,9 +271,10 @@ func fillIncompleteGeminiUsage(usage *ClaudeUsage, outputTokens int, requestBody
 }
 
 // applyIncompleteGeminiUsage fills the missing usage of a request whose client left
-// after the upstream accepted it, and logs the estimate. event names the log line.
-func applyIncompleteGeminiUsage(event string, account *Account, model string, usage *ClaudeUsage, outputTokens int, requestBody []byte) {
-	filledOutput, filledInput := fillIncompleteGeminiUsage(usage, outputTokens, requestBody)
+// or whose balance hold aborted after the upstream accepted it, and logs the estimate.
+// event names the log line.
+func applyIncompleteGeminiUsage(event string, account *Account, model string, usage *ClaudeUsage, outputTokens int, requestBody []byte, hasFinalOutput bool) {
+	filledOutput, filledInput := fillIncompleteGeminiUsage(usage, outputTokens, requestBody, hasFinalOutput)
 	if filledOutput == 0 && filledInput == 0 {
 		return
 	}
@@ -301,7 +357,7 @@ func geminiClientGoneForwardResult(
 	startTime time.Time,
 ) *ForwardResult {
 	var usage ClaudeUsage
-	applyIncompleteGeminiUsage(event, account, upstreamModel, &usage, 0, requestBody)
+	applyIncompleteGeminiUsage(event, account, upstreamModel, &usage, 0, requestBody, false)
 	if usage.InputTokens == 0 && usage.CacheReadInputTokens == 0 {
 		return nil
 	}

@@ -23,6 +23,7 @@ type antigravityStreamResult struct {
 	// outputTokens estimates the content relayed before the client left, for a request
 	// whose upstream never reported usage (gemini_family_incomplete_usage.go).
 	outputTokens    int
+	hasFinalOutput  bool
 	balanceAborted  bool
 	balanceAbortErr error
 }
@@ -221,10 +222,17 @@ func (s *AntigravityGatewayService) handleGeminiStreamingResponse(c *gin.Context
 	// window): the body close unblocks the reader goroutine, and the caller bills what
 	// was observed plus the estimates.
 	var meter geminiOutputMeter
+	sawFinishReason := false
 	guardCtx, streamBalanceGuard := balancePreauthorizationGuardForRequest(context.Background(), c)
 	defer func() { _ = resp.Body.Close() }()
 	goneResult := func() (*antigravityStreamResult, error) {
-		return &antigravityStreamResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: true, outputTokens: meter.tokens()}, nil
+		return &antigravityStreamResult{
+			usage:            usage,
+			firstTokenMs:     firstTokenMs,
+			clientDisconnect: true,
+			outputTokens:     meter.tokens(),
+			hasFinalOutput:   sawFinishReason && usage.OutputTokens > 0,
+		}, nil
 	}
 
 	// 仅发送一次错误事件，避免多次写入导致协议混乱
@@ -245,11 +253,11 @@ func (s *AntigravityGatewayService) handleGeminiStreamingResponse(c *gin.Context
 		select {
 		case ev, ok := <-events:
 			if !ok {
-				return &antigravityStreamResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: cw.Disconnected()}, nil
+				return &antigravityStreamResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: cw.Disconnected(), hasFinalOutput: sawFinishReason && usage.OutputTokens > 0}, nil
 			}
 			if ev.err != nil {
 				if disconnect, handled := handleStreamReadError(ev.err, cw.Disconnected(), "antigravity gemini"); handled {
-					return &antigravityStreamResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: disconnect, outputTokens: meter.tokens()}, nil
+					return &antigravityStreamResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: disconnect, outputTokens: meter.tokens(), hasFinalOutput: sawFinishReason && usage.OutputTokens > 0}, nil
 				}
 				if errors.Is(ev.err, bufio.ErrTooLong) {
 					logger.LegacyPrintf("service.antigravity_gateway", "SSE line too long (antigravity): max_size=%d error=%v", maxLineSize, ev.err)
@@ -282,6 +290,9 @@ func (s *AntigravityGatewayService) handleGeminiStreamingResponse(c *gin.Context
 					payload = string(inner)
 				}
 
+				if geminiChunkHasFinishReason(inner) {
+					sawFinishReason = true
+				}
 				// 解析 usage
 				if u := extractGeminiUsage(inner); u != nil {
 					usage = u
@@ -326,6 +337,7 @@ func (s *AntigravityGatewayService) handleGeminiStreamingResponse(c *gin.Context
 							firstTokenMs:     firstTokenMs,
 							clientDisconnect: cw.Disconnected(),
 							outputTokens:     meter.tokens(),
+							hasFinalOutput:   sawFinishReason && usage.OutputTokens > 0,
 							balanceAborted:   true,
 						}, wrapStreamOutputHoldTopUpFailure(topUpErr)
 					}
@@ -438,12 +450,13 @@ func (s *AntigravityGatewayService) handleGeminiStreamToNonStreaming(c *gin.Cont
 	// The client leaving ends the read at once: the upstream is closed (no drain window)
 	// and the caller bills what was observed plus the estimates.
 	var meter geminiOutputMeter
+	sawFinishReason := false
 	guardCtx, streamBalanceGuard := balancePreauthorizationGuardForRequest(context.Background(), c)
 	defer func() { _ = resp.Body.Close() }()
 
 	for {
 		if geminiClientGone(c) {
-			return &antigravityStreamResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: true, outputTokens: meter.tokens()}, nil
+			return &antigravityStreamResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: true, outputTokens: meter.tokens(), hasFinalOutput: sawFinishReason && usage.OutputTokens > 0}, nil
 		}
 		select {
 		case ev, ok := <-events:
@@ -456,7 +469,7 @@ func (s *AntigravityGatewayService) handleGeminiStreamToNonStreaming(c *gin.Cont
 					logger.LegacyPrintf("service.antigravity_gateway", "SSE line too long (antigravity non-stream): max_size=%d error=%v", maxLineSize, ev.err)
 				}
 				if geminiClientGone(c) {
-					return &antigravityStreamResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: true, outputTokens: meter.tokens()}, nil
+					return &antigravityStreamResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: true, outputTokens: meter.tokens(), hasFinalOutput: sawFinishReason && usage.OutputTokens > 0}, nil
 				}
 				return nil, ev.err
 			}
@@ -497,6 +510,9 @@ func (s *AntigravityGatewayService) handleGeminiStreamToNonStreaming(c *gin.Cont
 
 			last = parsed
 
+			if geminiChunkHasFinishReason(inner) {
+				sawFinishReason = true
+			}
 			// 提取 usage
 			if u := extractGeminiUsage(inner); u != nil {
 				usage = u
@@ -516,6 +532,7 @@ func (s *AntigravityGatewayService) handleGeminiStreamToNonStreaming(c *gin.Cont
 						usage:          usage,
 						firstTokenMs:   firstTokenMs,
 						outputTokens:   meter.tokens(),
+						hasFinalOutput: sawFinishReason && usage.OutputTokens > 0,
 						balanceAborted: true,
 					}, wrapStreamOutputHoldTopUpFailure(topUpErr)
 				}
@@ -947,6 +964,7 @@ func (s *AntigravityGatewayService) collectClaudeStreamResponse(c *gin.Context, 
 
 	var meter geminiOutputMeter
 	var observedUsage *ClaudeUsage
+	sawFinishReason := false
 	guardCtx, streamBalanceGuard := balancePreauthorizationGuardForRequest(context.Background(), c)
 	defer func() { _ = resp.Body.Close() }()
 	var clientDoneCh <-chan struct{}
@@ -965,6 +983,7 @@ func (s *AntigravityGatewayService) collectClaudeStreamResponse(c *gin.Context, 
 			firstTokenMs:     firstTokenMs,
 			clientDisconnect: true,
 			outputTokens:     meter.tokens(),
+			hasFinalOutput:   sawFinishReason && u.OutputTokens > 0,
 		}
 	}
 
@@ -1011,6 +1030,9 @@ func (s *AntigravityGatewayService) collectClaudeStreamResponse(c *gin.Context, 
 			if parseErr != nil {
 				continue
 			}
+			if geminiChunkHasFinishReason(inner) {
+				sawFinishReason = true
+			}
 			observedBytes := meter.observe(inner)
 			if u := extractGeminiUsage(inner); u != nil {
 				observedUsage = u
@@ -1026,6 +1048,7 @@ func (s *AntigravityGatewayService) collectClaudeStreamResponse(c *gin.Context, 
 						usage:          u,
 						firstTokenMs:   firstTokenMs,
 						outputTokens:   meter.tokens(),
+						hasFinalOutput: sawFinishReason && u.OutputTokens > 0,
 						balanceAborted: true,
 					}, wrapStreamOutputHoldTopUpFailure(topUpErr)
 				}
@@ -1272,13 +1295,15 @@ func (s *AntigravityGatewayService) handleClaudeStreamingResponse(c *gin.Context
 	// The client leaving ends the stream at once and hangs up on the upstream (no drain
 	// window); the caller bills what was observed plus the estimates.
 	var meter geminiOutputMeter
+	sawFinishReason := false
 	guardCtx, streamBalanceGuard := balancePreauthorizationGuardForRequest(context.Background(), c)
 	msgIDObserved := false
 	defer func() { _ = resp.Body.Close() }()
 
 	for {
 		if cw.Disconnected() || geminiClientGone(c) {
-			return &antigravityStreamResult{usage: finishUsage(), firstTokenMs: firstTokenMs, clientDisconnect: true, outputTokens: meter.tokens()}, nil
+			u := finishUsage()
+			return &antigravityStreamResult{usage: u, firstTokenMs: firstTokenMs, clientDisconnect: true, outputTokens: meter.tokens(), hasFinalOutput: sawFinishReason && u.OutputTokens > 0}, nil
 		}
 		select {
 		case ev, ok := <-events:
@@ -1297,11 +1322,13 @@ func (s *AntigravityGatewayService) handleClaudeStreamingResponse(c *gin.Context
 						RetryableOnSameAccount: true,
 					}
 				}
-				return &antigravityStreamResult{usage: convertUsage(agUsage), firstTokenMs: firstTokenMs, clientDisconnect: cw.Disconnected()}, nil
+				u := convertUsage(agUsage)
+				return &antigravityStreamResult{usage: u, firstTokenMs: firstTokenMs, clientDisconnect: cw.Disconnected(), hasFinalOutput: sawFinishReason && u.OutputTokens > 0}, nil
 			}
 			if ev.err != nil {
 				if disconnect, handled := handleStreamReadError(ev.err, cw.Disconnected(), "antigravity claude"); handled {
-					return &antigravityStreamResult{usage: finishUsage(), firstTokenMs: firstTokenMs, clientDisconnect: disconnect, outputTokens: meter.tokens()}, nil
+					u := finishUsage()
+					return &antigravityStreamResult{usage: u, firstTokenMs: firstTokenMs, clientDisconnect: disconnect, outputTokens: meter.tokens(), hasFinalOutput: sawFinishReason && u.OutputTokens > 0}, nil
 				}
 				if errors.Is(ev.err, bufio.ErrTooLong) {
 					logger.LegacyPrintf("service.antigravity_gateway", "SSE line too long (antigravity): max_size=%d error=%v", maxLineSize, ev.err)
@@ -1314,6 +1341,9 @@ func (s *AntigravityGatewayService) handleClaudeStreamingResponse(c *gin.Context
 
 			lastDataAt = time.Now()
 			s.observeAntigravityGeminiSSELine(c, ev.line)
+			if geminiSSELineHasFinishReason(ev.line) {
+				sawFinishReason = true
+			}
 			observedBytes := meter.observeSSELine(ev.line)
 
 			// 处理 SSE 行，转换为 Claude 格式
@@ -1344,11 +1374,13 @@ func (s *AntigravityGatewayService) handleClaudeStreamingResponse(c *gin.Context
 				if topUpErr := streamBalanceGuard.ObserveStreamingOutput(guardCtx, observedBytes); topUpErr != nil {
 					_ = resp.Body.Close()
 					logger.LegacyPrintf("service.antigravity_gateway", "Stream output hold top-up failed, aborting upstream (antigravity claude): error=%v", topUpErr)
+					u := finishUsage()
 					return &antigravityStreamResult{
-						usage:            finishUsage(),
+						usage:            u,
 						firstTokenMs:     firstTokenMs,
 						clientDisconnect: cw.Disconnected(),
 						outputTokens:     meter.tokens(),
+						hasFinalOutput:   sawFinishReason && u.OutputTokens > 0,
 						balanceAborted:   true,
 					}, wrapStreamOutputHoldTopUpFailure(topUpErr)
 				}

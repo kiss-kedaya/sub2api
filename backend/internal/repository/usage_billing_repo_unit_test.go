@@ -321,3 +321,82 @@ func TestReleaseUsageBillingBatchImageBalance_SkipsWhenHoldNeverReserved(t *test
 	require.NoError(t, tx.Commit())
 	require.NoError(t, mock.ExpectationsWereMet())
 }
+
+func TestApply_DuplicatePreauthorizedChecksFinalizationPendingStatus(t *testing.T) {
+	ctx := context.Background()
+	cases := []struct {
+		name        string
+		rowStatus   *int16
+		wantPending bool
+	}{
+		{
+			name:        "finalization_pending_row_reports_pending_true",
+			rowStatus:   int16Ptr(service.BalanceSettlementFinalizationPending),
+			wantPending: true,
+		},
+		{
+			name:        "already_pending_settlement_row_reports_pending_false",
+			rowStatus:   int16Ptr(service.BalanceSettlementPending),
+			wantPending: false,
+		},
+		{
+			name:        "already_applied_row_reports_pending_false",
+			rowStatus:   int16Ptr(service.BalanceSettlementApplied),
+			wantPending: false,
+		},
+		{
+			name:        "already_refunded_row_reports_pending_false",
+			rowStatus:   int16Ptr(service.BalanceSettlementRefunded),
+			wantPending: false,
+		},
+		{
+			name:        "missing_row_reports_pending_false",
+			rowStatus:   nil,
+			wantPending: false,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			db, mock, err := sqlmock.New()
+			require.NoError(t, err)
+			defer func() { _ = db.Close() }()
+
+			cmd := &service.UsageBillingCommand{
+				RequestID:            "cached:retry-1",
+				APIKeyID:             7,
+				UserID:               42,
+				BalanceCost:          1.25,
+				BalancePreauthorized: true,
+				RequestPayloadHash:   "hash-1",
+			}
+			cmd.Normalize()
+
+			mock.ExpectBegin()
+			mock.ExpectQuery(`(?s)INSERT INTO usage_billing_dedup.*RETURNING id`).
+				WithArgs(cmd.RequestID, cmd.APIKeyID, cmd.RequestFingerprint).
+				WillReturnError(sql.ErrNoRows)
+			mock.ExpectQuery(`(?s)SELECT request_fingerprint\s+FROM usage_billing_dedup\s+WHERE request_id = \$1 AND api_key_id = \$2`).
+				WithArgs(cmd.RequestID, cmd.APIKeyID).
+				WillReturnRows(sqlmock.NewRows([]string{"request_fingerprint"}).AddRow(cmd.RequestFingerprint))
+			q := mock.ExpectQuery(`(?s)SELECT status\s+FROM billing_balance_settlements\s+WHERE request_id = \$1 AND api_key_id = \$2`).
+				WithArgs(cmd.RequestID, cmd.APIKeyID)
+			if tc.rowStatus != nil {
+				q.WillReturnRows(sqlmock.NewRows([]string{"status"}).AddRow(*tc.rowStatus))
+			} else {
+				q.WillReturnError(sql.ErrNoRows)
+			}
+			mock.ExpectRollback()
+
+			repo := newUsageBillingRepository(db, nil)
+			res, err := repo.Apply(ctx, cmd)
+			require.NoError(t, err)
+			require.NotNil(t, res)
+			require.False(t, res.Applied)
+			require.Equal(t, tc.wantPending, res.BalanceFinalizationPending)
+			require.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
+}
+
+func int16Ptr(v int16) *int16 { return &v }

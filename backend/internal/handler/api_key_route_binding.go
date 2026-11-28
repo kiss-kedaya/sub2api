@@ -23,15 +23,17 @@ type keyRouteEligibilityChecker interface {
 }
 
 type keyRouteBinding struct {
-	Previous     *service.APIKey
-	Selected     *service.APIKey
-	Subscription **service.UserSubscription
-	Mapping      *service.ChannelMappingResult
-	Guard        **service.BalancePreauthorizationGuard
-	Body         []byte
-	Model        string
-	PricingAt    time.Time
-	PerRequest   *service.PerRequestPreauthorizationEstimate
+	Previous       *service.APIKey
+	Selected       *service.APIKey
+	Subscription   **service.UserSubscription
+	Mapping        *service.ChannelMappingResult
+	Guard          **service.BalancePreauthorizationGuard
+	Body           []byte
+	Model          string
+	PricingAt      time.Time
+	PerRequest     *service.PerRequestPreauthorizationEstimate
+	FixedRequestID string
+	FixedAmount    func(context.Context, *service.APIKey) (float64, error)
 }
 
 const checkedKeyRouteGroupsKey = "gateway.checked_key_route_groups"
@@ -82,7 +84,7 @@ func bindSelectedKeyRoute(c *gin.Context, gateway keyRouteBillingProvider, billi
 		return nil
 	}
 	changed := keyRouteGroupChanged(previous, selected)
-	if !changed && !deferKeyRoutePreauthorization(c.Request.Context(), selected) {
+	if !changed && !deferKeyRoutePreauthorization(c.Request.Context(), selected) && !deferKeyRoutePreauthorization(c.Request.Context(), previous) {
 		return nil
 	}
 	ctx := service.ContextWithAPIKeyRoute(c.Request.Context(), selected)
@@ -127,54 +129,93 @@ func bindSelectedKeyRoute(c *gin.Context, gateway keyRouteBillingProvider, billi
 		mapping, _ = gateway.ResolveChannelMappingAndRestrict(ctx, selected.GroupID, binding.Model)
 	}
 	if binding.Guard != nil && (*binding.Guard != nil || keyRouteRequiresPreauthorization(preauthorizer, selected, subscription)) {
-		body := binding.Body
-		if mapping.Mapped {
-			body = gateway.ReplaceModelInBody(body, mapping.MappedModel)
-		}
-		model := service.BalancePreauthorizationBillingModel(binding.Model, mapping)
-		tier := gjson.GetBytes(body, "service_tier").String()
-		if selected.Group != nil && selected.Group.ForceOpenAIFast && selected.Group.Platform == service.PlatformOpenAI {
-			tier = "priority"
-		}
-		if *binding.Guard == nil {
-			var guard *service.BalancePreauthorizationGuard
-			if binding.PerRequest == nil {
-				guard, err = preauthorizeTextGatewayRequest(ctx, preauthorizer, gateway, selected, subscription, body, model, binding.PricingAt, tier)
-			} else {
-				guard, err = preauthorizePerRequestGatewayRequest(ctx, preauthorizer, gateway, selected, subscription, body, model, binding.PricingAt, *binding.PerRequest)
-			}
-			if err != nil {
-				if inflightRollback != nil {
-					inflightRollback()
+		if binding.FixedAmount != nil {
+			if *binding.Guard == nil {
+				amount, amountErr := binding.FixedAmount(ctx, selected)
+				if amountErr != nil {
+					if inflightRollback != nil {
+						inflightRollback()
+					}
+					return amountErr
 				}
-				return err
+				guard, preauthErr := preauthorizeFixedAmountGatewayRequest(
+					ctx, preauthorizer, selected, subscription, binding.FixedRequestID, binding.Body, amount,
+				)
+				if preauthErr != nil {
+					if inflightRollback != nil {
+						inflightRollback()
+					}
+					return preauthErr
+				}
+				*binding.Guard = guard
+			} else if service.BalancePreauthorizationBillingType(selected, subscription) == service.BillingTypeBalance {
+				amount, amountErr := binding.FixedAmount(ctx, selected)
+				if amountErr != nil {
+					if inflightRollback != nil {
+						inflightRollback()
+					}
+					return amountErr
+				}
+				if topUpErr := (*binding.Guard).TopUpFixedAmount(ctx, amount); topUpErr != nil {
+					if inflightRollback != nil {
+						inflightRollback()
+					}
+					return topUpErr
+				}
 			}
-			*binding.Guard = guard
+			if *binding.Guard != nil {
+				ctx = service.ContextWithBalancePreauthorizationGuard(ctx, *binding.Guard)
+			}
 		} else {
-			estimate := service.EstimateBalancePreauthorizationTokensForContext(ctx, body)
-			request := service.BalancePreauthorizationRequest{
-				APIKeyID: selected.ID, UserID: selected.UserID,
-				BillingType:        service.BalancePreauthorizationBillingType(selected, subscription),
-				BillableInputBytes: len(body), EstimatedInputTokens: estimate.InputTokens,
-				InitialOutputWindowTokens: estimate.OutputTokens,
-				CostInput:                 gateway.BalancePreauthorizationCostInput(ctx, selected, model, binding.PricingAt, tier),
+			body := binding.Body
+			if mapping.Mapped {
+				body = gateway.ReplaceModelInBody(body, mapping.MappedModel)
 			}
-			if request.UserID <= 0 && selected.User != nil {
-				request.UserID = selected.User.ID
+			model := service.BalancePreauthorizationBillingModel(binding.Model, mapping)
+			tier := gjson.GetBytes(body, "service_tier").String()
+			if selected.Group != nil && selected.Group.ForceOpenAIFast && selected.Group.Platform == service.PlatformOpenAI {
+				tier = "priority"
 			}
-			if binding.PerRequest != nil {
-				request.EstimateKind = service.PreauthorizationEstimatePerRequest
-				request.PerRequestEstimate = *binding.PerRequest
-			}
-			if err := (*binding.Guard).RepriceForRoute(ctx, request); err != nil {
-				if inflightRollback != nil {
-					inflightRollback()
+			if *binding.Guard == nil {
+				var guard *service.BalancePreauthorizationGuard
+				if binding.PerRequest == nil {
+					guard, err = preauthorizeTextGatewayRequestWithID(ctx, binding.FixedRequestID, preauthorizer, gateway, selected, subscription, body, model, binding.PricingAt, tier)
+				} else {
+					guard, err = preauthorizePerRequestGatewayRequest(ctx, preauthorizer, gateway, selected, subscription, body, model, binding.PricingAt, *binding.PerRequest)
 				}
-				return err
+				if err != nil {
+					if inflightRollback != nil {
+						inflightRollback()
+					}
+					return err
+				}
+				*binding.Guard = guard
+			} else {
+				estimate := service.EstimateBalancePreauthorizationTokensForContext(ctx, body)
+				request := service.BalancePreauthorizationRequest{
+					APIKeyID: selected.ID, UserID: selected.UserID,
+					BillingType:        service.BalancePreauthorizationBillingType(selected, subscription),
+					BillableInputBytes: len(body), EstimatedInputTokens: estimate.InputTokens,
+					InitialOutputWindowTokens: estimate.OutputTokens,
+					CostInput:                 gateway.BalancePreauthorizationCostInput(ctx, selected, model, binding.PricingAt, tier),
+				}
+				if request.UserID <= 0 && selected.User != nil {
+					request.UserID = selected.User.ID
+				}
+				if binding.PerRequest != nil {
+					request.EstimateKind = service.PreauthorizationEstimatePerRequest
+					request.PerRequestEstimate = *binding.PerRequest
+				}
+				if err := (*binding.Guard).RepriceForRoute(ctx, request); err != nil {
+					if inflightRollback != nil {
+						inflightRollback()
+					}
+					return err
+				}
 			}
-		}
-		if *binding.Guard != nil {
-			ctx = service.ContextWithBalancePreauthorizationGuard(ctx, *binding.Guard)
+			if *binding.Guard != nil {
+				ctx = service.ContextWithBalancePreauthorizationGuard(ctx, *binding.Guard)
+			}
 		}
 	}
 	if binding.Mapping != nil {

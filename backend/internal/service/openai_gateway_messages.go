@@ -677,6 +677,7 @@ func (s *OpenAIGatewayService) handleAnthropicBufferedStreamingResponse(
 			applyCompatIncompleteUsage(c, &base.Usage, compatIncompleteUsage{
 				Path: "messages_buffered", Account: account, Model: originalModel, RequestID: requestID,
 				Cause: err, OutputEstimate: estimateIncompleteStreamOutputTokens(acc),
+				ReplaceOutputUpTo: base.Usage.OutputTokens,
 			})
 			return base, err
 		}
@@ -1116,6 +1117,7 @@ func compatBufferedGoneResult(
 	applyCompatIncompleteUsage(c, &base.Usage, compatIncompleteUsage{
 		Path: path, Account: account, Model: base.Model, RequestID: base.RequestID,
 		ClientGone: true, Cause: cause, OutputEstimate: estimateIncompleteStreamOutputTokens(acc),
+		ReplaceOutputUpTo: base.Usage.OutputTokens,
 	})
 	if !openAIForwardResultHasObservedBillingUnits(base) {
 		return nil
@@ -1471,6 +1473,7 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 	}
 
 	// resultWithUsage builds the final result snapshot.
+	sawFinalOutput := false
 	resultWithUsage := func() *OpenAIForwardResult {
 		out := &OpenAIForwardResult{
 			RequestID:                     requestID,
@@ -1565,6 +1568,9 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 			}
 			if event.Usage != nil {
 				usage = copyOpenAIUsageFromResponsesUsage(event.Usage)
+			}
+			if !isBareErrorEvent && eventType != "response.failed" && usage.OutputTokens > 0 {
+				sawFinalOutput = true
 			}
 			// cyber_policy 致命不可重试：标记供 handler 事后记录；以 Anthropic SSE error 事件
 			// 回写让客户端感知并停止重试（F4），丢弃后续转换输出。
@@ -1685,10 +1691,15 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 				status, errType, message := balanceHoldAbortClientError(streamBalanceAbortErr)
 				writeAnthropicError(c, status, errType, message)
 			}
+			replaceUpTo := 0
+			if !sawFinalOutput {
+				replaceUpTo = usage.OutputTokens
+			}
 			applyCompatIncompleteUsage(c, &usage, compatIncompleteUsage{
 				Path: "messages_stream", Account: account, Model: originalModel, RequestID: requestID,
 				ClientGone: clientDisconnected || watch.Gone(), Cause: streamBalanceAbortErr,
-				OutputEstimate: estimateIncompleteStreamOutputTokens(streamAcc),
+				OutputEstimate:    estimateIncompleteStreamOutputTokens(streamAcc),
+				ReplaceOutputUpTo: replaceUpTo,
 			})
 			return resultWithUsage(), streamBalanceAbortErr
 		}
@@ -1742,9 +1753,14 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 		if len(pendingBareError) > 0 && !gone {
 			return resultWithUsage(), writeCompatUpstreamStreamError(c, "messages", originalModel, pendingBareError)
 		}
+		replaceUpTo := 0
+		if !sawFinalOutput {
+			replaceUpTo = usage.OutputTokens
+		}
 		applyCompatIncompleteUsage(c, &usage, compatIncompleteUsage{
 			Path: "messages_stream", Account: account, Model: originalModel, RequestID: requestID,
 			ClientGone: gone, Cause: cause, OutputEstimate: estimateIncompleteStreamOutputTokens(streamAcc),
+			ReplaceOutputUpTo: replaceUpTo,
 		})
 		result := resultWithUsage()
 		if gone {

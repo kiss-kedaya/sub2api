@@ -764,7 +764,6 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthrough(
 						if topUpErr := streamBalanceGuard.ObserveStreamingOutput(guardCtx, observedBytes); topUpErr != nil {
 							if inPartialEvent {
 								_, _ = io.WriteString(w, "\n")
-								inPartialEvent = false
 							}
 							flusher.Flush()
 							_ = resp.Body.Close()

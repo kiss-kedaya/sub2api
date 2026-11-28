@@ -480,6 +480,7 @@ func (s *AntigravityGatewayService) Forward(ctx context.Context, c *gin.Context,
 	var responseErr error
 	balanceAborted := false
 	goneOutputTokens := 0
+	hasFinalOutput := false
 	if claudeReq.Stream {
 		// 客户端要求流式，直接透传转换
 		streamRes, err := s.handleClaudeStreamingResponse(c, resp, startTime, originalModel)
@@ -496,6 +497,7 @@ func (s *AntigravityGatewayService) Forward(ctx context.Context, c *gin.Context,
 			firstTokenMs = streamRes.firstTokenMs
 			clientDisconnect = streamRes.clientDisconnect
 			goneOutputTokens = streamRes.outputTokens
+			hasFinalOutput = streamRes.hasFinalOutput
 		}
 	} else {
 		// 客户端要求非流式，收集流式响应后转换返回
@@ -513,6 +515,7 @@ func (s *AntigravityGatewayService) Forward(ctx context.Context, c *gin.Context,
 			firstTokenMs = streamRes.firstTokenMs
 			clientDisconnect = streamRes.clientDisconnect
 			goneOutputTokens = streamRes.outputTokens
+			hasFinalOutput = streamRes.hasFinalOutput
 		}
 	}
 	if usage == nil {
@@ -525,7 +528,7 @@ func (s *AntigravityGatewayService) Forward(ctx context.Context, c *gin.Context,
 		if balanceAborted {
 			event = "antigravity_usage.balance_abort_estimated"
 		}
-		applyIncompleteGeminiUsage(event, account, billingModel, usage, goneOutputTokens, body)
+		applyIncompleteGeminiUsage(event, account, billingModel, usage, goneOutputTokens, body, hasFinalOutput)
 	}
 
 	return &ForwardResult{

@@ -247,6 +247,7 @@ func (h *GatewayHandler) GeminiCachedContentsCreate(c *gin.Context) {
 			googleError(c, http.StatusInternalServerError, "Failed to allocate cached content id")
 			return
 		}
+		createRequestID := service.GeminiCachedContentCreateUsageRequestID(publicID)
 
 		// Pre-check estimated input + TTL storage cost before creating an upstream
 		// cache so low-balance / exhausted-quota callers cannot create expensive
@@ -276,15 +277,42 @@ func (h *GatewayHandler) GeminiCachedContentsCreate(c *gin.Context) {
 			writeGeminiCachedContentBillingError(c, precheckErr)
 			return
 		}
-		inflightRelease()
 		precheckDone := inflightNoop
 		if precheckRes != nil {
 			precheckDone = precheckRes.HandlerDone
 		}
+		createGuard, preauthErr := preauthorizeFixedAmountGatewayRequest(
+			withFixedKeyRouteForPreauthorization(c.Request.Context(), apiKey),
+			h.balancePreauthorizer,
+			apiKey,
+			subscription,
+			createRequestID,
+			body,
+			estimatedAmount,
+		)
+		if preauthErr != nil {
+			precheckDone()
+			accountReleaseFunc()
+			reqLog.Info("gemini.cached_content.preauth_rejected",
+				zap.Int("estimated_tokens", estimatedTokens),
+				zap.Float64("estimated_amount", estimatedAmount),
+				zap.Error(preauthErr),
+			)
+			writeGeminiCachedContentBillingError(c, preauthErr)
+			return
+		}
+		refundCreateGuard := func() {
+			if createGuard != nil {
+				deferBalancePreauthorizationRefund(reqLog, createGuard)
+				createGuard = nil
+			}
+		}
+		inflightRelease()
 
 		upstream, err := svc.CreateUpstream(c.Request.Context(), account, req, mappedModel, publicID, ttl)
 		accountReleaseFunc()
 		if err != nil {
+			refundCreateGuard()
 			precheckDone()
 			var upErr *service.GeminiCachedContentUpstreamError
 			if errors.As(err, &upErr) {
@@ -329,30 +357,56 @@ func (h *GatewayHandler) GeminiCachedContentsCreate(c *gin.Context) {
 		})
 		const cachedChargeDeltaEps = 1e-9
 		chargeDone := precheckDone
-		if precheckRes == nil {
-			chargeDone, err = h.reserveGeminiCachedContentCharge(c, apiKey, subscription, amount)
-		} else if delta := amount - estimatedAmount; delta > cachedChargeDeltaEps {
-			deltaRes, reserveErr := h.billingCacheService.ReserveFixedCharge(c.Request.Context(), apiKey.User, apiKey, apiKey.Group, subscription, delta)
-			if reserveErr != nil {
-				err = reserveErr
-			} else if deltaRes != nil {
-				precheckRes.Attach(deltaRes)
+		if createGuard != nil && amount-createGuard.HoldAmount() > cachedChargeDeltaEps {
+			if topUpErr := createGuard.TopUpFixedAmount(c.Request.Context(), amount); topUpErr != nil {
+				err = topUpErr
+			}
+		}
+		if err == nil {
+			if precheckRes == nil {
+				chargeDone, err = h.reserveGeminiCachedContentCharge(c, apiKey, subscription, amount)
+			} else if delta := amount - estimatedAmount; delta > cachedChargeDeltaEps {
+				deltaRes, reserveErr := h.billingCacheService.ReserveFixedCharge(c.Request.Context(), apiKey.User, apiKey, apiKey.Group, subscription, delta)
+				if reserveErr != nil {
+					err = reserveErr
+				} else if deltaRes != nil {
+					precheckRes.Attach(deltaRes)
+				}
 			}
 		}
 		if err != nil {
 			reqLog.Info("gemini.cached_content.storage_charge_rejected", zap.Float64("amount", amount), zap.Error(err))
 			h.cleanupGeminiCachedContentUpstream(reqLog, account, upstream.Name)
-			usageErr := h.submitGeminiCachedContentUsage(c, apiKey, account, subscription, pricingAt,
-				service.GeminiCachedContentCreateUsageRequestID(publicID), modelName, mappedModel, int(tokens), 0, usageFields, body)
+			var inputGuard *service.BalancePreauthorizationGuard
+			if tokens > 0 && createGuard != nil {
+				if transferred, ok := createGuard.TransferToWorker(); ok {
+					inputGuard = transferred
+				}
+			}
+			usageErr := h.submitGeminiCachedContentUsageWithGuard(c, inputGuard, apiKey, account, subscription, pricingAt,
+				createRequestID, modelName, mappedModel, int(tokens), 0, usageFields, body)
+			refundCreateGuard()
 			precheckDone()
 			if usageErr != nil {
+				// Input tokens were already consumed upstream; if settlement failed,
+				// intentionally leave inputGuard unrefunded so crash recovery settles
+				// the durable hold rather than granting a free call.
 				googleError(c, http.StatusServiceUnavailable, "Cached content usage settlement is temporarily unavailable")
 				return
 			}
+			// Safety net when RecordUsage returned nil without finalizing (e.g. simple/zero-cost mode);
+			// no-op when Finalize already settled inputGuard.
+			deferBalancePreauthorizationRefund(reqLog, inputGuard)
 			writeGeminiCachedContentBillingError(c, err)
 			return
 		}
 		defer chargeDone()
+		saved := false
+		defer func() {
+			if !saved {
+				refundCreateGuard()
+			}
+		}()
 
 		expireTime := service.ClampGeminiCachedContentExpire(upstream.ExpireTime, svc.Now().Add(ttl))
 		record := &service.GeminiCachedContent{
@@ -369,8 +423,8 @@ func (h *GatewayHandler) GeminiCachedContentsCreate(c *gin.Context) {
 			ExpireTime:      expireTime,
 			ChannelUsage:    usageFields,
 		}
-		intent, prepareErr := h.prepareGeminiCachedContentCharge(c, apiKey, account, subscription, pricingAt,
-			service.GeminiCachedContentCreateUsageRequestID(publicID), modelName, mappedModel, int(tokens), storageTokenHours, usageFields, body)
+		intent, prepareErr := h.prepareGeminiCachedContentChargeWithGuard(c, createGuard, apiKey, account, subscription, pricingAt,
+			createRequestID, modelName, mappedModel, int(tokens), storageTokenHours, usageFields, body)
 		if prepareErr != nil {
 			h.cleanupGeminiCachedContentUpstream(reqLog, account, record.UpstreamName)
 			googleError(c, http.StatusServiceUnavailable, "Cached content billing could not be prepared")
@@ -385,9 +439,15 @@ func (h *GatewayHandler) GeminiCachedContentsCreate(c *gin.Context) {
 			googleError(c, http.StatusInternalServerError, "Failed to persist cached content")
 			return
 		}
+		saved = true
 		// The resource and frozen charge are durable together. Once saved, failures
 		// leave it unavailable and recoverable; never delete a committed charge.
 		persistCtx, cancelPersist = geminiCachedContentPersistContext(c)
+		if createGuard != nil {
+			if workerGuard, ok := createGuard.TransferToWorker(); ok {
+				persistCtx = service.ContextWithBalancePreauthorizationGuard(persistCtx, workerGuard)
+			}
+		}
 		err = svc.SettleCharge(persistCtx, record)
 		cancelPersist()
 		if err != nil {
@@ -509,7 +569,8 @@ func (h *GatewayHandler) GeminiCachedContentsPatch(c *gin.Context) {
 		googleError(c, http.StatusServiceUnavailable, geminiCachedContentUnavailableMessage)
 		return
 	}
-	ttl, err := service.ParseGeminiCachedContentPatchRequest(body, c.Query("updateMask"), svc.Now(), svc.MaxTTLForAccount(account))
+	patchNow := svc.Now()
+	ttl, err := service.ParseGeminiCachedContentPatchRequest(body, c.Query("updateMask"), patchNow, svc.MaxTTLForAccount(account))
 	if err != nil {
 		googleError(c, http.StatusBadRequest, err.Error())
 		return
@@ -519,7 +580,16 @@ func (h *GatewayHandler) GeminiCachedContentsPatch(c *gin.Context) {
 	c.Request = c.Request.WithContext(pricingCtx)
 
 	subscription, _ := middleware.GetSubscriptionFromContext(c)
-	if extension := svc.Now().Add(ttl).Sub(record.ExpireTime); extension > 0 {
+	var patchRequestID string
+	var patchGuard *service.BalancePreauthorizationGuard
+	patchChargeCommitted := false
+	defer func() {
+		if !patchChargeCommitted {
+			deferBalancePreauthorizationRefund(reqLog, patchGuard)
+		}
+	}()
+	patchTargetExpire := patchNow.Add(ttl)
+	if extension := patchTargetExpire.Sub(record.ExpireTime); extension > 0 {
 		usage := &service.RecordUsageInput{
 			Result: &service.ForwardResult{
 				Model: record.Model, UpstreamModel: record.UpstreamModelID(),
@@ -535,13 +605,29 @@ func (h *GatewayHandler) GeminiCachedContentsPatch(c *gin.Context) {
 		if !h.checkGeminiCachedContentBilling(c, reqLog, apiKey, subscription) {
 			return
 		}
-		chargeDone, err := h.reserveGeminiCachedContentCharge(c, apiKey, subscription, h.gatewayService.QuoteUsageCost(c.Request.Context(), usage))
+		patchAmount := h.gatewayService.QuoteUsageCost(c.Request.Context(), usage)
+		chargeDone, err := h.reserveGeminiCachedContentCharge(c, apiKey, subscription, patchAmount)
 		if err != nil {
 			reqLog.Info("gemini.cached_content.storage_charge_rejected", zap.Error(err))
 			writeGeminiCachedContentBillingError(c, err)
 			return
 		}
 		defer chargeDone()
+		patchRequestID = service.GeminiCachedContentPatchUsageRequestID(record.PublicID)
+		patchGuard, err = preauthorizeFixedAmountGatewayRequest(
+			withFixedKeyRouteForPreauthorization(c.Request.Context(), apiKey),
+			h.balancePreauthorizer,
+			apiKey,
+			subscription,
+			patchRequestID,
+			body,
+			patchAmount,
+		)
+		if err != nil {
+			reqLog.Info("gemini.cached_content.patch_preauth_rejected", zap.Float64("amount", patchAmount), zap.Error(err))
+			writeGeminiCachedContentBillingError(c, err)
+			return
+		}
 	}
 
 	setOpsSelectedAccount(c, account.ID, account.Platform)
@@ -584,11 +670,43 @@ func (h *GatewayHandler) GeminiCachedContentsPatch(c *gin.Context) {
 		googleError(c, http.StatusBadGateway, "Upstream request failed")
 		return
 	}
-	expireTime := service.ClampGeminiCachedContentExpire(upstream.ExpireTime, svc.Now().Add(ttl))
+	expireTime := service.ClampGeminiCachedContentExpire(upstream.ExpireTime, patchTargetExpire)
 	var intent *service.MediaBillingIntent
 	if extended := expireTime.Sub(mutation.Baseline()); extended > 0 {
-		intent, err = h.prepareGeminiCachedContentCharge(c, apiKey, account, subscription, pricingAt,
-			service.GeminiCachedContentPatchUsageRequestID(record.PublicID), record.Model, record.UpstreamModelID(), 0,
+		if patchRequestID == "" {
+			patchRequestID = service.GeminiCachedContentPatchUsageRequestID(record.PublicID)
+		}
+		if patchGuard == nil && h.balancePreauthorizer != nil {
+			fallbackAmount := h.gatewayService.QuoteUsageCost(c.Request.Context(), &service.RecordUsageInput{
+				Result: &service.ForwardResult{
+					Model:                  record.Model,
+					UpstreamModel:          record.UpstreamModelID(),
+					CacheStorageTokenHours: service.GeminiCachedContentStorageTokenHours(record.TotalTokenCount, extended),
+				},
+				APIKey:             apiKey,
+				User:               apiKey.User,
+				Subscription:       subscription,
+				PricingAt:          pricingAt,
+				ChannelUsageFields: record.ChannelUsage,
+			})
+			var preauthErr error
+			patchGuard, preauthErr = preauthorizeFixedAmountGatewayRequest(
+				withFixedKeyRouteForPreauthorization(c.Request.Context(), apiKey),
+				h.balancePreauthorizer,
+				apiKey,
+				subscription,
+				patchRequestID,
+				body,
+				fallbackAmount,
+			)
+			if preauthErr != nil {
+				reqLog.Info("gemini.cached_content.patch_post_rpc_preauth_rejected", zap.Float64("amount", fallbackAmount), zap.Error(preauthErr))
+				writeGeminiCachedContentBillingError(c, preauthErr)
+				return
+			}
+		}
+		intent, err = h.prepareGeminiCachedContentChargeWithGuard(c, patchGuard, apiKey, account, subscription, pricingAt,
+			patchRequestID, record.Model, record.UpstreamModelID(), 0,
 			service.GeminiCachedContentStorageTokenHours(record.TotalTokenCount, extended), record.ChannelUsage, body)
 		if err != nil {
 			// Keep the mutation lease for the existing rollback worker.
@@ -613,7 +731,13 @@ func (h *GatewayHandler) GeminiCachedContentsPatch(c *gin.Context) {
 		return
 	}
 	if intent != nil {
+		patchChargeCommitted = true
 		persistCtx, cancelPersist = geminiCachedContentPersistContext(c)
+		if patchGuard != nil {
+			if workerGuard, ok := patchGuard.TransferToWorker(); ok {
+				persistCtx = service.ContextWithBalancePreauthorizationGuard(persistCtx, workerGuard)
+			}
+		}
 		err = svc.SettleCharge(persistCtx, record)
 		cancelPersist()
 		if err != nil {
@@ -770,10 +894,11 @@ func (h *GatewayHandler) acquireGeminiCachedContentAccountSlot(c *gin.Context, r
 	return wrapReleaseOnDone(c.Request.Context(), release), true
 }
 
-// submitGeminiCachedContentUsage 记录缓存创建 / 延长的计费：inputTokens 按输入价计，storageTokenHours 按计费模型的存储单价计；
+// submitGeminiCachedContentUsageWithGuard 记录缓存创建 / 延长的计费：inputTokens 按输入价计，storageTokenHours 按计费模型的存储单价计；
 // requestID 是带固定前缀的费用行标识（见 GeminiCachedContentUsageRequestIDPrefix），落库时不被请求 id 覆盖。
-func (h *GatewayHandler) submitGeminiCachedContentUsage(
+func (h *GatewayHandler) submitGeminiCachedContentUsageWithGuard(
 	c *gin.Context,
+	guard *service.BalancePreauthorizationGuard,
 	apiKey *service.APIKey,
 	account *service.Account,
 	subscription *service.UserSubscription,
@@ -807,6 +932,9 @@ func (h *GatewayHandler) submitGeminiCachedContentUsage(
 	quotaPlatform := service.QuotaPlatform(c.Request.Context(), apiKey)
 	ctx, cancel := geminiCachedContentPersistContext(c)
 	defer cancel()
+	if guard != nil {
+		ctx = service.ContextWithBalancePreauthorizationGuard(ctx, guard)
+	}
 	err := h.gatewayService.RecordUsage(ctx, &service.RecordUsageInput{
 		Result:             result,
 		APIKey:             apiKey,
@@ -834,9 +962,12 @@ func (h *GatewayHandler) submitGeminiCachedContentUsage(
 	return err
 }
 
-func (h *GatewayHandler) prepareGeminiCachedContentCharge(c *gin.Context, apiKey *service.APIKey, account *service.Account, subscription *service.UserSubscription, pricingAt time.Time, requestID, model, upstreamModel string, inputTokens int, storageTokenHours float64, usageFields service.ChannelUsageFields, payload []byte) (*service.MediaBillingIntent, error) {
+func (h *GatewayHandler) prepareGeminiCachedContentChargeWithGuard(c *gin.Context, guard *service.BalancePreauthorizationGuard, apiKey *service.APIKey, account *service.Account, subscription *service.UserSubscription, pricingAt time.Time, requestID, model, upstreamModel string, inputTokens int, storageTokenHours float64, usageFields service.ChannelUsageFields, payload []byte) (*service.MediaBillingIntent, error) {
 	ctx, cancel := geminiCachedContentPersistContext(c)
 	defer cancel()
+	if guard != nil {
+		ctx = service.ContextWithBalancePreauthorizationGuard(ctx, guard)
+	}
 	return h.gatewayService.PrepareCachedContentCharge(ctx, &service.RecordUsageInput{
 		Result: &service.ForwardResult{RequestID: requestID, Model: model, UpstreamModel: upstreamModel, Usage: service.ClaudeUsage{InputTokens: inputTokens}, CacheStorageTokenHours: storageTokenHours},
 		APIKey: apiKey, User: apiKey.User, Account: account, Subscription: subscription, PricingAt: pricingAt,

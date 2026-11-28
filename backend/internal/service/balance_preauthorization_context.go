@@ -13,6 +13,11 @@ func ContextWithBalancePreauthorizationGuard(ctx context.Context, guard *Balance
 	return context.WithValue(ctx, balancePreauthorizationContextKey{}, guard)
 }
 
+func ContextWithoutBalancePreauthorizationGuard(ctx context.Context) context.Context {
+	ctx = nonNilContext(ctx)
+	return context.WithValue(ctx, balancePreauthorizationContextKey{}, (*BalancePreauthorizationGuard)(nil))
+}
+
 func BalancePreauthorizationGuardFromContext(ctx context.Context) (*BalancePreauthorizationGuard, bool) {
 	if ctx == nil {
 		return nil, false

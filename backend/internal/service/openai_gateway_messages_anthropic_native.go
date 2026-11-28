@@ -643,7 +643,6 @@ func (s *OpenAIGatewayService) handleNativeAnthropicStreamingResponse(
 					if !clientDisconnected {
 						if inPartialEvent {
 							_, _ = io.WriteString(w, "\n")
-							inPartialEvent = false
 						}
 						flusher.Flush()
 					}

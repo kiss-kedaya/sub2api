@@ -1262,6 +1262,9 @@ type openaiStreamingResultPassthrough struct {
 	// incompleteOutputTokens is a lower-bound estimate of the output the upstream
 	// produced in that case; 0 when a terminal frame arrived or nothing was produced.
 	incompleteOutputTokens int
+	// hasFinalOutput is true once a terminal frame reported an authoritative
+	// OutputTokens figure; incomplete-stream estimation preserves it verbatim.
+	hasFinalOutput bool
 }
 
 type openaiNonStreamingResultPassthrough struct {
@@ -2468,6 +2471,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 			clientDisconnect:         clientDisconnected,
 			incompleteStream:         incompleteStream,
 			incompleteOutputTokens:   incompleteOutputTokens,
+			hasFinalOutput:           (sawTerminalEvent && !sawFailedEvent || sawDone) && usage.OutputTokens > 0,
 		}
 	}
 
@@ -2818,6 +2822,9 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 					if topUpErr := streamBalanceGuard.ObserveStreamingOutput(streamBalanceGuardCtx, lineObservedOutputBytes); topUpErr != nil {
 						terminateOpenEvent()
 						flushPendingOutput()
+						nonBillableUpstreamError = false
+						sawFailedEvent = false
+						sawTerminalEvent = false
 						s.reportOpenAIStreamOutputHoldTopUpFailure(c, account, "OpenAI passthrough", topUpErr)
 						return resultWithUsage(), wrapStreamOutputHoldTopUpFailure(topUpErr)
 					}

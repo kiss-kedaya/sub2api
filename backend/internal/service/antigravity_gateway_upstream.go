@@ -132,6 +132,7 @@ func (s *AntigravityGatewayService) ForwardUpstream(ctx context.Context, c *gin.
 	var responseErr error
 	balanceAborted := false
 	goneOutputTokens := 0
+	hasFinalOutput := false
 
 	if claudeReq.Stream {
 		// 流式响应：透传
@@ -147,6 +148,7 @@ func (s *AntigravityGatewayService) ForwardUpstream(ctx context.Context, c *gin.
 		firstTokenMs = streamRes.firstTokenMs
 		clientDisconnect = streamRes.clientDisconnect
 		goneOutputTokens = streamRes.outputTokens
+		hasFinalOutput = streamRes.hasFinalOutput
 		balanceAborted = streamRes.balanceAborted
 		responseErr = streamRes.balanceAbortErr
 	} else {
@@ -177,7 +179,7 @@ func (s *AntigravityGatewayService) ForwardUpstream(ctx context.Context, c *gin.
 		if balanceAborted {
 			event = "antigravity_usage.balance_abort_estimated"
 		}
-		applyIncompleteGeminiUsage(event, account, originalModel, usage, goneOutputTokens, body)
+		applyIncompleteGeminiUsage(event, account, originalModel, usage, goneOutputTokens, body, hasFinalOutput)
 	}
 
 	// 构建计费结果
@@ -285,20 +287,21 @@ func (s *AntigravityGatewayService) streamUpstreamResponse(c *gin.Context, resp 
 	// hangs up on the upstream (no drain window) and the caller bills what was observed
 	// plus the estimates.
 	var meter geminiOutputMeter
+	hasFinalOutput := false
 	guardCtx, streamBalanceGuard := balancePreauthorizationGuardForRequest(context.Background(), c)
 
 	for {
 		if cw.Disconnected() || geminiClientGone(c) {
-			return &antigravityStreamResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: true, outputTokens: meter.tokens()}
+			return &antigravityStreamResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: true, outputTokens: meter.tokens(), hasFinalOutput: hasFinalOutput && usage.OutputTokens > 0}
 		}
 		select {
 		case ev, ok := <-events:
 			if !ok {
-				return &antigravityStreamResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: cw.Disconnected()}
+				return &antigravityStreamResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: cw.Disconnected(), hasFinalOutput: hasFinalOutput && usage.OutputTokens > 0}
 			}
 			if ev.err != nil {
 				if disconnect, handled := handleStreamReadError(ev.err, cw.Disconnected(), "antigravity upstream"); handled {
-					return &antigravityStreamResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: disconnect, outputTokens: meter.tokens()}
+					return &antigravityStreamResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: disconnect, outputTokens: meter.tokens(), hasFinalOutput: hasFinalOutput && usage.OutputTokens > 0}
 				}
 				logger.LegacyPrintf("service.antigravity_gateway", "Stream read error (antigravity upstream): %v", ev.err)
 				return &antigravityStreamResult{usage: usage, firstTokenMs: firstTokenMs}
@@ -319,6 +322,9 @@ func (s *AntigravityGatewayService) streamUpstreamResponse(c *gin.Context, resp 
 
 			// 尝试从 message_delta 或 message_stop 事件提取 usage
 			s.extractSSEUsage(line, usage)
+			if anthropicSSELineHasFinalOutput(line) {
+				hasFinalOutput = true
+			}
 			observedBytes := meter.observeAnthropicSSELine(line)
 
 			// 透传行
@@ -335,6 +341,7 @@ func (s *AntigravityGatewayService) streamUpstreamResponse(c *gin.Context, resp 
 						firstTokenMs:     firstTokenMs,
 						clientDisconnect: cw.Disconnected(),
 						outputTokens:     meter.tokens(),
+						hasFinalOutput:   hasFinalOutput && usage.OutputTokens > 0,
 						balanceAborted:   true,
 						balanceAbortErr:  wrapStreamOutputHoldTopUpFailure(topUpErr),
 					}

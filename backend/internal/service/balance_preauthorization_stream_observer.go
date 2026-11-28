@@ -119,7 +119,14 @@ func responsesEventOutputBytes(event *apicompat.ResponsesStreamEvent) int {
 		}
 	case "response.output_item.added":
 		if event.Item != nil {
-			return len(event.Item.Name)
+			total := len(event.Item.Name) + len(event.Item.Arguments)
+			for _, part := range event.Item.Content {
+				total += len(part.Text) + len(part.Refusal)
+			}
+			for _, summary := range event.Item.Summary {
+				total += len(summary.Text)
+			}
+			return total
 		}
 	}
 	return 0
@@ -186,7 +193,30 @@ func responsesSSEDataOutputBytes(eventType string, data []byte) int {
 		}
 		return total
 	case "response.output_item.added":
-		return len(gjson.GetBytes(trimmed, "item.name").String())
+		total := 0
+		item := gjson.GetBytes(trimmed, "item")
+		if v := item.Get("name"); v.Type == gjson.String {
+			total += len(v.String())
+		}
+		if v := item.Get("arguments"); v.Type == gjson.String {
+			total += len(v.String())
+		}
+		item.Get("content").ForEach(func(_, part gjson.Result) bool {
+			if v := part.Get("text"); v.Type == gjson.String {
+				total += len(v.String())
+			}
+			if v := part.Get("refusal"); v.Type == gjson.String {
+				total += len(v.String())
+			}
+			return true
+		})
+		item.Get("summary").ForEach(func(_, part gjson.Result) bool {
+			if v := part.Get("text"); v.Type == gjson.String {
+				total += len(v.String())
+			}
+			return true
+		})
+		return total
 	}
 	// Never count non-delta Responses frames (.done, content_part.done,
 	// output_item.done, response.completed, response.done) or let them fall

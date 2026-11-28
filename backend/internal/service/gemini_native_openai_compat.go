@@ -135,7 +135,7 @@ func (s *GeminiMessagesCompatService) forwardGeminiNativeViaOpenAICompat(
 		// Close a blocked read on cancellation, including custom upstream transports.
 		stopClosing := context.AfterFunc(ctx, closeBody)
 		defer stopClosing()
-		result, outputTokens, err := s.pipeOpenAIStreamAsGemini(ctx, c, resp.Body, mappedModel, protocol, start)
+		result, outputTokens, hasFinalOutput, err := s.pipeOpenAIStreamAsGemini(ctx, c, resp.Body, mappedModel, protocol, start)
 		result.RequestID = resp.Header.Get("x-request-id")
 		result.UpstreamHeaders = resp.Header
 		result.Duration = time.Since(start)
@@ -144,7 +144,7 @@ func (s *GeminiMessagesCompatService) forwardGeminiNativeViaOpenAICompat(
 			if !result.ClientDisconnect {
 				event = "gemini_usage.balance_abort_estimated"
 			}
-			applyIncompleteGeminiUsage(event, account, mappedModel, &result.Usage, outputTokens, body)
+			applyIncompleteGeminiUsage(event, account, mappedModel, &result.Usage, outputTokens, body, hasFinalOutput)
 		}
 		return result, err
 	}
@@ -337,9 +337,10 @@ func geminiBridgePayload(text, model, finish string, metadata map[string]any) []
 	return data
 }
 
-func (s *GeminiMessagesCompatService) pipeOpenAIStreamAsGemini(ctx context.Context, c *gin.Context, body io.Reader, model, protocol string, start time.Time) (*ForwardResult, int, error) {
+func (s *GeminiMessagesCompatService) pipeOpenAIStreamAsGemini(ctx context.Context, c *gin.Context, body io.Reader, model, protocol string, start time.Time) (*ForwardResult, int, bool, error) {
 	result := &ForwardResult{Model: model, UpstreamModel: model, Stream: true}
 	var meter geminiOutputMeter
+	hasFinalOutput := false
 	streamBalanceGuard, _ := BalancePreauthorizationGuardFromContext(ctx)
 	c.Header("Content-Type", "text/event-stream")
 	c.Header("Cache-Control", "no-cache")
@@ -392,6 +393,9 @@ func (s *GeminiMessagesCompatService) pipeOpenAIStreamAsGemini(ctx context.Conte
 		if usage, ok := openAIUsageFromGJSON(geminiBridgeUsageObject(parsed.data)); ok {
 			result.Usage = geminiBridgeClaudeUsage(usage)
 			metadata = geminiBridgeUsageMetadata(usage, geminiBridgeUsageObject(parsed.data))
+			if protocol == APIProtocolChatCompletions && finish != "" && result.Usage.OutputTokens > 0 {
+				hasFinalOutput = true
+			}
 		}
 		failureEventType := parsed.eventType
 		if frame.EventType == "error" || frame.EventType == "response.failed" {
@@ -422,6 +426,9 @@ func (s *GeminiMessagesCompatService) pipeOpenAIStreamAsGemini(ctx context.Conte
 			event.Type = parsed.eventType
 			chunks = apicompat.ResponsesEventToChatChunks(&event, state)
 			terminal = isOpenAICompatResponsesTerminalEvent(event.Type)
+			if terminal && result.Usage.OutputTokens > 0 {
+				hasFinalOutput = true
+			}
 		} else {
 			var chunk apicompat.ChatCompletionsChunk
 			if err := json.Unmarshal(parsed.data, &chunk); err != nil {
@@ -455,28 +462,29 @@ func (s *GeminiMessagesCompatService) pipeOpenAIStreamAsGemini(ctx context.Conte
 					reasoningText = *choice.Delta.Reasoning
 				}
 				if reasoningText != "" {
-					meter.addText(reasoningText)
 					if topUpErr := streamBalanceGuard.ObserveStreamingOutput(ctx, len(reasoningText)); topUpErr != nil {
 						abortTopUp(topUpErr)
 						return
 					}
+					meter.addText(reasoningText)
 				}
 				if len(choice.Delta.ToolCalls) > 0 {
 					toolBytes := 0
 					for _, tc := range choice.Delta.ToolCalls {
-						if tc.Function.Name != "" {
-							meter.addText(tc.Function.Name)
-							toolBytes += len(tc.Function.Name)
-						}
-						if tc.Function.Arguments != "" {
-							meter.addText(tc.Function.Arguments)
-							toolBytes += len(tc.Function.Arguments)
-						}
+						toolBytes += len(tc.Function.Name) + len(tc.Function.Arguments)
 					}
 					if toolBytes > 0 {
 						if topUpErr := streamBalanceGuard.ObserveStreamingOutput(ctx, toolBytes); topUpErr != nil {
 							abortTopUp(topUpErr)
 							return
+						}
+						for _, tc := range choice.Delta.ToolCalls {
+							if tc.Function.Name != "" {
+								meter.addText(tc.Function.Name)
+							}
+							if tc.Function.Arguments != "" {
+								meter.addText(tc.Function.Arguments)
+							}
 						}
 					}
 				}
@@ -487,11 +495,11 @@ func (s *GeminiMessagesCompatService) pipeOpenAIStreamAsGemini(ctx context.Conte
 						terminal = true
 						return
 					}
-					meter.addText(*choice.Delta.Content)
 					if topUpErr := streamBalanceGuard.ObserveStreamingOutput(ctx, len(*choice.Delta.Content)); topUpErr != nil {
 						abortTopUp(topUpErr)
 						return
 					}
+					meter.addText(*choice.Delta.Content)
 					if result.FirstTokenMs == nil {
 						ms := int(time.Since(start).Milliseconds())
 						result.FirstTokenMs = &ms
@@ -505,6 +513,9 @@ func (s *GeminiMessagesCompatService) pipeOpenAIStreamAsGemini(ctx context.Conte
 				if choice.FinishReason != nil && *choice.FinishReason != "" {
 					finish = geminiBridgeFinishReason(*choice.FinishReason)
 					successfulChatFinish = true
+					if result.Usage.OutputTokens > 0 {
+						hasFinalOutput = true
+					}
 				}
 			}
 		}
@@ -537,7 +548,7 @@ func (s *GeminiMessagesCompatService) pipeOpenAIStreamAsGemini(ctx context.Conte
 	if streamErr != nil {
 		if financialFailure {
 			WriteUpstreamFinancialError(c, http.StatusPaymentRequired, nil)
-			return result, meter.tokens(), streamErr
+			return result, meter.tokens(), hasFinalOutput, streamErr
 		}
 		if !result.ClientDisconnect {
 			payload, _ := json.Marshal(map[string]any{"error": map[string]any{
@@ -545,9 +556,9 @@ func (s *GeminiMessagesCompatService) pipeOpenAIStreamAsGemini(ctx context.Conte
 			}, "usageMetadata": metadata})
 			_ = write(payload)
 		}
-		return result, meter.tokens(), streamErr
+		return result, meter.tokens(), hasFinalOutput, streamErr
 	}
-	return result, meter.tokens(), write(geminiBridgePayload("", model, finish, metadata))
+	return result, meter.tokens(), hasFinalOutput, write(geminiBridgePayload("", model, finish, metadata))
 }
 
 func extractGeminiBridgeErrorMessage(raw []byte) string {

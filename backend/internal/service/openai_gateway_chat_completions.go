@@ -555,6 +555,7 @@ func (s *OpenAIGatewayService) handleChatBufferedStreamingResponse(
 			applyCompatIncompleteUsage(c, &base.Usage, compatIncompleteUsage{
 				Path: "chat_completions_buffered", Account: account, Model: originalModel, RequestID: requestID,
 				Cause: err, OutputEstimate: estimateIncompleteStreamOutputTokens(acc),
+				ReplaceOutputUpTo: base.Usage.OutputTokens,
 			})
 			return base, err
 		}
@@ -822,6 +823,7 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 		intervalCh = intervalTicker.C
 	}
 
+	sawFinalOutput := false
 	resultWithUsage := func() *OpenAIForwardResult {
 		out := &OpenAIForwardResult{
 			RequestID:                     requestID,
@@ -883,6 +885,9 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 			}
 			if event.Response != nil && event.Response.Usage != nil {
 				usage = copyOpenAIUsageFromResponsesUsage(event.Response.Usage)
+			}
+			if terminalEventType != "response.failed" && usage.OutputTokens > 0 {
+				sawFinalOutput = true
 			}
 		}
 		isBareError := event.Type == "error"
@@ -1060,10 +1065,15 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 				status, errType, message := balanceHoldAbortClientError(streamBalanceAbortErr)
 				writeChatCompletionsError(c, status, errType, message)
 			}
+			replaceUpTo := 0
+			if !sawFinalOutput {
+				replaceUpTo = usage.OutputTokens
+			}
 			applyCompatIncompleteUsage(c, &usage, compatIncompleteUsage{
 				Path: "chat_completions_stream", Account: account, Model: originalModel, RequestID: requestID,
 				ClientGone: clientDisconnected || watch.Gone(), Cause: streamBalanceAbortErr,
-				OutputEstimate: estimateIncompleteStreamOutputTokens(streamAcc),
+				OutputEstimate:    estimateIncompleteStreamOutputTokens(streamAcc),
+				ReplaceOutputUpTo: replaceUpTo,
 			})
 			return resultWithUsage(), streamBalanceAbortErr
 		}
@@ -1169,9 +1179,14 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 		if len(pendingBareError) > 0 && !gone {
 			return resultWithUsage(), writeCompatUpstreamStreamError(c, "chat", originalModel, pendingBareError)
 		}
+		replaceUpTo := 0
+		if !sawFinalOutput {
+			replaceUpTo = usage.OutputTokens
+		}
 		applyCompatIncompleteUsage(c, &usage, compatIncompleteUsage{
 			Path: "chat_completions_stream", Account: account, Model: originalModel, RequestID: requestID,
 			ClientGone: gone, Cause: cause, OutputEstimate: estimateIncompleteStreamOutputTokens(streamAcc),
+			ReplaceOutputUpTo: replaceUpTo,
 		})
 		result := resultWithUsage()
 		if gone {

@@ -389,6 +389,7 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 	pendingLines := make([]string, 0, 8)
 	refusalDetector := newOpenAIChatSilentRefusalDetector(requestBodyLen)
 	var terminal openAIRawStreamTerminalState
+	sawFinalOutput := false
 	var protocolRefusalErr error
 	pendingSSEEventType := ""
 
@@ -493,6 +494,9 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 				usageOnlyChunk := isOpenAIChatUsageOnlyStreamChunk(payload)
 				if u := extractCCStreamUsageFromRoot(root, resp.Header); u != nil {
 					usage = *u
+					if (terminal.sawFinishReason || rootType == "response.completed" || rootType == "response.done") && u.OutputTokens > 0 {
+						sawFinalOutput = true
+					}
 				}
 				if firstTokenMs == nil && !usageOnlyChunk {
 					elapsed := int(time.Since(startTime).Milliseconds())
@@ -569,9 +573,14 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 	// finishIncomplete bills what the stream produced and the input that was sent when
 	// no usage chunk arrived. Usage the upstream reported is never overwritten.
 	finishIncomplete := func(cause error, clientGone bool) *OpenAIForwardResult {
+		replaceUpTo := 0
+		if !sawFinalOutput {
+			replaceUpTo = usage.OutputTokens
+		}
 		applyCompatIncompleteUsage(c, &usage, compatIncompleteUsage{
 			Path: "raw_chat_stream", Account: account, Model: originalModel, RequestID: requestID,
 			ClientGone: clientGone, Cause: cause, OutputEstimate: tally.EstimateTokens(),
+			ReplaceOutputUpTo: replaceUpTo,
 		})
 		return resultWithUsage()
 	}

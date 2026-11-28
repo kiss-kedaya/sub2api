@@ -345,9 +345,14 @@ func (s *OpenAIGatewayService) streamChatCompletionsAsAnthropic(
 		if cause == nil {
 			cause = errors.New("missing done sentinel")
 		}
+		replaceUpTo := 0
+		if !scan.SawFinalOutput {
+			replaceUpTo = result.Usage.OutputTokens
+		}
 		applyCompatIncompleteUsage(c, &result.Usage, compatIncompleteUsage{
 			Path: "messages_chat_stream", Model: originalModel, RequestID: requestID,
 			ClientGone: gone, Cause: cause, OutputEstimate: tally.EstimateTokens(),
+			ReplaceOutputUpTo: replaceUpTo,
 		})
 		if isBalanceHoldTopUpError(scan.Err) {
 			if c != nil && c.Writer != nil && !c.Writer.Written() {

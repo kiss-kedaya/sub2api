@@ -137,7 +137,7 @@ func requestedBalancePreauthorizationOutputTokens(body []byte, defaultOutputWind
 	case shapes == 1 && hasInput:
 		maximum = responsesPreauthOutputTokens(root)
 	case shapes == 1 && hasMessages:
-		maximum = messagesPreauthOutputTokens(root)
+		maximum = messagesPreauthOutputTokens(root, defaultOutputWindow)
 	case shapes > 1:
 		// Multi-protocol body (e.g. messages + smuggled contents/generationConfig):
 		// compute each present protocol's reserve (using defaultOutputWindow when
@@ -162,7 +162,7 @@ func requestedBalancePreauthorizationOutputTokens(body []byte, defaultOutputWind
 			}
 		}
 		if hasMessages {
-			v := messagesPreauthOutputTokens(root)
+			v := messagesPreauthOutputTokens(root, defaultOutputWindow)
 			if v <= 0 {
 				v = int64(defaultOutputWindow)
 			}
@@ -180,9 +180,16 @@ func requestedBalancePreauthorizationOutputTokens(body []byte, defaultOutputWind
 			"max_tokens",
 		)
 		anthropicThinkingBudget := maxPositiveJSONInt64(root, "thinking.budget_tokens")
-		maximum = explicitMaxOutput
-		if anthropicThinkingBudget > maximum {
-			maximum = anthropicThinkingBudget
+		if explicitMaxOutput > 0 {
+			maximum = explicitMaxOutput
+			if anthropicThinkingBudget > maximum {
+				maximum = anthropicThinkingBudget
+			}
+		} else if anthropicThinkingBudget > 0 {
+			maximum = int64(defaultOutputWindow)
+			if anthropicThinkingBudget > maximum {
+				maximum = anthropicThinkingBudget
+			}
 		}
 	}
 
@@ -269,7 +276,7 @@ func responsesPreauthOutputTokens(root gjson.Result) int64 {
 	)
 }
 
-func messagesPreauthOutputTokens(root gjson.Result) int64 {
+func messagesPreauthOutputTokens(root gjson.Result, defaultOutputWindow int) int64 {
 	explicitMaxOutput := maxPositiveJSONInt64(root,
 		"max_completion_tokens",
 		"max_tokens",
@@ -277,12 +284,24 @@ func messagesPreauthOutputTokens(root gjson.Result) int64 {
 	anthropicThinkingBudget := maxPositiveJSONInt64(root,
 		"thinking.budget_tokens",
 	)
-	// Anthropic's max_tokens includes thinking tokens, so max(explicit, budget)
-	// honors the thinking budget without double-counting when max_tokens is set.
-	if anthropicThinkingBudget > explicitMaxOutput {
-		return anthropicThinkingBudget
+	if explicitMaxOutput > 0 {
+		// Anthropic's max_tokens includes thinking tokens, so max(explicit, budget)
+		// honors the thinking budget without double-counting when max_tokens is set.
+		if anthropicThinkingBudget > explicitMaxOutput {
+			return anthropicThinkingBudget
+		}
+		return explicitMaxOutput
 	}
-	return explicitMaxOutput
+	if anthropicThinkingBudget > 0 {
+		// Without an explicit output cap, thinking.budget_tokens alone must never
+		// downgrade the default output reserve (e.g. non-stream 4096 -> 1).
+		window := int64(defaultOutputWindow)
+		if anthropicThinkingBudget > window {
+			return anthropicThinkingBudget
+		}
+		return window
+	}
+	return 0
 }
 
 func maxPositiveJSONInt64(root gjson.Result, paths ...string) int64 {

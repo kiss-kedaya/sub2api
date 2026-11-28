@@ -277,6 +277,7 @@ func (s *GeminiMessagesCompatService) forwardClaudeBodyAsChatCompletions(
 	clientGone := false
 	balanceAborted := false
 	goneOutputTokens := 0
+	hasFinalOutput := false
 	if clientStream {
 		streamRes, err := s.handleChatCompletionsStreamingResponseFromGemini(c, resp, startTime, originalModel, account.Type == AccountTypeOAuth, includeUsage)
 		if err != nil {
@@ -291,6 +292,7 @@ func (s *GeminiMessagesCompatService) forwardClaudeBodyAsChatCompletions(
 			firstTokenMs = streamRes.firstTokenMs
 			clientGone = streamRes.clientDisconnect
 			goneOutputTokens = streamRes.outputTokens
+			hasFinalOutput = streamRes.hasFinalOutput
 		}
 	} else if useUpstreamStream {
 		collectCtx, _ := balancePreauthorizationGuardForRequest(ctx, c)
@@ -304,10 +306,11 @@ func (s *GeminiMessagesCompatService) forwardClaudeBodyAsChatCompletions(
 				responseErr = err
 				usage = usageObj
 				goneOutputTokens = stats.meter.tokens()
+				hasFinalOutput = stats.hasFinalOutput
 			} else if !geminiClientGoneCtx(ctx, c) {
 				return nil, s.writeChatCompletionsError(c, http.StatusBadGateway, "upstream_error", "Failed to read upstream stream")
 			} else {
-				clientGone, usage, goneOutputTokens = true, usageObj, stats.meter.tokens()
+				clientGone, usage, goneOutputTokens, hasFinalOutput = true, usageObj, stats.meter.tokens(), stats.hasFinalOutput
 			}
 		} else {
 			collectedBytes, _ := json.Marshal(collected)
@@ -338,7 +341,7 @@ func (s *GeminiMessagesCompatService) forwardClaudeBodyAsChatCompletions(
 		if balanceAborted {
 			event = "gemini_usage.balance_abort_estimated"
 		}
-		applyIncompleteGeminiUsage(event, account, mappedModel, usage, goneOutputTokens, originalChatBody)
+		applyIncompleteGeminiUsage(event, account, mappedModel, usage, goneOutputTokens, originalChatBody, hasFinalOutput)
 	}
 
 	imageCount := 0
@@ -625,6 +628,7 @@ func (s *GeminiMessagesCompatService) handleChatCompletionsStreamingResponseFrom
 	}
 
 	var meter geminiOutputMeter
+	finishReason := ""
 	streamCtx, streamBalanceGuard := balancePreauthorizationGuardForRequest(context.Background(), c)
 	disconnectedResult := func() *geminiStreamResult {
 		return &geminiStreamResult{
@@ -632,6 +636,7 @@ func (s *GeminiMessagesCompatService) handleChatCompletionsStreamingResponseFrom
 			firstTokenMs:     firstTokenMs,
 			clientDisconnect: true,
 			outputTokens:     meter.tokens(),
+			hasFinalOutput:   finishReason != "" && usage.OutputTokens > 0,
 		}
 	}
 	balanceAbortResult := func(topUpErr error) (*geminiStreamResult, error) {
@@ -641,6 +646,7 @@ func (s *GeminiMessagesCompatService) handleChatCompletionsStreamingResponseFrom
 			usage:          &usage,
 			firstTokenMs:   firstTokenMs,
 			outputTokens:   meter.tokens(),
+			hasFinalOutput: finishReason != "" && usage.OutputTokens > 0,
 			balanceAborted: true,
 		}, wrapStreamOutputHoldTopUpFailure(topUpErr)
 	}
@@ -661,7 +667,6 @@ func (s *GeminiMessagesCompatService) handleChatCompletionsStreamingResponseFrom
 		return disconnectedResult(), nil
 	}
 
-	finishReason := ""
 	sawToolUse := false
 	nextBlockIndex := 0
 	openBlockIndex := -1

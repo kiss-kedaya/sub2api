@@ -132,15 +132,17 @@ type antigravityCompatScanEvent struct {
 }
 
 type antigravityCompatStreamSession struct {
-	processor      *antigravity.StreamingProcessor
-	adapter        antigravityCompatStreamAdapter
-	writer         *antigravityClientWriter
-	usage          *ClaudeUsage
-	meter          geminiOutputMeter
-	pendingEvents  []apicompat.AnthropicStreamEvent
-	firstTokenMs   *int
-	startTime      time.Time
-	meaningfulData bool
+	processor       *antigravity.StreamingProcessor
+	adapter         antigravityCompatStreamAdapter
+	writer          *antigravityClientWriter
+	usage           *ClaudeUsage
+	meter           geminiOutputMeter
+	pendingEvents   []apicompat.AnthropicStreamEvent
+	firstTokenMs    *int
+	startTime       time.Time
+	meaningfulData  bool
+	sawFinishReason bool
+	hasFinalOutput  bool
 }
 
 func newAntigravityCompatStreamSession(
@@ -159,6 +161,9 @@ func newAntigravityCompatStreamSession(
 }
 
 func (s *antigravityCompatStreamSession) consume(line string) int {
+	if geminiSSELineHasFinishReason(line) {
+		s.sawFinishReason = true
+	}
 	observedBytes := s.meter.observeSSELine(line)
 	claudeEvents := s.processor.ProcessLine(strings.TrimRight(line, "\r\n"))
 	if len(claudeEvents) == 0 {
@@ -192,6 +197,7 @@ func (s *antigravityCompatStreamSession) result(clientDisconnect bool) *antigrav
 		firstTokenMs:     s.firstTokenMs,
 		clientDisconnect: clientDisconnect,
 		outputTokens:     s.meter.tokens(),
+		hasFinalOutput:   s.hasFinalOutput || (s.sawFinishReason && s.usage.OutputTokens > 0),
 	}
 }
 
@@ -218,6 +224,9 @@ func (s *antigravityCompatStreamSession) consumeClaudeData(eventType, payload st
 	}
 	if event.Usage != nil {
 		mergeAnthropicUsage(s.usage, *event.Usage)
+		if event.Type == "message_delta" && event.Usage.OutputTokens > 0 {
+			s.hasFinalOutput = true
+		}
 	}
 	if event.Message != nil {
 		mergeAnthropicUsage(s.usage, event.Message.Usage)

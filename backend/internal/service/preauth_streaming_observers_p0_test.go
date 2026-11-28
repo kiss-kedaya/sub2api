@@ -1000,6 +1000,22 @@ func TestResponsesSSEObserver_NoEnvelopeOvercountOrFalseCompletedAbort(t *testin
 	require.Equal(t, 7, responsesSSEDataOutputBytes("response.content_part.added", []byte(`{"type":"response.content_part.added","part":{"type":"refusal","refusal":"blocked"}}`)))
 	require.Equal(t, 11, responsesSSEDataOutputBytes("response.code_interpreter_call_code.delta", []byte(`{"type":"response.code_interpreter_call_code.delta","delta":"print(1+1)\n"}`)))
 	require.Equal(t, 9, responsesSSEDataOutputBytes("response.mcp_call_arguments.delta", []byte(`{"type":"response.mcp_call_arguments.delta","delta":"{\"a\":123}"}`)))
+	require.Equal(t, len("get_weather")+len(`{"city":"Tokyo"}`), responsesSSEDataOutputBytes("response.output_item.added", []byte(`{"type":"response.output_item.added","item":{"type":"function_call","name":"get_weather","arguments":"{\"city\":\"Tokyo\"}"}}`)))
+	require.Equal(t, len("hello inline")+len("nope"), responsesSSEDataOutputBytes("response.output_item.added", []byte(`{"type":"response.output_item.added","item":{"type":"message","content":[{"type":"output_text","text":"hello inline"},{"type":"refusal","refusal":"nope"}]}}`)))
+	require.Equal(t, len("get_weather")+len(`{"city":"Tokyo"}`), responsesEventOutputBytes(&apicompat.ResponsesStreamEvent{
+		Type: "response.output_item.added",
+		Item: &apicompat.ResponsesOutput{Type: "function_call", Name: "get_weather", Arguments: `{"city":"Tokyo"}`},
+	}))
+	require.Equal(t, len("hello inline")+len("nope"), responsesEventOutputBytes(&apicompat.ResponsesStreamEvent{
+		Type: "response.output_item.added",
+		Item: &apicompat.ResponsesOutput{
+			Type: "message",
+			Content: []apicompat.ResponsesContentPart{
+				{Type: "output_text", Text: "hello inline"},
+				{Type: "refusal", Refusal: "nope"},
+			},
+		},
+	}))
 
 	bigText := strings.Repeat("word ", 400) // ~2000 bytes (~500 tokens)
 	for _, nonDelta := range []struct {
@@ -1259,5 +1275,106 @@ func TestBalanceAbort_ClearsNonBillableAndObservesGeminiCodeExecution(t *testing
 		require.NotNil(t, res2)
 		require.Greater(t, fixture2.wallet.topUpCalls, 0)
 		require.Greater(t, res2.Usage.OutputTokens, 100)
+	})
+}
+
+func TestIncompleteUsage_PreservesFinalOutputWhileRaisingProvisional(t *testing.T) {
+	reqBody := []byte(`{"contents":[{"role":"user","parts":[{"text":"hello"}]}]}`)
+	oaiBody := []byte(`{"model":"gpt-5.1","input":"hello"}`)
+
+	t.Run("gemini_preserves_authoritative_final_usage_and_raises_provisional", func(t *testing.T) {
+		finalUsage := &ClaudeUsage{InputTokens: 40, OutputTokens: 12}
+		filledOut, filledIn := fillIncompleteGeminiUsage(finalUsage, 180, reqBody, true)
+		require.Zero(t, filledOut, "authoritative final output must never be overwritten by meter estimate")
+		require.Zero(t, filledIn)
+		require.Equal(t, 12, finalUsage.OutputTokens)
+
+		provisionalUsage := &ClaudeUsage{InputTokens: 40, OutputTokens: 1}
+		filledOut, _ = fillIncompleteGeminiUsage(provisionalUsage, 180, reqBody, false)
+		require.Equal(t, 180, filledOut, "provisional output_tokens=1 must be raised to delivered meter estimate")
+		require.Equal(t, 180, provisionalUsage.OutputTokens)
+	})
+
+	t.Run("openai_stream_preserves_authoritative_final_usage_and_raises_provisional", func(t *testing.T) {
+		finalUsage := &OpenAIUsage{InputTokens: 40, OutputTokens: 12}
+		filledOut, filledIn := fillIncompleteStreamUsageWithFinal(finalUsage, 180, oaiBody, true)
+		require.Zero(t, filledOut, "authoritative final output must never be overwritten by estimate")
+		require.Zero(t, filledIn)
+		require.Equal(t, 12, finalUsage.OutputTokens)
+
+		provisionalUsage := &OpenAIUsage{InputTokens: 40, OutputTokens: 1}
+		filledOut, _ = fillIncompleteStreamUsageWithFinal(provisionalUsage, 180, oaiBody, false)
+		require.Equal(t, 180, filledOut)
+		require.Equal(t, 180, provisionalUsage.OutputTokens)
+	})
+
+	t.Run("messages_chat_fallback_raises_provisional_on_balance_abort_and_preserves_final_after_finish_reason", func(t *testing.T) {
+		// Provisional completion_tokens=1 before finish_reason is raised on balance abort.
+		guard, _ := newFailingStreamPreauthGuard(t)
+		c, _, _ := newPreauthGinContext(t, "/v1/messages", guard)
+		chunk := longChunkPayload(12)
+		provisionalSSE := strings.Join([]string{
+			fmt.Sprintf(`data: {"id":"chatcmpl_p","object":"chat.completion.chunk","model":"gpt-5.1","choices":[{"index":0,"delta":{"content":%q}}],"usage":{"prompt_tokens":30,"completion_tokens":1}}`, chunk),
+			"",
+			fmt.Sprintf(`data: {"id":"chatcmpl_p","object":"chat.completion.chunk","model":"gpt-5.1","choices":[{"index":0,"delta":{"content":%q}}]}`, chunk),
+			"",
+			fmt.Sprintf(`data: {"id":"chatcmpl_p","object":"chat.completion.chunk","model":"gpt-5.1","choices":[{"index":0,"delta":{"content":%q}}]}`, chunk),
+			"",
+		}, "\n")
+		resp := &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {"text/event-stream"}}, Body: newPreauthClosingBody(provisionalSSE)}
+		svc := &OpenAIGatewayService{cfg: &config.Config{}}
+		stashCompatUpstreamRequestBody(c, nil, []byte(`{"model":"gpt-5.1","messages":[{"role":"user","content":"hi"}]}`))
+
+		res, err := svc.streamChatCompletionsAsAnthropic(c, resp, "gpt-5.1", "gpt-5.1", "gpt-5.1", nil, nil, time.Now())
+		require.ErrorIs(t, err, ErrBalanceWithholdingFailed)
+		require.NotNil(t, res)
+		require.Equal(t, 30, res.Usage.InputTokens)
+		require.Greater(t, res.Usage.OutputTokens, 100, "provisional completion_tokens=1 before finish_reason must be raised to delivered output")
+
+		// Authoritative final completion_tokens=12 on/after finish_reason is preserved even if stream ends before [DONE].
+		c2, _, _ := newPreauthGinContext(t, "/v1/messages", nil)
+		finalSSE := strings.Join([]string{
+			fmt.Sprintf(`data: {"id":"chatcmpl_f","object":"chat.completion.chunk","model":"gpt-5.1","choices":[{"index":0,"delta":{"content":%q}}]}`, chunk),
+			"",
+			`data: {"id":"chatcmpl_f","object":"chat.completion.chunk","model":"gpt-5.1","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":30,"completion_tokens":12}}`,
+			"",
+		}, "\n")
+		scan := svc.scanCCStream(c2, &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(finalSSE))}, "test", "req-f", time.Now(), func(*apicompat.ChatCompletionsChunk) {})
+		require.True(t, scan.SawFinalOutput)
+		require.Equal(t, 12, scan.Usage.OutputTokens)
+	})
+
+	t.Run("openai_responses_stream_balance_abort_clears_earlier_bare_error_non_billable", func(t *testing.T) {
+		guard, fixture := newFailingStreamPreauthGuard(t)
+		c, _, ctx := newPreauthGinContext(t, "/v1/responses", guard)
+		chunk := longChunkPayload(12)
+		sse := strings.Join([]string{
+			"event: error",
+			`data: {"type":"error","error":{"type":"server_error","message":"transient prelude"}}`,
+			"",
+			"event: response.created",
+			`data: {"type":"response.created","response":{"id":"resp_bare","status":"in_progress","model":"gpt-5.1"}}`,
+			"",
+			"event: response.output_text.delta",
+			fmt.Sprintf(`data: {"type":"response.output_text.delta","item_id":"msg_1","output_index":0,"content_index":0,"delta":%q}`, chunk),
+			"",
+			"event: response.output_text.delta",
+			fmt.Sprintf(`data: {"type":"response.output_text.delta","item_id":"msg_1","output_index":0,"content_index":0,"delta":%q}`, chunk),
+			"",
+			"event: response.output_text.delta",
+			fmt.Sprintf(`data: {"type":"response.output_text.delta","item_id":"msg_1","output_index":0,"content_index":0,"delta":%q}`, chunk),
+			"",
+		}, "\n")
+		svc := &OpenAIGatewayService{cfg: &config.Config{}}
+		account := &Account{ID: 612, Platform: PlatformOpenAI, Type: AccountTypeOAuth}
+		resp := &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {"text/event-stream"}}, Body: newPreauthClosingBody(sse)}
+
+		res, err := svc.handleStreamingResponse(ctx, resp, c, account, time.Now(), "gpt-5.1", "gpt-5.1")
+		require.ErrorIs(t, err, ErrBalanceWithholdingFailed)
+		require.NotNil(t, res)
+		require.Greater(t, fixture.wallet.topUpCalls, 0)
+		require.False(t, res.nonBillableUpstreamError, "delivered output on balance abort must clear earlier bare error waiver")
+		require.True(t, res.incompleteStream, "balance abort must mark stream incomplete so partial output is estimated")
+		require.Greater(t, res.incompleteOutputTokens, 100)
 	})
 }

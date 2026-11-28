@@ -803,8 +803,10 @@ readLoop:
 					writeResponsesError(c, status, errType, errMsg)
 				}
 				result := resultWithUsage()
-				result.ImageCount = imageCounter.Count()
-				result.ImageOutputSizes = imageCounter.Sizes()
+				if reqStream {
+					result.ImageCount = imageCounter.Count()
+					result.ImageOutputSizes = imageCounter.Sizes()
+				}
 				applyIncompleteOpenAIWSTurnUsage(account, &result.Usage, turnOutput, payload, incompleteOpenAIWSTurn{
 					mode:       "forward_v2",
 					model:      mappedModel,

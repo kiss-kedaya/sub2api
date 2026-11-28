@@ -94,9 +94,14 @@ func TestEstimateBalancePreauthorizationTokensGeminiSnakeCaseAndThinkingBudgets(
 			wantOutput: 8192,
 		},
 		{
-			name:       "anthropic thinking budget with omitted max_tokens",
+			name:       "anthropic thinking budget smaller than non-stream default with omitted max_tokens keeps default window",
 			body:       `{"model":"claude-sonnet-4","thinking":{"type":"enabled","budget_tokens":3000},"messages":[{"role":"user","content":"hi"}]}`,
-			wantOutput: 3000,
+			wantOutput: DefaultBalancePreauthorizationNonStreamOutputWindow,
+		},
+		{
+			name:       "anthropic thinking budget larger than non-stream default with omitted max_tokens honors budget",
+			body:       `{"model":"claude-sonnet-4","thinking":{"type":"enabled","budget_tokens":6000},"messages":[{"role":"user","content":"hi"}]}`,
+			wantOutput: 6000,
 		},
 		{
 			name:       "gemini camelCase thinkingBudget with omitted maxOutputTokens reserves budget plus non-stream output window",
@@ -184,5 +189,30 @@ func TestEstimateBalancePreauthorizationTokens_BlocksCrossProtocolFieldSmuggling
 		body := []byte(`{"model":"claude-sonnet-4","stream":true,"max_tokens":4096,"messages":[{"role":"user","content":"hi"}]}`)
 		require.Equal(t, 4096, EstimateBalancePreauthorizationTokens(body).OutputTokens)
 		require.Equal(t, 4096, EstimateBalancePreauthorizationTokensForStream(body, true).OutputTokens)
+	})
+
+	t.Run("anthropic thinking budget without explicit output cap never downgrades default window", func(t *testing.T) {
+		// Recognized messages shape: non-stream thinking.budget_tokens=1 reserves 4096, not 1.
+		msgSmall := []byte(`{"messages":[{"role":"user","content":"hi"}],"thinking":{"type":"enabled","budget_tokens":1}}`)
+		require.Equal(t, DefaultBalancePreauthorizationNonStreamOutputWindow, EstimateBalancePreauthorizationTokens(msgSmall).OutputTokens)
+		require.Equal(t, DefaultBalancePreauthorizationOutputWindow, EstimateBalancePreauthorizationTokensForStream(msgSmall, true).OutputTokens)
+
+		// Recognized messages shape: budget larger than default window still wins.
+		msgLarge := []byte(`{"messages":[{"role":"user","content":"hi"}],"thinking":{"type":"enabled","budget_tokens":10000}}`)
+		require.Equal(t, 10000, EstimateBalancePreauthorizationTokens(msgLarge).OutputTokens)
+
+		// Recognized messages shape with explicit max_tokens takes max(explicit, budget).
+		msgExplicit := []byte(`{"messages":[{"role":"user","content":"hi"}],"max_tokens":512,"thinking":{"type":"enabled","budget_tokens":1}}`)
+		require.Equal(t, 512, EstimateBalancePreauthorizationTokens(msgExplicit).OutputTokens)
+		msgExplicitBudgetLarger := []byte(`{"messages":[{"role":"user","content":"hi"}],"max_tokens":512,"thinking":{"type":"enabled","budget_tokens":2048}}`)
+		require.Equal(t, 2048, EstimateBalancePreauthorizationTokens(msgExplicitBudgetLarger).OutputTokens)
+
+		// Unrecognized shape (e.g. legacy prompt): thinking.budget_tokens=1 reserves 4096, not 1.
+		unrecognizedSmall := []byte(`{"prompt":"hi","thinking":{"type":"enabled","budget_tokens":1}}`)
+		require.Equal(t, DefaultBalancePreauthorizationNonStreamOutputWindow, EstimateBalancePreauthorizationTokens(unrecognizedSmall).OutputTokens)
+		require.Equal(t, DefaultBalancePreauthorizationOutputWindow, EstimateBalancePreauthorizationTokensForStream(unrecognizedSmall, true).OutputTokens)
+
+		unrecognizedLarge := []byte(`{"prompt":"hi","thinking":{"type":"enabled","budget_tokens":8192}}`)
+		require.Equal(t, 8192, EstimateBalancePreauthorizationTokens(unrecognizedLarge).OutputTokens)
 	})
 }

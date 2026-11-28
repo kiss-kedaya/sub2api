@@ -452,6 +452,7 @@ func (s *AntigravityGatewayService) consumeAntigravityCompatResponse(
 			streamResult.usage,
 			streamResult.outputTokens,
 			call.request.originalBody,
+			streamResult.hasFinalOutput,
 		)
 	}
 

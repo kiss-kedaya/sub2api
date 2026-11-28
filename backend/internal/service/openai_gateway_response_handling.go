@@ -56,6 +56,9 @@ type openaiStreamingResult struct {
 	// produced in that case. It is 0 when the stream reached a terminal frame or
 	// produced nothing.
 	incompleteOutputTokens int
+	// hasFinalOutput is true once a terminal frame reported an authoritative
+	// OutputTokens figure; incomplete-stream estimation preserves it verbatim.
+	hasFinalOutput bool
 }
 
 type openaiNonStreamingResult struct {
@@ -440,7 +443,8 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 	var streamSearchSeen = make(map[string]struct{})
 	searchSkipFunctionTools := openAINativeSearchSkipFunctionTools(c)
 	resultWithUsage := func() *openaiStreamingResult {
-		incompleteStream := !sawTerminalEvent && !nonBillableUpstreamError
+		balanceAborted := isBalanceHoldTopUpError(streamEarlyErr)
+		incompleteStream := (!sawTerminalEvent && !nonBillableUpstreamError) || balanceAborted
 		incompleteOutputTokens := 0
 		if incompleteStream {
 			// No terminal frame means no real usage can arrive. Keep a lower-bound
@@ -458,6 +462,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			clientDisconnect:         clientDisconnected,
 			incompleteStream:         incompleteStream,
 			incompleteOutputTokens:   incompleteOutputTokens,
+			hasFinalOutput:           sawTerminalEvent && terminalEventType != "error" && usage.OutputTokens > 0,
 		}
 	}
 	flushPending := func(disconnectMessage string) {
@@ -982,6 +987,8 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 								if !clientDisconnected {
 									_ = flushBuffered()
 								}
+								nonBillableUpstreamError = false
+								sawTerminalEvent = false
 								streamEarlyErr = wrapStreamOutputHoldTopUpFailure(topUpErr)
 								s.reportOpenAIStreamOutputHoldTopUpFailure(c, account, "OpenAI responses", topUpErr)
 							}
