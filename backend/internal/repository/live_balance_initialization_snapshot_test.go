@@ -15,13 +15,8 @@ func TestLoadLiveBalanceInitializationSnapshotUsesOneMVCCStatement(t *testing.T)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = db.Close() })
 
-	mock.ExpectQuery(`(?s)SELECT u.balance::text,.*COALESCE\(h.last_event_id, 0\),.*EXISTS.*billing_balance_settlements.*LEFT JOIN live_balance_adjustment_heads.*WHERE u.id = \$1`).
-		WithArgs(
-			int64(42),
-			service.BalanceSettlementAuthorized,
-			service.BalanceSettlementFinalizationPending,
-			service.BalanceSettlementPending,
-		).
+	mock.ExpectQuery(`(?s)SELECT u.balance::text,.*COALESCE\(h.last_event_id, 0\),.*EXISTS.*billing_balance_settlements.*pending\.user_id > 0.*pending\.status IN \(1, 2, 3\).*LEFT JOIN live_balance_adjustment_heads.*WHERE u.id = \$1`).
+		WithArgs(int64(42)).
 		WillReturnRows(sqlmock.NewRows([]string{"balance", "watermark", "has_unsettled"}).AddRow("12.34567890", 17, true))
 
 	snapshot, err := (&usageBillingRepository{db: db}).LoadLiveBalanceInitializationSnapshot(context.Background(), 42)
@@ -38,12 +33,7 @@ func TestLoadLiveBalanceInitializationSnapshotReturnsUserNotFound(t *testing.T) 
 	t.Cleanup(func() { _ = db.Close() })
 
 	mock.ExpectQuery(`SELECT u.balance::text`).
-		WithArgs(
-			int64(404),
-			service.BalanceSettlementAuthorized,
-			service.BalanceSettlementFinalizationPending,
-			service.BalanceSettlementPending,
-		).
+		WithArgs(int64(404)).
 		WillReturnError(sql.ErrNoRows)
 	_, err = (&usageBillingRepository{db: db}).LoadLiveBalanceInitializationSnapshot(context.Background(), 404)
 	require.ErrorIs(t, err, service.ErrUserNotFound)

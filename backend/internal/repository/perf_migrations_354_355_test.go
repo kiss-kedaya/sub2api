@@ -22,7 +22,7 @@ func TestMigrations354And355NonTransactionalIndexDefinitions(t *testing.T) {
 		{
 			filename:  billingSettlementsUserUnsettledIndexMigration,
 			indexName: billingSettlementsUserUnsettledIndex,
-			expected:  "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_billing_balance_settlements_user_unsettled ON billing_balance_settlements (user_id) WHERE status IN (1, 2, 3)",
+			expected:  "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_billing_balance_settlements_user_unsettled ON billing_balance_settlements (user_id) WHERE status IN (1, 2, 3) AND user_id > 0",
 		},
 		{
 			filename:  cmv2HistRollupGlobalBucketIndexMigration,

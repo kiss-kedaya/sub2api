@@ -10,6 +10,17 @@ import (
 	"github.com/shopspring/decimal"
 )
 
+// LoadLiveBalanceInitializationSnapshot uses literal status values (1, 2, 3)
+// so PostgreSQL always matches the partial index
+// idx_billing_balance_settlements_user_unsettled (WHERE status IN (1, 2, 3) AND user_id > 0)
+// even under generic plans. Pin the enum values at compile time to prevent drift.
+const (
+	_ uint = uint(service.BalanceSettlementAuthorized - 1)
+	_ uint = uint(1 - service.BalanceSettlementAuthorized)
+	_ uint = uint(service.BalanceSettlementFinalizationPending - 2)
+	_ uint = uint(2 - service.BalanceSettlementFinalizationPending)
+)
+
 // LoadLiveBalanceInitializationSnapshot reads the authoritative database
 // balance and the latest external adjustment head in one PostgreSQL statement.
 // That single MVCC snapshot is the boundary between deltas already included in
@@ -34,16 +45,13 @@ func (r *usageBillingRepository) LoadLiveBalanceInitializationSnapshot(
 				SELECT 1
 				FROM billing_balance_settlements AS pending
 				WHERE pending.user_id = u.id
-					AND pending.status IN ($2, $3, $4)
+					AND pending.user_id > 0
+					AND pending.status IN (1, 2, 3)
 			)
 		FROM users AS u
 		LEFT JOIN live_balance_adjustment_heads AS h ON h.user_id = u.id
 		WHERE u.id = $1 AND u.deleted_at IS NULL
-	`, userID,
-		service.BalanceSettlementAuthorized,
-		service.BalanceSettlementFinalizationPending,
-		service.BalanceSettlementPending,
-	).Scan(&balanceText, &snapshot.Watermark, &snapshot.HasUnsettled)
+	`, userID).Scan(&balanceText, &snapshot.Watermark, &snapshot.HasUnsettled)
 	if errors.Is(err, sql.ErrNoRows) {
 		return snapshot, service.ErrUserNotFound
 	}
