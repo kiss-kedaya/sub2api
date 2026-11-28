@@ -691,7 +691,7 @@ const oauthState = ref('')
 const projectId = ref('')
 
 watch(
-  () => [props.platform, props.showEmailPasswordOption] as const,
+  [() => props.platform, () => props.showEmailPasswordOption],
   async ([platform, requested]) => {
     passwordAuthEnabled.value = false
     if (platform !== 'grok' || !requested) return

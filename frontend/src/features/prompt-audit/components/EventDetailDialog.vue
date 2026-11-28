@@ -12,11 +12,11 @@
       />
 
       <!-- Fixed panel height so switching tabs does not resize the dialog -->
-      <div class="mt-5 h-[min(62vh,36rem)] overflow-y-auto" data-test="event-detail-tab-panel">
+      <div class="mt-5 h-[min(62dvh,36rem)] overflow-y-auto" data-test="event-detail-tab-panel">
         <div v-show="activeTab === 'summary'" class="grid gap-5 lg:grid-cols-2" role="tabpanel">
           <div>
             <h4 class="text-sm font-medium text-highlighted">{{ t('admin.promptAudit.events.promptFull') }}</h4>
-            <pre class="mt-2 max-h-[min(46vh,26rem)] overflow-auto whitespace-pre-wrap wrap-break-word rounded-lg bg-elevated p-4 text-sm text-toned" data-test="summary-prompt-full">{{ displayPrompt(event) }}</pre>
+            <pre class="mt-2 max-h-[min(46dvh,26rem)] overflow-auto whitespace-pre-wrap wrap-break-word rounded-lg bg-elevated p-4 text-sm text-toned" data-test="summary-prompt-full">{{ displayPrompt(event) }}</pre>
           </div>
           <dl class="grid h-fit grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-sm">
             <dt class="text-muted">{{ t('admin.promptAudit.events.decision') }}</dt><dd><UBadge :color="decisionColor(event.decision)" variant="subtle" :label="formatDecisionAction(event.decision, event.action)" /></dd>
@@ -34,12 +34,12 @@
             <section data-test="risk-prompt-preview">
               <h4 class="text-sm font-medium text-highlighted">{{ t('admin.promptAudit.events.promptFull') }}</h4>
               <p class="mt-1 text-xs text-muted">{{ t('admin.promptAudit.events.promptFullHint') }}</p>
-              <pre class="mt-2 h-[min(46vh,26rem)] overflow-auto whitespace-pre-wrap wrap-break-word rounded-lg bg-elevated p-4 text-sm text-toned" data-test="risk-prompt-full">{{ displayPrompt(event) }}</pre>
+              <pre class="mt-2 h-[min(46dvh,26rem)] overflow-auto whitespace-pre-wrap wrap-break-word rounded-lg bg-elevated p-4 text-sm text-toned" data-test="risk-prompt-full">{{ displayPrompt(event) }}</pre>
             </section>
             <section data-test="risk-guard-return">
               <h4 class="text-sm font-medium text-highlighted">{{ t('admin.promptAudit.events.guardReturn') }}</h4>
               <p class="mt-1 text-xs text-muted">{{ t('admin.promptAudit.events.guardReturnHint') }}</p>
-              <pre class="mt-2 h-[min(46vh,26rem)] overflow-auto whitespace-pre-wrap wrap-break-word rounded-lg bg-elevated p-4 font-mono text-xs text-toned">{{ formatGuardReturn(event) }}</pre>
+              <pre class="mt-2 h-[min(46dvh,26rem)] overflow-auto whitespace-pre-wrap wrap-break-word rounded-lg bg-elevated p-4 font-mono text-xs text-toned">{{ formatGuardReturn(event) }}</pre>
             </section>
           </div>
 
@@ -53,7 +53,7 @@
               <p class="mt-1 text-sm text-toned">{{ issueDescription(issue) }}</p>
               <dl class="mt-2 grid gap-1 text-xs text-muted sm:grid-cols-2">
                 <div><dt class="inline text-dimmed">{{ t('admin.promptAudit.events.categories') }} · </dt><dd class="inline">{{ translateCategory(issue.category || issue.scanner_id) }}</dd></div>
-                <div><dt class="inline text-dimmed">{{ t('admin.promptAudit.events.score') }} · </dt><dd class="inline">{{ issue.score }}</dd></div>
+                <div><dt class="inline text-dimmed">{{ t('admin.promptAudit.events.score') }} · </dt><dd class="inline tabular-nums">{{ issue.score }}</dd></div>
                 <div class="sm:col-span-2"><dt class="inline text-dimmed">{{ t('admin.promptAudit.events.evidence') }} · </dt><dd class="inline wrap-break-word">{{ issue.evidence ? translateEvidence(issue.evidence) : '—' }}</dd></div>
               </dl>
             </article>
@@ -62,14 +62,14 @@
         </div>
 
         <dl v-show="activeTab === 'technical'" class="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-2 text-sm" role="tabpanel">
-          <dt class="text-muted">{{ t('admin.promptAudit.events.requestId') }}</dt><dd class="break-all font-mono">{{ event.snapshot.request_id || '—' }}</dd>
-          <dt class="text-muted">{{ t('admin.promptAudit.events.promptHash') }}</dt><dd class="break-all font-mono">{{ event.snapshot.prompt_hash }}</dd>
+          <dt class="text-muted">{{ t('admin.promptAudit.events.requestId') }}</dt><dd class="wrap-anywhere font-mono">{{ event.snapshot.request_id || '—' }}</dd>
+          <dt class="text-muted">{{ t('admin.promptAudit.events.promptHash') }}</dt><dd class="wrap-anywhere font-mono">{{ event.snapshot.prompt_hash }}</dd>
           <dt class="text-muted">{{ t('admin.promptAudit.events.technical.scanner') }}</dt><dd>{{ event.scanner_backend }} · {{ event.scanner_version }}</dd>
-          <dt class="text-muted">{{ t('admin.promptAudit.events.technical.policy') }}</dt><dd>{{ event.policy_id }} · v{{ event.policy_version }}</dd>
+          <dt class="text-muted">{{ t('admin.promptAudit.events.technical.policy') }}</dt><dd class="tabular-nums">{{ event.policy_id }} · v{{ event.policy_version }}</dd>
           <dt class="text-muted">{{ t('admin.promptAudit.events.technical.guardEndpoint') }}</dt><dd>{{ event.guard_endpoint_id }}</dd>
-          <dt class="text-muted">{{ t('admin.promptAudit.events.technical.config') }}</dt><dd>v{{ event.config_version }}</dd>
-          <dt class="text-muted">{{ t('admin.promptAudit.events.technical.chunks') }}</dt><dd>{{ event.chunk_total }}</dd>
-          <dt class="text-muted">{{ t('admin.promptAudit.events.technical.latency') }}</dt><dd>{{ event.latency_ms }} ms</dd>
+          <dt class="text-muted">{{ t('admin.promptAudit.events.technical.config') }}</dt><dd class="tabular-nums">v{{ event.config_version }}</dd>
+          <dt class="text-muted">{{ t('admin.promptAudit.events.technical.chunks') }}</dt><dd class="tabular-nums">{{ event.chunk_total }}</dd>
+          <dt class="text-muted">{{ t('admin.promptAudit.events.technical.latency') }}</dt><dd class="tabular-nums">{{ event.latency_ms }} ms</dd>
           <dt class="text-muted">{{ t('admin.promptAudit.events.stage') }}</dt><dd>{{ event.snapshot.stage || 'http' }}</dd>
           <dt class="text-muted">{{ t('admin.promptAudit.events.technical.protocol') }}</dt><dd>{{ event.snapshot.protocol }} · {{ event.snapshot.endpoint }}</dd>
         </dl>

@@ -64,7 +64,7 @@ const busy = ref(false)
 const error = ref('')
 let sequence = 0
 
-watch(() => [props.show, props.groups] as const, () => {
+watch([() => props.show, () => props.groups], () => {
   sequence++
   error.value = ''
   draftGroups.value = props.groups.map(group => ({ ...group, account_ids: Array.isArray(group.account_ids) ? [...group.account_ids] : [] }))

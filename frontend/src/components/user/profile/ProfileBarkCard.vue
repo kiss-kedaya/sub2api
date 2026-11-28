@@ -25,13 +25,13 @@
           {{ t('common.refresh') }}
         </UButton>
       </div>
-      <p class="text-sm text-gray-500 dark:text-gray-400">{{ t('profile.bark.changeVerificationHint') }}</p>
+      <p class="text-sm text-muted">{{ t('profile.bark.changeVerificationHint') }}</p>
       <div class="flex items-center gap-2 text-sm">
         <span
           class="inline-block h-2 w-2 rounded-full"
-          :class="status.configured ? 'bg-green-500' : 'bg-gray-400'"
+          :class="status.configured ? 'bg-green-500' : 'bg-dimmed'"
         ></span>
-        <span class="text-gray-500 dark:text-gray-400">
+        <span class="text-muted">
           {{ status.configured ? t('profile.bark.configured') : t('profile.bark.notConfigured') }}
         </span>
       </div>
@@ -48,7 +48,7 @@
           class="w-full"
           :placeholder="t('profile.bark.deviceKeyPlaceholder')"
         />
-        <p class="mt-1 text-xs text-gray-400">{{ t(status.configured ? 'profile.bark.keepKeyHint' : 'profile.bark.deviceKeyHint') }}</p>
+        <p class="mt-1 text-xs text-dimmed">{{ t(status.configured ? 'profile.bark.keepKeyHint' : 'profile.bark.deviceKeyHint') }}</p>
       </div>
 
       <div class="flex items-center justify-between">

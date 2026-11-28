@@ -10,23 +10,23 @@
             <Icon name="check" size="lg" class="text-green-500" />
           </div>
           <p class="text-base font-semibold text-highlighted">{{ props.orderType === 'subscription' ? t('payment.result.subscriptionSuccess') : t('payment.result.success') }}</p>
-          <div v-if="paidOrder" class="w-full rounded-md bg-muted p-4 ring ring-default dark:bg-dark-800 dark:ring-0">
+          <div v-if="paidOrder" class="w-full rounded-md bg-muted p-4 ring ring-default">
             <div class="space-y-2 text-sm">
               <div class="flex justify-between">
                 <span class="text-muted">{{ t('payment.orders.orderId') }}</span>
-                <span class="font-medium text-highlighted">#{{ paidOrder.id }}</span>
+                <span class="font-medium tabular-nums text-highlighted">#{{ paidOrder.id }}</span>
               </div>
               <div v-if="paidOrder.out_trade_no" class="flex justify-between">
                 <span class="text-muted">{{ t('payment.orders.orderNo') }}</span>
-                <span class="font-medium text-highlighted">{{ paidOrder.out_trade_no }}</span>
+                <span class="font-medium tabular-nums text-highlighted">{{ paidOrder.out_trade_no }}</span>
               </div>
               <div class="flex justify-between">
                 <span class="text-muted">{{ t('payment.orders.amount') }}</span>
-                <span class="font-medium text-highlighted">{{ creditedAmountSymbol }}{{ paidOrder.amount.toFixed(2) }}</span>
+                <span class="font-medium tabular-nums text-highlighted">{{ creditedAmountSymbol }}{{ paidOrder.amount.toFixed(2) }}</span>
               </div>
               <div class="flex justify-between">
                 <span class="text-muted">{{ t('payment.orders.payAmount') }}</span>
-                <span class="font-medium text-highlighted">{{ formatGatewayAmount(paidOrder.pay_amount, paidOrder.currency) }}</span>
+                <span class="font-medium tabular-nums text-highlighted">{{ formatGatewayAmount(paidOrder.pay_amount, paidOrder.currency) }}</span>
               </div>
             </div>
           </div>
@@ -108,14 +108,14 @@
               <p class="text-base font-semibold text-highlighted">{{ t('payment.qr.alipayFallbackTitle') }}</p>
               <p class="mt-1 text-sm text-muted">{{ t('payment.qr.alipayFallbackHint') }}</p>
             </div>
-            <div class="w-full space-y-2 border-y border-default py-3 text-sm dark:border-dark-600">
+            <div class="w-full space-y-2 border-y border-default py-3 text-sm">
               <div class="flex items-start justify-between gap-4">
                 <span class="text-muted">{{ t('payment.orders.payAmount') }}</span>
-                <span class="font-semibold text-highlighted">{{ displayPaymentAmount }}</span>
+                <span class="font-semibold tabular-nums text-highlighted">{{ displayPaymentAmount }}</span>
               </div>
               <div class="flex items-start justify-between gap-4">
                 <span class="text-muted">{{ t('payment.orders.orderNo') }}</span>
-                <span class="max-w-[70%] break-all text-right font-mono text-xs text-highlighted">
+                <span class="max-w-[70%] wrap-anywhere text-right font-mono text-xs tabular-nums text-highlighted">
                   {{ displayOrderNumber }}
                 </span>
               </div>
@@ -295,13 +295,13 @@ const showQRCode = computed(() => !!qrUrl.value && (!isMobileAlipayDeepLink.valu
 const qrBorderClass = computed(() => {
   if (isAlipay.value) return 'border-[#00AEEF] bg-blue-50 dark:border-[#00AEEF]/70 dark:bg-blue-950/20'
   if (isWxpay.value) return 'border-[#2BB741] bg-green-50 dark:border-[#2BB741]/70 dark:bg-green-950/20'
-  return 'border-gray-200 bg-white dark:border-dark-600 dark:bg-dark-800'
+  return 'border-default bg-default'
 })
 
 const qrLogoBgClass = computed(() => {
   if (isAlipay.value) return 'bg-[#00AEEF]'
   if (isWxpay.value) return 'bg-[#2BB741]'
-  return 'bg-gray-400'
+  return 'bg-dimmed'
 })
 
 const qrLogoIcon = computed(() => {

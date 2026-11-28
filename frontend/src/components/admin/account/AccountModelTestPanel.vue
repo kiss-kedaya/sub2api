@@ -18,19 +18,21 @@
           />
         </label>
         <UCheckbox v-model="includeMedia" class="model-test-option" :disabled="anyRunning" :label="t('admin.accounts.batchTest.includeMedia')" />
-        <label v-if="variant !== 'single'" class="model-test-concurrency">
-          <span>{{ t('admin.accounts.batchTest.concurrencyLimit') }}</span>
-          <select
-            v-model.number="concurrency"
-            class="model-test-concurrency-select"
+        <div v-if="variant !== 'single'" class="model-test-concurrency">
+          <label for="test-concurrency">{{ t('admin.accounts.batchTest.concurrencyLimit') }}</label>
+          <Select
+            id="test-concurrency"
+            v-model="concurrency"
+            :options="concurrencyItems"
+            :searchable="false"
+            size="sm"
+            class="w-20 tabular-nums"
             :disabled="anyRunning"
             :aria-label="t('admin.accounts.batchTest.concurrencyLimit')"
             :title="t('admin.accounts.batchTest.concurrencyHint')"
             data-test="test-concurrency"
-          >
-            <option v-for="item in concurrencyItems" :key="item.value" :value="item.value">{{ item.label }}</option>
-          </select>
-        </label>
+          />
+        </div>
       </div>
     </div>
 
@@ -57,8 +59,8 @@
         :aria-label="summaryLabel"
         data-test="test-progress"
       >
-        <span class="is-success" :style="{ width: progressSuccessPct }" />
-        <span class="is-failed" :style="{ width: progressFailedPct }" />
+        <span class="is-success" :style="{ transform: `scaleX(${progressSuccessRatio})` }" />
+        <span class="is-failed" :style="{ transform: `translateX(${progressSuccessRatio * 100}%) scaleX(${progressFailedRatio})` }" />
       </div>
       <div class="model-test-progress-meta" role="status" :aria-label="summaryLabel">
         <span class="model-test-counter is-success"><i />{{ counts.success }} {{ t('admin.accounts.batchTest.success') }}</span>
@@ -199,6 +201,7 @@ import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import type { TableColumn } from '@nuxt/ui'
 import { adminAPI } from '@/api/admin'
+import Select from '@/components/common/Select.vue'
 import Icon from '@/components/icons/Icon.vue'
 import type { ClaudeModel } from '@/types'
 import {
@@ -337,8 +340,8 @@ const summaryLabel = computed(() =>
   })
 )
 
-const progressSuccessPct = computed(() => percent(counts.value.success, rows.value.length))
-const progressFailedPct = computed(() => percent(counts.value.failed + counts.value.skipped, rows.value.length))
+const progressSuccessRatio = computed(() => ratio(counts.value.success, rows.value.length))
+const progressFailedRatio = computed(() => ratio(counts.value.failed + counts.value.skipped, rows.value.length))
 const completedCount = computed(
   () => counts.value.success + counts.value.failed + counts.value.skipped
 )
@@ -371,9 +374,9 @@ const testSelectedLabel = computed(() =>
   t('admin.accounts.batchTest.testSelected', { count: jobsForScope('selected').length })
 )
 
-const percent = (value: number, total: number) => {
-  if (!total) return '0%'
-  return `${Math.round((value / total) * 1000) / 10}%`
+const ratio = (value: number, total: number) => {
+  if (!total) return 0
+  return Math.min(1, Math.max(0, value / total))
 }
 
 const statusLabel = (status: RowStatus) => {
@@ -670,7 +673,7 @@ const testOne = async (row: ModelTestRow) => {
 }
 
 watch(
-  () => [props.show, props.accounts.map((account) => account.id + ':' + account.platform + ':' + account.type).join(',')] as const,
+  [() => props.show, () => props.accounts.map((account) => account.id + ':' + account.platform + ':' + account.type).join(',')],
   async ([show]) => {
     const version = ++loadVersion
     stopRun()
@@ -701,36 +704,29 @@ defineExpose({
 .model-test-toolbar { justify-content: space-between; }
 .model-test-kicker { margin: 0; font-size: 13px; font-weight: 650; }
 .model-test-toolbar-controls { gap: 16px; }
-.model-test-search-wrap { display: flex; align-items: center; gap: 8px; padding: 0 11px; border: 1px solid var(--signal-line); border-radius: 9px; background: var(--signal-surface); color: var(--signal-muted); transition: border-color 180ms ease, box-shadow 180ms ease; }
+.model-test-search-wrap { display: flex; align-items: center; gap: 8px; padding: 0 11px; border: 1px solid var(--signal-line); border-radius: 9px; background: var(--signal-surface); color: var(--signal-muted); transition: border-color 180ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1)); }
 .model-test-search-wrap:focus-within { border-color: var(--test-accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--test-accent) 12%, transparent); }
 .model-test-search { min-height: 36px; width: 170px; min-width: 0; padding: 0; border: 0; outline: none; box-shadow: none; background: transparent; color: var(--signal-text); font-size: 12px; }
 .model-test-option { display: flex; align-items: center; gap: 7px; color: var(--signal-muted); font-size: 12px; cursor: pointer; white-space: nowrap; }
 .model-test-concurrency { display: flex; align-items: center; gap: 7px; color: var(--signal-muted); font-size: 12px; white-space: nowrap; }
-.model-test-concurrency-select { height: 30px; min-width: 64px; padding: 0 7px; border: 1px solid var(--signal-line); border-radius: 8px; background: var(--signal-surface); color: var(--signal-text); font-size: 12px; font-variant-numeric: tabular-nums; cursor: pointer; }
-.model-test-concurrency-select:disabled { opacity: .5; cursor: not-allowed; }
-.model-test-concurrency-select:focus-visible { outline: 2px solid var(--test-accent); outline-offset: 2px; }
 .model-test input[type=checkbox] { width: 14px; height: 14px; accent-color: var(--test-accent); cursor: pointer; }
 .model-test-actions { gap: 8px; }
-.model-test-button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 36px; padding: 0 13px; border: 1px solid var(--signal-line); border-radius: 9px; background: var(--signal-surface); color: var(--signal-text); font-size: 12px; font-weight: 600; white-space: nowrap; transition: background 180ms ease, border-color 180ms ease, box-shadow 180ms ease, transform 180ms ease; }
+.model-test-button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 36px; padding: 0 13px; border: 1px solid var(--signal-line); border-radius: 9px; background: var(--signal-surface); color: var(--signal-text); font-size: 12px; font-weight: 600; white-space: nowrap; transition: background-color 180ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1)), border-color 180ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1)), transform 140ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1)); }
 .model-test-button svg { width: 15px; height: 15px; flex-shrink: 0; }
 .model-test-button.is-primary { background: #0f766e; border-color: #0f766e; color: #fff; box-shadow: 0 2px 4px #0f766e18; }
-.model-test-button.is-primary:hover:not(:disabled) { background: #115e59; border-color: #115e59; }
 .model-test-button.is-stop { color: var(--test-failed); border-color: color-mix(in srgb, var(--test-failed) 24%, var(--signal-line)); background: color-mix(in srgb, var(--test-failed) 6%, var(--signal-surface)); }
-.model-test-button:hover:not(:disabled) { border-color: var(--test-accent); background: color-mix(in srgb, var(--test-accent) 5%, var(--signal-surface)); }
-.model-test-button.is-stop:hover:not(:disabled) { border-color: var(--test-failed); background: color-mix(in srgb, var(--test-failed) 12%, var(--signal-surface)); }
-.model-test-button:active:not(:disabled) { transform: translateY(1px); }
+.model-test-button:active:not(:disabled) { transform: scale(0.97); }
 .model-test-button:disabled { opacity: .42; cursor: not-allowed; box-shadow: none; }
 .model-test-selection { display: flex; align-items: center; gap: 2px; margin-left: 6px; padding-left: 12px; border-left: 1px solid var(--signal-line); }
-.model-test-text-btn, .model-test-filter { min-height: 32px; padding: 0 9px; border-radius: 7px; color: var(--signal-muted); font-size: 12px; transition: color 160ms ease, background 160ms ease; }
-.model-test-text-btn:hover:not(:disabled), .model-test-filter:hover { color: var(--test-accent); background: color-mix(in srgb, var(--test-accent) 7%, transparent); }
+.model-test-text-btn, .model-test-filter { min-height: 32px; padding: 0 9px; border-radius: 7px; color: var(--signal-muted); font-size: 12px; transition: color 160ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1)), background-color 160ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1)); }
 .model-test-text-btn:disabled { opacity: .4; cursor: not-allowed; }
 .model-test-filter { margin-left: auto; border: 1px solid transparent; }
 .model-test-filter[aria-pressed=true] { color: var(--test-failed); background: color-mix(in srgb, var(--test-failed) 7%, transparent); border-color: color-mix(in srgb, var(--test-failed) 18%, transparent); }
 .model-test :is(button, input):focus-visible { outline: 2px solid var(--test-accent); outline-offset: 3px; }
 .model-test-search:focus-visible { outline: none; }
 .model-test-progress { display: grid; gap: 9px; }
-.model-test-progress-bar { display: flex; height: 3px; overflow: hidden; border-radius: 99px; background: var(--signal-line); }
-.model-test-progress-bar span { display: block; height: 100%; transition: width 350ms cubic-bezier(.22, 1, .36, 1); }
+.model-test-progress-bar { position: relative; height: 3px; overflow: hidden; border-radius: 99px; background: var(--signal-line); }
+.model-test-progress-bar span { position: absolute; inset: 0; transform-origin: left; transition: transform 240ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1)); }
 .model-test-progress-bar .is-success { background: var(--test-success); }
 .model-test-progress-bar .is-failed { background: var(--test-failed); }
 .model-test-progress-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 14px; color: var(--signal-muted); font-size: 11px; font-variant-numeric: tabular-nums; }
@@ -740,13 +736,19 @@ defineExpose({
 .model-test-counter.is-failed { color: var(--test-failed); }
 .model-test-counter.is-running { color: var(--test-accent); }
 .model-test-completed { margin-left: auto; }
-.model-test-table-wrap { min-width: 0; border: 1px solid var(--signal-line); background: var(--signal-surface); border-radius: 12px; max-height: min(55vh, 600px); overflow: auto; scrollbar-width: thin; }
+.model-test-table-wrap { min-width: 0; border: 1px solid var(--signal-line); background: var(--signal-surface); border-radius: 12px; max-height: min(55dvh, 600px); overflow: auto; scrollbar-width: thin; }
 .model-test-table { width: 100%; min-width: 660px; border-collapse: collapse; font-size: 12px; }
 .model-test-table th, .model-test-table td { padding: 13px 14px; border-bottom: 1px solid var(--signal-line); text-align: left; vertical-align: top; }
 .model-test-table th { padding-top: 11px; padding-bottom: 11px; color: var(--signal-muted); font-size: 11px; font-weight: 500; position: sticky; top: 0; background: var(--signal-bg); z-index: 1; }
-.model-test-table tbody tr { transition: background 200ms ease; }
+.model-test-table tbody tr { transition: background-color 200ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1)); }
 .model-test-table tbody tr:last-child td { border-bottom: 0; }
-.model-test-table tbody tr:hover { background: color-mix(in srgb, var(--signal-muted) 4%, transparent); }
+@media (hover: hover) and (pointer: fine) {
+  .model-test-button.is-primary:hover:not(:disabled) { background: #115e59; border-color: #115e59; }
+  .model-test-button:hover:not(:disabled) { border-color: var(--test-accent); background: color-mix(in srgb, var(--test-accent) 5%, var(--signal-surface)); }
+  .model-test-button.is-stop:hover:not(:disabled) { border-color: var(--test-failed); background: color-mix(in srgb, var(--test-failed) 12%, var(--signal-surface)); }
+  .model-test-text-btn:hover:not(:disabled), .model-test-filter:hover { color: var(--test-accent); background: color-mix(in srgb, var(--test-accent) 7%, transparent); }
+  .model-test-table tbody tr:hover { background: color-mix(in srgb, var(--signal-muted) 4%, transparent); }
+}
 .model-test-table tr.is-running { background: color-mix(in srgb, var(--test-accent) 4%, transparent); }
 .model-test-check { width: 34px; padding-right: 2px !important; }
 .model-test-actions-col { width: 76px; white-space: nowrap; }
@@ -757,7 +759,7 @@ defineExpose({
 .model-test-status.is-running { color: var(--test-accent); background: color-mix(in srgb, var(--test-accent) 8%, transparent); }
 .model-test-status.is-running::before { width: 9px; height: 9px; border: 1.5px solid currentColor; border-right-color: transparent; background: transparent; animation: model-test-spin 900ms linear infinite; }
 .model-test-result { min-width: 220px; max-width: 420px; }
-.model-test-result-text { margin: 0; line-height: 1.65; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; word-break: break-word; }
+.model-test-result-text { margin: 0; line-height: 1.65; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
 .model-test-result-text.is-failed { color: var(--test-failed); }
 .model-test-result .model-test-text-btn { padding: 0; min-height: 26px; font-size: 11px; }
 .model-test-failure { display: grid; gap: 4px; margin-top: 8px; padding: 7px 9px; border-radius: 8px; border: 1px solid var(--signal-line); background: var(--signal-bg); }
@@ -774,18 +776,18 @@ defineExpose({
 .model-test-failure.is-other .model-test-failure-badge { color: var(--signal-muted); background: color-mix(in srgb, var(--signal-muted) 12%, transparent); }
 :global(.dark .model-test-failure.is-rate-limit .model-test-failure-badge) { color: #fbbf24; }
 :global(.dark .model-test-failure.is-network .model-test-failure-badge) { color: #93c5fd; }
-.model-test-disclosure { display: grid; grid-template-rows: 0fr; opacity: 0; transition: grid-template-rows 220ms ease, opacity 220ms ease; }
+.model-test-disclosure { display: grid; grid-template-rows: 0fr; opacity: 0; transition: grid-template-rows 220ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1)), opacity 220ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1)); }
 .model-test-disclosure.is-open { grid-template-rows: 1fr; opacity: 1; }
 .model-test-disclosure > div { overflow: hidden; min-height: 0; }
-.model-test-result-full { margin: 8px 0 0; max-height: 180px; overflow: auto; white-space: pre-wrap; word-break: break-word; background: var(--signal-bg); border: 1px solid var(--signal-line); border-radius: 8px; padding: 10px 12px; font-size: 11px; line-height: 1.65; }
+.model-test-result-full { margin: 8px 0 0; max-height: 180px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; background: var(--signal-bg); border: 1px solid var(--signal-line); border-radius: 8px; padding: 10px 12px; font-size: 11px; line-height: 1.65; }
 .model-test-button.is-row { min-height: 28px; padding: 0 10px; border-radius: 7px; font-size: 11px; font-weight: 500; }
 .model-test-media { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
 .model-test-media img, .model-test-result video { max-height: 120px; max-width: 180px; object-fit: contain; border-radius: 8px; border: 1px solid var(--signal-line); background: var(--signal-bg); cursor: zoom-in; }
 .model-test-result audio, .model-test-result video { width: 100%; margin-top: 8px; }
 .model-test-empty { padding: 32px 16px; text-align: center; color: var(--signal-muted); font-size: 12px; }
-.mono { font-variant-numeric: tabular-nums; word-break: break-all; }
+.mono { font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 .model-test-lightbox { position: fixed; inset: 0; z-index: 80; display: flex; align-items: center; justify-content: center; background: rgba(0, 0, 0, .78); padding: 16px; }
-.model-test-lightbox img { max-height: 90vh; max-width: 90vw; border-radius: 8px; }
+.model-test-lightbox img { max-height: 90dvh; max-width: 90vw; border-radius: 8px; }
 @keyframes model-test-spin { to { transform: rotate(360deg); } }
 @media (max-width: 640px) {
   .model-test { gap: 13px; }
@@ -793,11 +795,11 @@ defineExpose({
   .model-test-toolbar-controls { width: 100%; gap: 10px; }
   .model-test-search-wrap { flex: 1; min-width: 120px; }
   .model-test-search { width: 100%; }
-  .model-test-button, .model-test-text-btn, .model-test-filter { min-height: 40px; }
+  .model-test-button, .model-test-text-btn, .model-test-filter { min-height: 44px; }
   .model-test-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .model-test-selection { grid-column: 1; margin-left: 0; padding-left: 0; border: 0; }
   .model-test-filter { justify-self: end; }
-  .model-test-table-wrap { max-height: 50vh; }
+  .model-test-table-wrap { max-height: 50dvh; }
   .model-test-progress-meta { gap: 10px; }
 }
 @media (prefers-reduced-motion: reduce) {

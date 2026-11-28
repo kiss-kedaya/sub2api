@@ -7,9 +7,9 @@
     <div v-if="!outcome" class="crypto-deposit-confirm space-y-4 text-sm">
       <dl class="grid grid-cols-[auto_1fr] gap-x-6 gap-y-1.5">
         <dt class="text-muted">{{ t('admin.crypto.depositConfirmCount') }}</dt>
-        <dd data-testid="deposit-confirm-count" class="text-highlighted">{{ rows.length }}</dd>
+        <dd data-testid="deposit-confirm-count" class="tabular-nums text-highlighted">{{ rows.length }}</dd>
         <dt class="text-muted">{{ t('admin.crypto.depositConfirmTotal') }}</dt>
-        <dd data-testid="deposit-confirm-total" class="font-medium text-highlighted">{{ total }}</dd>
+        <dd data-testid="deposit-confirm-total" class="font-medium tabular-nums text-highlighted">{{ total }}</dd>
         <dt class="text-muted">{{ t('admin.crypto.depositConfirmChains') }}</dt>
         <dd data-testid="deposit-confirm-chains" class="text-highlighted">{{ chains.join(', ') }}</dd>
       </dl>

@@ -74,7 +74,7 @@
             <div class="min-w-0 flex-1 text-sm">
               <p class="flex items-center justify-between gap-3">
                 <span class="truncate font-medium text-highlighted">{{ item.title }}</span>
-                <time class="shrink-0 text-xs text-muted">{{ formatRelativeTime(item.created_at) }}</time>
+                <time class="shrink-0 text-xs text-muted tabular-nums">{{ formatRelativeTime(item.created_at) }}</time>
               </p>
               <p class="truncate text-dimmed">{{ rowExcerpt(item) }}</p>
             </div>
@@ -94,14 +94,14 @@
     <UModal
       v-model:open="detailModalOpen"
       :title="selectedAnnouncement?.title"
-      :ui="{ content: 'sm:max-w-3xl', body: 'max-h-[60vh] overflow-y-auto', footer: 'justify-between gap-3' }"
+      :ui="{ content: 'sm:max-w-3xl', body: 'max-h-[60dvh] overflow-y-auto', footer: 'justify-between gap-3' }"
       @after:leave="onDetailClosed"
     >
       <template #description>
         <span v-if="selectedAnnouncement" class="flex flex-wrap items-center gap-x-4 gap-y-1 text-muted">
           <span class="inline-flex items-center gap-1.5">
             <UIcon name="i-lucide-clock" class="size-4" />
-            <time>{{ formatRelativeWithDateTime(selectedAnnouncement.created_at) }}</time>
+            <time class="tabular-nums">{{ formatRelativeWithDateTime(selectedAnnouncement.created_at) }}</time>
           </span>
           <UBadge
             :color="selectedRead ? 'neutral' : 'primary'"

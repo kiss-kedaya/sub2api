@@ -17,14 +17,14 @@
         </AdminPageHeader>
         <PageToolbar>
           <!-- Fuzzy user search (deleted users included) -> user_id filter -->
-          <div class="relative w-96 max-w-full sm:w-72" data-filter-user-search>
+          <div ref="filterUserContainerRef" class="relative w-96 max-w-full sm:w-72" data-filter-user-search>
             <UInput
               v-model="filterUserKeyword"
               icon="i-lucide-search"
               class="w-full"
               :placeholder="t('admin.users.searchUsers')"
               @update:model-value="debounceSearchFilterUsers"
-              @focus="showFilterUserDropdown = true"
+              @focus="openFilterUserDropdown"
             >
               <template v-if="selectedFilterUser" #trailing>
                 <UButton
@@ -38,27 +38,32 @@
                 />
               </template>
             </UInput>
-            <div
-              v-if="showFilterUserDropdown && (filterUserResults.length > 0 || filterUserKeyword)"
-              class="absolute z-50 mt-1 max-h-60 w-full overflow-auto rounded-md bg-default p-1 shadow-lg ring ring-default"
-            >
-              <p v-if="filterUserLoading" class="px-2 py-1.5 text-sm text-muted">{{ t('common.loading') }}</p>
-              <p v-else-if="filterUserResults.length === 0 && filterUserKeyword" class="px-2 py-1.5 text-sm text-muted">
-                {{ t('common.noOptionsFound') }}
-              </p>
-              <UButton
-                v-for="user in filterUserResults"
-                :key="user.id"
-                color="neutral"
-                variant="ghost"
-                block
-                class="justify-start font-normal"
-                @click="selectFilterUser(user)"
+            <Teleport :to="filterUserTeleportTarget">
+              <div
+                v-if="showFilterUserDropdown && (filterUserResults.length > 0 || filterUserKeyword)"
+                ref="filterUserDropdownRef"
+                data-filter-user-dropdown
+                class="fixed z-50 max-h-60 overflow-auto rounded-md bg-default p-1 shadow-lg ring ring-default"
+                :style="filterUserDropdownStyle"
               >
-                <span class="truncate text-highlighted">{{ user.email }}</span>
-                <span class="text-xs text-muted">#{{ user.id }}</span>
-              </UButton>
-            </div>
+                <p v-if="filterUserLoading" class="px-2 py-1.5 text-sm text-muted">{{ t('common.loading') }}</p>
+                <p v-else-if="filterUserResults.length === 0 && filterUserKeyword" class="px-2 py-1.5 text-sm text-muted">
+                  {{ t('common.noOptionsFound') }}
+                </p>
+                <UButton
+                  v-for="user in filterUserResults"
+                  :key="user.id"
+                  color="neutral"
+                  variant="ghost"
+                  block
+                  class="justify-start font-normal"
+                  @click="selectFilterUser(user)"
+                >
+                  <span class="truncate text-highlighted">{{ user.email }}</span>
+                  <span class="text-xs tabular-nums text-muted">#{{ user.id }}</span>
+                </UButton>
+              </div>
+            </Teleport>
           </div>
           <div class="w-96 max-w-full sm:w-40">
             <Select v-model="filters.status" :options="statusOptions" :placeholder="t('admin.subscriptions.allStatus')" @change="applyFilters" />
@@ -231,7 +236,7 @@
 
           <template #cell-expires_at="{ value }">
             <div v-if="value">
-              <span class="text-sm" :class="isExpiringSoon(value) ? 'text-warning' : 'text-default'">
+              <span class="text-sm tabular-nums" :class="isExpiringSoon(value) ? 'text-warning' : 'text-default'">
                 {{ formatDateTimeToMinute(value) }}
               </span>
               <template
@@ -306,13 +311,13 @@
     >
       <UForm id="assign-subscription-form" class="space-y-4" @submit="handleAssignSubscription">
         <UFormField :label="t('admin.subscriptions.form.user')">
-          <div class="relative" data-assign-user-search>
+          <div ref="assignUserContainerRef" class="relative" data-assign-user-search>
             <UInput
               v-model="userSearchKeyword"
               class="w-full"
               :placeholder="t('admin.usage.searchUserPlaceholder')"
               @update:model-value="debounceSearchUsers"
-              @focus="showUserDropdown = true"
+              @focus="openUserDropdown"
             >
               <template v-if="selectedUser" #trailing>
                 <UButton
@@ -326,27 +331,32 @@
                 />
               </template>
             </UInput>
-            <div
-              v-if="showUserDropdown && (userSearchResults.length > 0 || userSearchKeyword)"
-              class="absolute z-50 mt-1 max-h-60 w-full overflow-auto rounded-md bg-default p-1 shadow-lg ring ring-default"
-            >
-              <p v-if="userSearchLoading" class="px-2 py-1.5 text-sm text-muted">{{ t('common.loading') }}</p>
-              <p v-else-if="userSearchResults.length === 0 && userSearchKeyword" class="px-2 py-1.5 text-sm text-muted">
-                {{ t('common.noOptionsFound') }}
-              </p>
-              <UButton
-                v-for="user in userSearchResults"
-                :key="user.id"
-                color="neutral"
-                variant="ghost"
-                block
-                class="justify-start font-normal"
-                @click="selectUser(user)"
+            <Teleport :to="assignUserTeleportTarget">
+              <div
+                v-if="showUserDropdown && (userSearchResults.length > 0 || userSearchKeyword)"
+                ref="assignUserDropdownRef"
+                data-assign-user-dropdown
+                class="fixed z-50 max-h-60 overflow-auto rounded-md bg-default p-1 shadow-lg ring ring-default"
+                :style="assignUserDropdownStyle"
               >
-                <span class="truncate text-highlighted">{{ user.email }}</span>
-                <span class="text-xs text-muted">#{{ user.id }}</span>
-              </UButton>
-            </div>
+                <p v-if="userSearchLoading" class="px-2 py-1.5 text-sm text-muted">{{ t('common.loading') }}</p>
+                <p v-else-if="userSearchResults.length === 0 && userSearchKeyword" class="px-2 py-1.5 text-sm text-muted">
+                  {{ t('common.noOptionsFound') }}
+                </p>
+                <UButton
+                  v-for="user in userSearchResults"
+                  :key="user.id"
+                  color="neutral"
+                  variant="ghost"
+                  block
+                  class="justify-start font-normal"
+                  @click="selectUser(user)"
+                >
+                  <span class="truncate text-highlighted">{{ user.email }}</span>
+                  <span class="text-xs tabular-nums text-muted">#{{ user.id }}</span>
+                </UButton>
+              </div>
+            </Teleport>
           </div>
         </UFormField>
         <UFormField :label="t('admin.subscriptions.form.group')" :help="t('admin.subscriptions.groupHint')">
@@ -535,7 +545,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
+import { ref, reactive, computed, nextTick, watch, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { DropdownMenuItem } from '@nuxt/ui'
 import { useAppStore } from '@/stores/app'
@@ -795,6 +805,10 @@ const filterUserResults = ref<SimpleUser[]>([])
 const filterUserLoading = ref(false)
 const showFilterUserDropdown = ref(false)
 const selectedFilterUser = ref<SimpleUser | null>(null)
+const filterUserContainerRef = ref<HTMLElement | null>(null)
+const filterUserDropdownRef = ref<HTMLElement | null>(null)
+const filterUserDropdownStyle = ref<Record<string, string>>({})
+const filterUserTeleportTarget = ref<string | HTMLElement>('body')
 let filterUserSearchTimeout: ReturnType<typeof setTimeout> | null = null
 
 // User search state
@@ -803,7 +817,108 @@ const userSearchResults = ref<AdminUser[]>([])
 const userSearchLoading = ref(false)
 const showUserDropdown = ref(false)
 const selectedUser = ref<AdminUser | null>(null)
+const assignUserContainerRef = ref<HTMLElement | null>(null)
+const assignUserDropdownRef = ref<HTMLElement | null>(null)
+const assignUserDropdownStyle = ref<Record<string, string>>({})
+const assignUserTeleportTarget = ref<string | HTMLElement>('body')
 let userSearchTimeout: ReturnType<typeof setTimeout> | null = null
+
+const MAX_USER_DROPDOWN_HEIGHT = 240
+
+const resolvePortalTarget = (el: HTMLElement | null): string | HTMLElement =>
+  el?.closest('.base-dialog')?.querySelector<HTMLElement>('[data-base-dialog-portal]') ?? 'body'
+
+const computeUserDropdownStyle = (
+  container: HTMLElement | null,
+  dropdown: HTMLElement | null,
+): Record<string, string> => {
+  const rect = container?.getBoundingClientRect()
+  if (!rect) return {}
+  const padding = 8
+  const gap = 4
+  const width = Math.min(Math.max(rect.width, 200), window.innerWidth - padding * 2)
+  const left = Math.min(
+    Math.max(rect.left, padding),
+    Math.max(padding, window.innerWidth - width - padding),
+  )
+  const measuredHeight = dropdown?.offsetHeight || MAX_USER_DROPDOWN_HEIGHT
+  const spaceBelow = window.innerHeight - padding - (rect.bottom + gap)
+  const spaceAbove = rect.top - gap - padding
+  const flipAbove = spaceBelow < measuredHeight && spaceAbove > spaceBelow
+  if (flipAbove) {
+    const maxHeight = Math.max(80, Math.min(MAX_USER_DROPDOWN_HEIGHT, spaceAbove))
+    return {
+      top: 'auto',
+      bottom: `${window.innerHeight - (rect.top - gap)}px`,
+      left: `${left}px`,
+      width: `${width}px`,
+      maxHeight: `${maxHeight}px`,
+      transformOrigin: 'bottom left',
+    }
+  }
+  const maxHeight = Math.max(80, Math.min(MAX_USER_DROPDOWN_HEIGHT, spaceBelow))
+  return {
+    top: `${Math.max(padding, rect.bottom + gap)}px`,
+    bottom: 'auto',
+    left: `${left}px`,
+    width: `${width}px`,
+    maxHeight: `${maxHeight}px`,
+    transformOrigin: 'top left',
+  }
+}
+
+const updateFilterUserDropdownPosition = () => {
+  if (!showFilterUserDropdown.value) return
+  filterUserTeleportTarget.value = resolvePortalTarget(filterUserContainerRef.value)
+  filterUserDropdownStyle.value = computeUserDropdownStyle(
+    filterUserContainerRef.value,
+    filterUserDropdownRef.value,
+  )
+}
+
+const updateAssignUserDropdownPosition = () => {
+  if (!showUserDropdown.value) return
+  assignUserTeleportTarget.value = resolvePortalTarget(assignUserContainerRef.value)
+  assignUserDropdownStyle.value = computeUserDropdownStyle(
+    assignUserContainerRef.value,
+    assignUserDropdownRef.value,
+  )
+}
+
+const updateAllOpenUserDropdowns = () => {
+  updateFilterUserDropdownPosition()
+  updateAssignUserDropdownPosition()
+}
+
+const openFilterUserDropdown = () => {
+  showFilterUserDropdown.value = true
+  updateFilterUserDropdownPosition()
+  void nextTick(updateFilterUserDropdownPosition)
+}
+
+const openUserDropdown = () => {
+  showUserDropdown.value = true
+  updateAssignUserDropdownPosition()
+  void nextTick(updateAssignUserDropdownPosition)
+}
+
+watch(
+  [showFilterUserDropdown, () => filterUserResults.value.length, filterUserLoading, filterUserKeyword],
+  ([open]) => {
+    if (!open) return
+    updateFilterUserDropdownPosition()
+    void nextTick(updateFilterUserDropdownPosition)
+  },
+)
+
+watch(
+  [showUserDropdown, () => userSearchResults.value.length, userSearchLoading, userSearchKeyword],
+  ([open]) => {
+    if (!open) return
+    updateAssignUserDropdownPosition()
+    void nextTick(updateAssignUserDropdownPosition)
+  },
+)
 
 const filters = reactive({
   status: 'active',
@@ -1317,9 +1432,14 @@ const formatResetTime = (windowStart: string | null, period: 'daily' | 'weekly' 
 
 // Handle click outside to close dropdowns
 const handleClickOutside = (event: MouseEvent) => {
-  const target = event.target as HTMLElement
-  if (!target.closest('[data-assign-user-search]')) showUserDropdown.value = false
-  if (!target.closest('[data-filter-user-search]')) showFilterUserDropdown.value = false
+  const target = event.target as HTMLElement | null
+  if (!target?.closest) return
+  if (!target.closest('[data-assign-user-search]') && !target.closest('[data-assign-user-dropdown]')) {
+    showUserDropdown.value = false
+  }
+  if (!target.closest('[data-filter-user-search]') && !target.closest('[data-filter-user-dropdown]')) {
+    showFilterUserDropdown.value = false
+  }
 }
 
 onMounted(() => {
@@ -1328,10 +1448,14 @@ onMounted(() => {
   loadSubscriptions()
   loadGroups()
   document.addEventListener('click', handleClickOutside)
+  window.addEventListener('resize', updateAllOpenUserDropdowns)
+  window.addEventListener('scroll', updateAllOpenUserDropdowns, true)
 })
 
 onUnmounted(() => {
   document.removeEventListener('click', handleClickOutside)
+  window.removeEventListener('resize', updateAllOpenUserDropdowns)
+  window.removeEventListener('scroll', updateAllOpenUserDropdowns, true)
   if (filterUserSearchTimeout) {
     clearTimeout(filterUserSearchTimeout)
   }

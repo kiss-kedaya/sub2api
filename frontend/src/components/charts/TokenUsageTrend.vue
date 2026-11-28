@@ -173,7 +173,7 @@ const chartData = computed(() => {
 })
 
 const lineOptions = computed(() => ({
-  ...(props.animationDuration === undefined ? {} : { animation: { duration: props.animationDuration } }),
+  animation: props.animationDuration === undefined ? (false as const) : { duration: props.animationDuration },
   responsive: true,
   maintainAspectRatio: false,
   interaction: {

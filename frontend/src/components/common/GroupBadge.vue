@@ -131,7 +131,7 @@ const labelText = computed(() => {
 
 // Quiet chips from tokens: the platform logo carries the platform; colour only flags state.
 const labelClass = computed(() => {
-  const base = 'px-1.5 py-0.5 rounded-sm text-[10px] font-semibold'
+  const base = 'px-1.5 py-0.5 rounded-sm text-[10px] font-semibold whitespace-nowrap shrink-0'
 
   if (!isSubscription.value) {
     // Standard: rate on a subtle neutral background
@@ -151,11 +151,11 @@ const labelClass = computed(() => {
   }
 
   // 正常订阅
-  return `${base} bg-primary/10 text-primary`
+  return `${base} bg-primary/10 text-primary-700 dark:text-primary-300`
 })
 
 const peakRateClass = computed(() => {
-  return 'px-1.5 py-0.5 rounded-sm text-[10px] font-semibold bg-warning/15 text-warning'
+  return 'px-1.5 py-0.5 rounded-sm text-[10px] font-semibold whitespace-nowrap shrink-0 bg-warning/15 text-warning'
 })
 
 // Subscription groups read slightly stronger than standard ones.

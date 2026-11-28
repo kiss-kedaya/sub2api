@@ -1,9 +1,13 @@
 <template>
-  <UModal :open="open" @update:open="(value: boolean) => { if (!value) emit('close') }">
+  <UModal
+    :open="open"
+    :ui="{ content: 'max-h-[95dvh] sm:max-h-[90dvh]' }"
+    @update:open="(value: boolean) => { if (!value) emit('close') }"
+  >
     <template #content>
       <div class="space-y-4 p-5">
         <header class="space-y-1">
-          <h2 class="text-base font-semibold">
+          <h2 class="text-base font-semibold tabular-nums">
             {{ t('keys.bulkEdit.title', { count: selectedIds.length }) }}
           </h2>
           <p class="text-sm text-muted">
@@ -11,7 +15,7 @@
           </p>
         </header>
 
-        <div class="max-h-[60vh] space-y-4 overflow-y-auto pr-1">
+        <div class="max-h-[60dvh] space-y-4 overflow-y-auto overscroll-contain pr-1">
           <!-- 分组 -->
           <section>
             <UCheckbox v-model="enabled.group" :label="t('keys.bulkEdit.fields.group')" />
@@ -74,6 +78,7 @@
               v-if="enabled.expiresAt"
               v-model="form.expiresAt"
               type="datetime-local"
+              :ui="{ base: 'dark:[color-scheme:dark]' }"
               class="mt-2 w-full"
               data-test="bulk-edit-expires"
             />
@@ -112,6 +117,7 @@
             color="primary"
             :loading="saving"
             :disabled="!hasSelection"
+            class="tabular-nums"
             data-test="bulk-edit-apply"
             @click="apply"
           >

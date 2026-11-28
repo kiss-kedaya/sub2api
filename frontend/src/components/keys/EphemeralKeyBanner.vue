@@ -3,7 +3,7 @@
        明文只从内存里的 ephemeral store 取，绝不读写 localStorage/sessionStorage。 -->
   <div
     v-if="visible && secret"
-    class="ephemeral-key-bar"
+    class="ephemeral-key-bar rounded-xl"
     role="status"
     aria-live="polite"
     data-test="ephemeral-key-bar"
@@ -25,7 +25,7 @@
     />
     <button
       type="button"
-      class="ephemeral-key-bar__close"
+      class="ephemeral-key-bar__close rounded-md"
       :aria-label="t('common.close')"
       data-test="ephemeral-key-close"
       @click="dismiss"
@@ -127,17 +127,27 @@ watch(
 .ephemeral-key-bar {
   position: fixed;
   right: 20px;
-  bottom: 20px;
-  z-index: 60;
+  bottom: calc(20px + env(safe-area-inset-bottom, 0px));
+  z-index: 50;
   display: flex;
   align-items: center;
   gap: 12px;
   max-width: min(460px, calc(100vw - 32px));
   padding: 12px 14px;
   border-radius: 12px;
-  background: var(--ui-bg, #fff);
-  box-shadow: 0 10px 30px rgb(0 0 0 / 18%), 0 2px 8px rgb(0 0 0 / 10%);
-  border: 1px solid var(--ui-border, rgb(0 0 0 / 10%));
+  background: var(--ui-bg);
+  box-shadow: var(--app-shadow-popover);
+  border: 1px solid var(--ui-border);
+  opacity: 1;
+  transform: translateY(0);
+  transition: opacity 180ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1)), transform 180ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1));
+}
+
+@starting-style {
+  .ephemeral-key-bar {
+    opacity: 0;
+    transform: translateY(8px);
+  }
 }
 
 .ephemeral-key-bar__icon {
@@ -148,22 +158,22 @@ watch(
   height: 32px;
   flex: none;
   border-radius: 999px;
-  color: var(--ui-primary, #2563eb);
-  background: color-mix(in srgb, var(--ui-primary, #2563eb) 12%, transparent);
+  color: var(--ui-primary);
+  background: color-mix(in srgb, var(--ui-primary) 12%, transparent);
 }
 
 .ephemeral-key-bar__title {
   font-size: 13px;
   font-weight: 600;
   line-height: 18px;
-  color: var(--ui-text-highlighted, #111827);
+  color: var(--ui-text-highlighted);
 }
 
 .ephemeral-key-bar__hint {
   margin-top: 2px;
   font-size: 11px;
   line-height: 15px;
-  color: var(--ui-text-muted, #6b7280);
+  color: var(--ui-text-muted);
 }
 
 .ephemeral-key-bar__close {
@@ -174,28 +184,45 @@ watch(
   height: 24px;
   flex: none;
   border-radius: 6px;
-  color: var(--ui-text-muted, #6b7280);
+  color: var(--ui-text-muted);
+  transition: color 150ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1)), background-color 150ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1));
 }
 
-.ephemeral-key-bar__close:hover {
-  background: var(--ui-bg-elevated, rgb(0 0 0 / 6%));
-  color: var(--ui-text, #111827);
+.ephemeral-key-bar__close:focus-visible {
+  outline: 2px solid var(--ui-primary);
+  outline-offset: 2px;
 }
 
-@media (prefers-reduced-motion: no-preference) {
+@media (hover: hover) and (pointer: fine) {
+  .ephemeral-key-bar__close:hover {
+    background: var(--ui-bg-elevated);
+    color: var(--ui-text);
+  }
+}
+
+@media (pointer: coarse) {
+  .ephemeral-key-bar__close {
+    width: 44px;
+    height: 44px;
+    margin: -10px -8px -10px 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
   .ephemeral-key-bar {
-    animation: ephemeral-key-bar-in 180ms ease-out;
+    transition: opacity 120ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1));
+    transform: none;
   }
-}
 
-@keyframes ephemeral-key-bar-in {
-  from {
-    opacity: 0;
-    transform: translateY(8px);
+  @starting-style {
+    .ephemeral-key-bar {
+      opacity: 0;
+      transform: none;
+    }
   }
-  to {
-    opacity: 1;
-    transform: translateY(0);
+
+  .ephemeral-key-bar__close {
+    transition: none;
   }
 }
 </style>

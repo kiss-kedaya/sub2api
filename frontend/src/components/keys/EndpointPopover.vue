@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useClipboard } from '@/composables/useClipboard'
 import type { CustomEndpoint } from '@/types'
@@ -12,6 +12,12 @@ const props = defineProps<{
 const { t } = useI18n()
 const { copyToClipboard } = useClipboard()
 const copiedEndpoint = ref<string | null>(null)
+const activeIndex = ref<number | null>(null)
+const activeTriggerEl = ref<HTMLElement | null>(null)
+const popoverRef = ref<HTMLElement | null>(null)
+const popoverStyle = ref<Record<string, string>>({})
+const arrowLeft = ref('50%')
+const placeBelow = ref(false)
 
 let copiedResetTimer: number | undefined
 
@@ -30,6 +36,81 @@ const allEndpoints = computed(() => {
   }
   return items
 })
+
+const activeItem = computed(() =>
+  activeIndex.value !== null ? (allEndpoints.value[activeIndex.value] ?? null) : null
+)
+
+function updatePosition() {
+  const trigger = activeTriggerEl.value
+  if (!trigger || typeof window === 'undefined') return
+  const rect = trigger.getBoundingClientRect()
+  const vw = window.innerWidth || 1024
+  const vh = window.innerHeight || 768
+  const margin = 12
+  const popRect = popoverRef.value?.getBoundingClientRect()
+  const popWidth = popRect?.width && popRect.width > 0 ? popRect.width : Math.min(384, vw - margin * 2)
+  const popHeight = popRect?.height && popRect.height > 0 ? popRect.height : 72
+  const centerX = rect.left + rect.width / 2
+  const left = Math.max(margin, Math.min(centerX - popWidth / 2, vw - margin - popWidth))
+  const shouldPlaceBelow = rect.top - popHeight - 10 < margin && rect.bottom + popHeight + 10 <= vh - margin
+  placeBelow.value = shouldPlaceBelow
+  const top = shouldPlaceBelow ? rect.bottom + 8 : Math.max(margin, rect.top - popHeight - 8)
+  const arrowX = Math.max(14, Math.min(centerX - left, popWidth - 14))
+  arrowLeft.value = `${arrowX}px`
+  popoverStyle.value = {
+    left: `${left}px`,
+    top: `${top}px`,
+    '--transform-origin': shouldPlaceBelow ? 'top center' : 'bottom center',
+  }
+}
+
+function attachViewportListeners() {
+  window.addEventListener('scroll', updatePosition, true)
+  window.addEventListener('resize', updatePosition)
+}
+
+function detachViewportListeners() {
+  window.removeEventListener('scroll', updatePosition, true)
+  window.removeEventListener('resize', updatePosition)
+}
+
+async function openTooltip(index: number, el: HTMLElement | null) {
+  if (!el) return
+  activeIndex.value = index
+  activeTriggerEl.value = el
+  updatePosition()
+  attachViewportListeners()
+  await nextTick()
+  if (activeIndex.value === index) {
+    updatePosition()
+  }
+}
+
+function onTriggerMouseEnter(index: number, event: MouseEvent) {
+  if (
+    typeof window !== 'undefined' &&
+    typeof window.matchMedia === 'function' &&
+    !window.matchMedia('(hover: hover) and (pointer: fine)').matches
+  ) {
+    return
+  }
+  void openTooltip(index, event.currentTarget as HTMLElement | null)
+}
+
+function closeTooltip(index: number) {
+  if (activeIndex.value !== index) return
+  activeIndex.value = null
+  activeTriggerEl.value = null
+  detachViewportListeners()
+}
+
+function onTriggerFocusOut(index: number, event: FocusEvent) {
+  const related = event.relatedTarget as Node | null
+  const current = event.currentTarget as HTMLElement | null
+  if (related && current?.contains(related)) return
+  closeTooltip(index)
+}
 
 async function copy(url: string) {
   const success = await copyToClipboard(url, t('keys.endpoints.copied'))
@@ -60,6 +141,7 @@ onBeforeUnmount(() => {
   if (copiedResetTimer !== undefined) {
     window.clearTimeout(copiedResetTimer)
   }
+  detachViewportListeners()
 })
 </script>
 
@@ -68,38 +150,26 @@ onBeforeUnmount(() => {
     <div
       v-for="(item, index) in allEndpoints"
       :key="index"
-      class="flex items-center gap-1.5 rounded-md border border-default bg-default px-2.5 py-1.5 text-xs shadow-xs transition-colors hover:border-accented dark:border-dark-600 dark:bg-dark-800 dark:shadow-none dark:hover:border-primary-700"
+      class="flex items-center gap-1.5 rounded-md border border-default bg-default px-2.5 py-1.5 text-xs shadow-xs transition-colors [@media(hover:hover)_and_(pointer:fine)]:hover:border-accented"
     >
-      <span class="font-medium text-toned dark:text-gray-300">{{ item.name }}</span>
+      <span class="font-medium text-toned">{{ item.name }}</span>
       <span
         v-if="item.isDefault"
-        class="rounded-sm bg-elevated px-1 py-px text-[10px] font-medium leading-tight text-highlighted dark:bg-primary-900/30 dark:text-primary-400"
+        class="rounded-sm bg-elevated px-1 py-px text-[10px] font-medium leading-tight text-primary"
       >{{ t('keys.endpoints.default') }}</span>
 
-      <span class="text-dimmed dark:text-dark-500">|</span>
+      <span class="text-dimmed">|</span>
 
-      <div class="group/endpoint relative flex items-center gap-1.5">
-        <div
-          class="pointer-events-none absolute bottom-full left-1/2 z-20 mb-2 w-max max-w-[24rem] -translate-x-1/2 translate-y-1 rounded-lg border border-default bg-default px-3 py-2.5 text-left opacity-0 shadow-lg transition-[opacity,transform,translate] duration-150 group-hover/endpoint:translate-y-0 group-hover/endpoint:opacity-100 group-focus-within/endpoint:translate-y-0 group-focus-within/endpoint:opacity-100 dark:border-slate-700 dark:bg-slate-900 dark:shadow-[0_14px_36px_-20px_rgba(15,23,42,0.35)] dark:ring-1 dark:ring-slate-700/70"
-        >
-          <p
-            v-if="item.description"
-            class="max-w-[24rem] wrap-break-word text-xs leading-5 text-toned dark:text-slate-200"
-          >
-            {{ item.description }}
-          </p>
-          <p
-            class="flex items-center gap-1.5 text-[11px] leading-4 text-primary-600 dark:text-primary-300"
-            :class="item.description ? 'mt-1.5' : ''"
-          >
-            <span class="h-1.5 w-1.5 rounded-full bg-primary-500 dark:bg-primary-300"></span>
-            {{ tooltipHint(item.endpoint) }}
-          </p>
-          <div class="absolute left-1/2 top-full h-3 w-3 -translate-x-1/2 -translate-y-1/2 rotate-45 border-b border-r border-default bg-default dark:border-slate-700 dark:bg-slate-900"></div>
-        </div>
-
+      <div
+        class="relative flex items-center gap-1.5"
+        data-test="endpoint-trigger"
+        @mouseenter="onTriggerMouseEnter(index, $event)"
+        @mouseleave="closeTooltip(index)"
+        @focusin="openTooltip(index, $event.currentTarget as HTMLElement | null)"
+        @focusout="onTriggerFocusOut(index, $event)"
+      >
         <code
-          class="cursor-pointer font-mono text-muted decoration-gray-400 decoration-dashed underline-offset-2 hover:text-primary-600 hover:underline focus:text-primary-600 focus:underline focus:outline-hidden dark:text-gray-400 dark:decoration-gray-500 dark:hover:text-primary-400 dark:focus:text-primary-400"
+          class="cursor-pointer rounded-xs font-mono text-muted decoration-muted/60 decoration-dashed underline-offset-2 focus:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary [@media(hover:hover)_and_(pointer:fine)]:hover:text-primary [@media(hover:hover)_and_(pointer:fine)]:hover:underline"
           role="button"
           tabindex="0"
           @click="copy(item.endpoint)"
@@ -109,10 +179,10 @@ onBeforeUnmount(() => {
 
         <button
           type="button"
-          class="rounded-sm p-0.5 transition-colors"
+          class="inline-flex items-center justify-center rounded-sm p-0.5 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11"
           :class="copiedEndpoint === item.endpoint
-            ? 'text-emerald-500 dark:text-emerald-400'
-            : 'text-dimmed hover:text-highlighted dark:text-gray-500 dark:hover:text-primary-400'"
+            ? 'text-success'
+            : 'text-dimmed [@media(hover:hover)_and_(pointer:fine)]:hover:text-highlighted'"
           :aria-label="tooltipHint(item.endpoint)"
           @click="copy(item.endpoint)"
         >
@@ -128,7 +198,7 @@ onBeforeUnmount(() => {
           :href="speedTestUrl(item.endpoint)"
           target="_blank"
           rel="noopener noreferrer"
-          class="rounded-sm p-0.5 text-dimmed transition-colors hover:text-amber-500 dark:text-gray-500 dark:hover:text-amber-400"
+          class="inline-flex items-center justify-center rounded-sm p-0.5 text-dimmed transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary [@media(hover:hover)_and_(pointer:fine)]:hover:text-warning [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11"
           :title="t('keys.endpoints.speedTest')"
         >
           <svg class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
@@ -137,5 +207,35 @@ onBeforeUnmount(() => {
         </a>
       </div>
     </div>
+
+    <Teleport to="body">
+      <div
+        v-if="activeItem"
+        ref="popoverRef"
+        role="tooltip"
+        :style="popoverStyle"
+        data-test="endpoint-popover-tooltip"
+        class="pointer-events-none fixed z-50 w-max max-w-[min(24rem,calc(100vw-24px))] origin-(--transform-origin) rounded-lg border border-default bg-default px-3 py-2.5 text-left shadow-(--app-shadow-popover) ring-1 ring-default transition-[opacity,transform] duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] motion-reduce:transition-none"
+      >
+        <p
+          v-if="activeItem.description"
+          class="max-w-[24rem] wrap-anywhere text-xs leading-5 text-toned"
+        >
+          {{ activeItem.description }}
+        </p>
+        <p
+          class="flex items-center gap-1.5 text-[11px] leading-4 text-primary"
+          :class="activeItem.description ? 'mt-1.5' : ''"
+        >
+          <span class="h-1.5 w-1.5 rounded-full bg-primary"></span>
+          {{ tooltipHint(activeItem.endpoint) }}
+        </p>
+        <div
+          :style="{ left: arrowLeft }"
+          :class="placeBelow ? '-top-1.5 border-l border-t' : '-bottom-1.5 border-b border-r'"
+          class="absolute h-3 w-3 -translate-x-1/2 rotate-45 border-default bg-default"
+        ></div>
+      </div>
+    </Teleport>
   </div>
 </template>

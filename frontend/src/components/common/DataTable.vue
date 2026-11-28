@@ -45,7 +45,7 @@
             color="neutral"
             variant="outline"
             square
-            class="shrink-0"
+            class="shrink-0 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11"
             :icon="sortOrder === 'desc' ? 'i-lucide-arrow-down-wide-narrow' : 'i-lucide-arrow-up-narrow-wide'"
             :disabled="!sortKey"
             :title="sortOrder === 'asc' ? t('common.sortAscending') : t('common.sortDescending')"
@@ -92,7 +92,7 @@
             <span class="text-xs font-medium text-muted">
               {{ column.label }}
             </span>
-            <div class="min-w-0 max-w-full text-right text-sm text-default">
+            <div class="min-w-0 max-w-full wrap-anywhere text-right text-sm text-default">
               <slot :name="`cell-${column.key}`" :row="row" :value="row[column.key]" :expanded="actionsExpanded">
                 {{ column.formatter ? column.formatter(row[column.key], row) : row[column.key] }}
               </slot>
@@ -981,7 +981,7 @@ const tableMeta = {
 // hairline row dividers, and a tint on selected rows. Important (`!`) marks the properties the
 // legacy table-page skin also sets on bare th/td.
 const tableUi = {
-  root: 'relative flex-1 min-h-0 overflow-auto isolate',
+  root: 'relative flex-1 min-h-0 overflow-auto overscroll-contain isolate',
   base: 'w-full min-w-max border-separate border-spacing-0',
   thead: 'sticky top-0 z-2 [&>tr]:after:content-none',
   tbody: '[&>tr]:last:[&>td]:border-b-0!',
@@ -1156,9 +1156,14 @@ defineExpose({
   background-color: var(--ui-bg);
 }
 
-[data-data-table] > table > tbody > tr[data-selected='true'] > td.data-table-pin,
-[data-data-table][data-clickable] > table > tbody > tr:hover > td.data-table-pin {
+[data-data-table] > table > tbody > tr[data-selected='true'] > td.data-table-pin {
   background-color: color-mix(in srgb, var(--ui-bg-elevated) 50%, var(--ui-bg));
+}
+
+@media (hover: hover) and (pointer: fine) {
+  [data-data-table][data-clickable] > table > tbody > tr:hover > td.data-table-pin {
+    background-color: color-mix(in srgb, var(--ui-bg-elevated) 50%, var(--ui-bg));
+  }
 }
 
 /* A hairline on a pinned column's inner edge, only while columns scroll underneath it. */

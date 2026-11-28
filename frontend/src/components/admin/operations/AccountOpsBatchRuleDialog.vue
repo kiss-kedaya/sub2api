@@ -170,7 +170,7 @@ const scopeKey = computed(() => JSON.stringify(props.accounts.map(account => ({
 }))))
 let sequence = 0
 
-watch(() => [props.show, scopeKey.value] as const, () => {
+watch([() => props.show, scopeKey], () => {
   sequence++
   busy.value = false
   Object.assign(balanceForm, newForm())

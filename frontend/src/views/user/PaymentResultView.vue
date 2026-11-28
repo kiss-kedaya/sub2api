@@ -3,21 +3,21 @@
     <main class="signal-payment-result__main">
       <!-- Loading -->
       <div v-if="loading" class="flex items-center justify-center py-20">
-        <UIcon name="i-lucide-loader-circle" class="size-8 animate-spin text-muted" />
+        <UIcon name="i-lucide-loader-circle" class="size-8 animate-spin text-muted motion-reduce:animate-none" />
       </div>
       <template v-else>
         <!-- Status Icon -->
         <header class="signal-payment-result__status">
           <div v-if="isSuccess"
-            class="signal-payment-result__status-icon signal-payment-result__status-icon--success">
+            class="signal-payment-result__status-icon signal-payment-result__status-icon--success rounded-lg">
             <UIcon name="i-lucide-check" class="size-7" />
           </div>
           <div v-else-if="isPending"
-            class="signal-payment-result__status-icon signal-payment-result__status-icon--pending">
+            class="signal-payment-result__status-icon signal-payment-result__status-icon--pending rounded-lg">
             <UIcon name="i-lucide-clock" class="size-7" />
           </div>
           <div v-else
-            class="signal-payment-result__status-icon signal-payment-result__status-icon--failed">
+            class="signal-payment-result__status-icon signal-payment-result__status-icon--failed rounded-lg">
             <UIcon name="i-lucide-x" class="size-7" />
           </div>
           <h1>
@@ -28,7 +28,7 @@
           </p>
         </header>
         <!-- Order Info -->
-        <section v-if="order" class="signal-payment-result__details">
+        <section v-if="order" class="signal-payment-result__details rounded-lg">
           <div>
             <div v-if="hasOrderId(order)" class="flex justify-between">
               <span>{{ t('payment.orders.orderId') }}</span>
@@ -43,7 +43,7 @@
               <span class="font-medium">{{ formatGatewayAmount(baseAmount) }}</span>
             </div>
             <div v-if="hasAmountFields(order) && order.fee_rate > 0" class="flex justify-between">
-              <span>{{ t('payment.orders.fee') }} ({{ order.fee_rate }}%)</span>
+              <span>{{ t('payment.orders.fee') }} (<span class="tabular-nums">{{ order.fee_rate }}%</span>)</span>
               <span class="font-medium">{{ formatGatewayAmount(feeAmount) }}</span>
             </div>
             <div v-if="hasAmountFields(order)" class="flex justify-between">
@@ -65,7 +65,7 @@
           </div>
         </section>
         <!-- EasyPay return info (when no order loaded) -->
-        <section v-else-if="returnInfo" class="signal-payment-result__details">
+        <section v-else-if="returnInfo" class="signal-payment-result__details rounded-lg">
           <div>
             <div v-if="returnInfo.outTradeNo" class="flex justify-between">
               <span>{{ t('payment.orders.orderId') }}</span>
@@ -593,27 +593,45 @@ onBeforeUnmount(() => {
 .dark .signal-payment-result { background: transparent; }
 .signal-payment-result__main { display: grid; width: min(100%, 480px); gap: 16px; }
 .signal-payment-result__status { display: grid; justify-items: center; padding-bottom: 4px; text-align: center; }
-.signal-payment-result__status-icon { display: grid; width: 56px; height: 56px; place-items: center; margin-bottom: 14px; border-radius: 8px; background: var(--ui-bg); box-shadow: 0 0 0 1px var(--ui-border), 0 1px 2px rgba(10, 10, 10, 0.05); }
+.signal-payment-result__status-icon { display: grid; width: 56px; height: 56px; place-items: center; margin-bottom: 14px; border-radius: 8px; background: var(--ui-bg); box-shadow: 0 0 0 1px var(--ui-border), var(--app-shadow-card, 0 1px 2px rgba(10, 10, 10, 0.05)); }
 .signal-payment-result__status-icon--success { color: var(--ui-success); }
-.signal-payment-result__status-icon--pending { color: #b45309; }
+.signal-payment-result__status-icon--pending { color: var(--ui-warning, #b45309); }
 .dark .signal-payment-result__status-icon--pending { color: var(--ui-warning); }
 .signal-payment-result__status-icon--failed { color: var(--ui-error); }
 .signal-payment-result__status h1 { margin: 0; color: var(--ui-text-highlighted); font-size: 22px; font-weight: 600; line-height: 1.3; }
 .signal-payment-result__hint { margin: 6px 0 0; color: var(--ui-text-muted); font-size: 13px; line-height: 1.55; }
-.signal-payment-result__details { padding: 4px 18px; border-radius: 8px; background: var(--ui-bg); box-shadow: 0 0 0 1px var(--ui-border), 0 1px 2px rgba(10, 10, 10, 0.05); }
-.dark .signal-payment-result__details, .dark .signal-payment-result__status-icon { box-shadow: 0 0 0 1px var(--ui-border); }
+.signal-payment-result__details { padding: 4px 18px; border-radius: 8px; background: var(--ui-bg); box-shadow: 0 0 0 1px var(--ui-border), var(--app-shadow-card, 0 1px 2px rgba(10, 10, 10, 0.05)); }
+.dark .signal-payment-result__details, .dark .signal-payment-result__status-icon { box-shadow: 0 0 0 1px var(--ui-border), var(--app-shadow-card); }
 .signal-payment-result__details > div { display: grid; gap: 0; }
 .signal-payment-result__details > div > div { display: flex; min-width: 0; align-items: flex-start; justify-content: space-between; gap: 20px; padding: 11px 0; border-bottom: 1px solid var(--ui-border); font-size: 13px; }
 .signal-payment-result__details > div > div:last-child { border-bottom: 0; }
 .signal-payment-result__details > div > div > span:first-child { flex: 0 0 auto; color: var(--ui-text-muted); }
 .signal-payment-result__details > div > div > span:last-child { min-width: 0; overflow-wrap: anywhere; color: var(--ui-text-highlighted); font-variant-numeric: tabular-nums; text-align: right; }
 .signal-payment-result__actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
-@media (max-width: 374px) {
+.signal-payment-result__actions :deep(button:not(:disabled)),
+.signal-payment-result__actions :deep(a) {
+  transition: transform var(--cb-t-fast, 140ms) var(--cb-ease-press, cubic-bezier(0.3, 0, 0.2, 1));
+}
+.signal-payment-result__actions :deep(button:not(:disabled):active),
+.signal-payment-result__actions :deep(a:active) {
+  transform: scale(var(--cb-press, 0.97));
+}
+@media (max-width: 479px) {
   .signal-payment-result { padding: 16px 12px; }
   .signal-payment-result__status h1 { font-size: 20px; }
   .signal-payment-result__details { padding: 4px 14px; }
   .signal-payment-result__details > div > div { align-items: stretch; flex-direction: column; gap: 4px; }
   .signal-payment-result__details > div > div > span:last-child { text-align: left; }
   .signal-payment-result__actions { grid-template-columns: minmax(0, 1fr); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .signal-payment-result__actions :deep(button:not(:disabled)),
+  .signal-payment-result__actions :deep(a) {
+    transition: none;
+  }
+  .signal-payment-result__actions :deep(button:not(:disabled):active),
+  .signal-payment-result__actions :deep(a:active) {
+    transform: none;
+  }
 }
 </style>

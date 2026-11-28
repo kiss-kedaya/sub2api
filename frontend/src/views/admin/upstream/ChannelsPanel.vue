@@ -52,7 +52,7 @@
               </UBadge>
               <p v-if="channel.session_error" class="mt-1 text-xs text-red-500">{{ channel.session_error }}</p>
             </td>
-            <td class="p-3 text-xs text-muted">
+            <td class="p-3 text-xs tabular-nums text-muted">
               <p>
                 {{ text('会话', 'session') }}:
                 <span :class="channel.has_session ? 'text-emerald-600 dark:text-emerald-400' : ''">
@@ -71,10 +71,10 @@
             </td>
             <td class="p-3">
               <div class="flex flex-wrap justify-end gap-1">
-                <UButton size="xs" color="neutral" variant="ghost" :loading="busyId === channel.id && busyAction === 'login'" :label="text('登录', 'Sign in')" @click="signIn(channel)" />
-                <UButton size="xs" color="neutral" variant="ghost" :loading="busyId === channel.id && busyAction === 'balance'" :label="text('余额', 'Balance')" @click="readBalance(channel)" />
-                <UButton size="xs" color="neutral" variant="ghost" :label="text('编辑', 'Edit')" @click="openEdit(channel)" />
-                <UButton size="xs" color="error" variant="ghost" :label="text('删除', 'Delete')" @click="askDelete(channel)" />
+                <UButton size="xs" color="neutral" variant="ghost" class="max-sm:min-h-11 pointer-coarse:min-h-11" :loading="busyId === channel.id && busyAction === 'login'" :label="text('登录', 'Sign in')" @click="signIn(channel)" />
+                <UButton size="xs" color="neutral" variant="ghost" class="max-sm:min-h-11 pointer-coarse:min-h-11" :loading="busyId === channel.id && busyAction === 'balance'" :label="text('余额', 'Balance')" @click="readBalance(channel)" />
+                <UButton size="xs" color="neutral" variant="ghost" class="max-sm:min-h-11 pointer-coarse:min-h-11" :label="text('编辑', 'Edit')" @click="openEdit(channel)" />
+                <UButton size="xs" color="error" variant="ghost" class="max-sm:min-h-11 pointer-coarse:min-h-11" :label="text('删除', 'Delete')" @click="askDelete(channel)" />
               </div>
             </td>
           </tr>
@@ -86,11 +86,11 @@
         </tbody>
       </table>
       <div class="flex flex-wrap items-center justify-between gap-3 border-t border-default p-3 text-sm text-muted">
-        <span>{{ text(`${total} 个上游`, `${total} upstreams`) }}</span>
+        <span class="tabular-nums">{{ text(`${total} 个上游`, `${total} upstreams`) }}</span>
         <div class="flex items-center gap-2">
-          <UButton icon="i-lucide-chevron-left" color="neutral" variant="ghost" :disabled="loading || page <= 1" :aria-label="text('上一页', 'Previous page')" @click="goPage(page - 1)" />
+          <UButton icon="i-lucide-chevron-left" color="neutral" variant="ghost" class="max-sm:min-h-11 max-sm:min-w-11 pointer-coarse:min-h-11 pointer-coarse:min-w-11" :disabled="loading || page <= 1" :aria-label="text('上一页', 'Previous page')" @click="goPage(page - 1)" />
           <span class="tabular-nums">{{ page }} / {{ pages || 1 }}</span>
-          <UButton icon="i-lucide-chevron-right" color="neutral" variant="ghost" :disabled="loading || page >= pages" :aria-label="text('下一页', 'Next page')" @click="goPage(page + 1)" />
+          <UButton icon="i-lucide-chevron-right" color="neutral" variant="ghost" class="max-sm:min-h-11 max-sm:min-w-11 pointer-coarse:min-h-11 pointer-coarse:min-w-11" :disabled="loading || page >= pages" :aria-label="text('下一页', 'Next page')" @click="goPage(page + 1)" />
         </div>
       </div>
     </div>
@@ -100,7 +100,7 @@
         <div class="grid gap-3 sm:grid-cols-2">
           <label class="text-xs text-muted">
             {{ text('名称', 'Name') }}
-            <UInput v-model="form.name" class="mt-1 w-full" :placeholder="text('例如 sub.kedaya.xyz', 'e.g. sub.kedaya.xyz')" />
+            <UInput v-model="form.name" class="mt-1 w-full" :placeholder="text('例如 upstream.example.com', 'e.g. upstream.example.com')" />
           </label>
           <label class="text-xs text-muted">
             {{ text('站点地址', 'Site URL') }}

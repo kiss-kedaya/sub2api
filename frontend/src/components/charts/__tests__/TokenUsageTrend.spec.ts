@@ -77,9 +77,9 @@ describe('TokenUsageTrend', () => {
     wrapper.unmount()
   })
 
-  it('keeps the default animation unless the user console explicitly opts in', async () => {
+  it('disables chart animation by default unless animationDuration is explicitly provided', async () => {
     const wrapper = mount(TokenUsageTrend, { props: { trendData: sampleTrend } })
-    expect(wrapper.getComponent(Line).props('options')).not.toHaveProperty('animation')
+    expect(wrapper.getComponent(Line).props('options').animation).toBe(false)
     await wrapper.setProps({ animationDuration: 180 })
     expect(wrapper.getComponent(Line).props('options').animation.duration).toBe(180)
     await wrapper.setProps({ animationDuration: 0 })

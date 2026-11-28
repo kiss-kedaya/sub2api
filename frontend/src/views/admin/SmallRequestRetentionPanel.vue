@@ -29,7 +29,7 @@
     <template v-else>
       <UPageGrid v-if="stats" class="grid-cols-2 gap-3 lg:grid-cols-4">
         <UPageCard v-for="card in cards" :key="card.label" :title="card.label" variant="subtle" :ui="{ title: 'font-normal text-muted text-xs', container: 'gap-y-1.5 p-4 sm:p-4' }">
-          <span class="text-2xl font-semibold text-highlighted">{{ card.value }}</span>
+          <span class="text-2xl font-semibold tabular-nums text-highlighted">{{ card.value }}</span>
           <span v-if="card.hint" class="text-xs leading-5 text-muted">{{ card.hint }}</span>
         </UPageCard>
       </UPageGrid>
@@ -85,10 +85,10 @@
             <UButton variant="link" color="neutral" class="p-0 text-left text-xs tabular-nums" :data-testid="'small-detail-' + record.id" @click.stop="open(record.id)">{{ retentionTime(record.last_seen) }}</UButton>
             <p class="mt-1 max-w-44 truncate font-mono text-xs text-muted" :title="record.data.path">{{ record.data.path }}</p>
           </template>
-          <template #identity-cell="{ row: { original: record } }"><p class="text-xs text-default">#{{ record.user_id }} / #{{ record.api_key_id }}</p><p class="mt-1 max-w-40 truncate text-xs text-muted" :title="record.model">{{ record.model }}</p></template>
+          <template #identity-cell="{ row: { original: record } }"><p class="text-xs tabular-nums text-default">#{{ record.user_id }} / #{{ record.api_key_id }}</p><p class="mt-1 max-w-40 truncate text-xs text-muted" :title="record.model">{{ record.model }}</p></template>
           <template #status-cell="{ row: { original: record } }"><div class="flex flex-col items-start gap-1.5"><UBadge :color="record.status >= 500 ? 'error' : record.status >= 400 ? 'warning' : 'success'" variant="subtle" size="sm">HTTP {{ record.status }}</UBadge><UBadge :color="record.data.replay_reasons?.length ? 'warning' : 'neutral'" variant="outline" size="sm" :title="record.data.replay_reasons?.map(replayReason).join('；') || t('admin.requestCapture.small.replayHint')">{{ t('admin.requestCapture.small.' + (record.data.replay_reasons?.length ? 'notReplayable' : 'replayable')) }}</UBadge></div></template>
           <template #tokens-cell="{ row: { original: record } }"><span class="whitespace-nowrap text-xs tabular-nums" :title="tokenBreakdown(record)">{{ record.input_tokens + record.cache_read_tokens + record.cache_creation_tokens }} / {{ record.output_tokens }}</span></template>
-          <template #cost-cell="{ row: { original: record } }"><span class="whitespace-nowrap font-mono text-xs text-highlighted" :title="record.actual_cost + ' USD'">{{ retentionCost(record.actual_cost) }}</span></template>
+          <template #cost-cell="{ row: { original: record } }"><span class="whitespace-nowrap font-mono text-xs tabular-nums text-highlighted" :title="record.actual_cost + ' USD'">{{ retentionCost(record.actual_cost) }}</span></template>
           <template #repeats-cell="{ row: { original: record } }"><span class="font-semibold tabular-nums text-highlighted">{{ record.repeat_count.toLocaleString() }}</span><p v-if="record.omitted_responses" class="mt-1 max-w-32 whitespace-normal text-xs text-muted">{{ t('admin.requestCapture.small.omitted', { count: record.omitted_responses }) }}</p></template>
           <template #expiry-cell="{ row: { original: record } }"><span class="whitespace-nowrap text-xs text-muted" :title="retentionTime(record.expires_at)">{{ expiryLabel(record.expires_at) }}</span></template>
           <template #empty><div class="py-10 text-center text-sm text-muted">{{ t('admin.requestCapture.small.empty') }}</div></template>
@@ -96,9 +96,9 @@
         <div class="flex items-center justify-between gap-2 pt-1">
           <span class="text-xs text-muted">{{ t('admin.requestCapture.small.rowHint') }}</span>
           <div class="flex items-center gap-2">
-            <UButton icon="i-lucide-chevron-left" color="neutral" variant="outline" size="sm" :aria-label="t('admin.requestCapture.previous')" :disabled="page <= 1 || loading" @click="page--; load()" />
+            <UButton icon="i-lucide-chevron-left" color="neutral" variant="outline" size="sm" class="min-h-11 sm:min-h-8" :aria-label="t('admin.requestCapture.previous')" :disabled="page <= 1 || loading" @click="page--; load()" />
             <span class="min-w-6 text-center text-sm tabular-nums text-muted">{{ page }}</span>
-            <UButton icon="i-lucide-chevron-right" color="neutral" variant="outline" size="sm" :aria-label="t('admin.requestCapture.next')" :disabled="!more || loading" @click="page++; load()" />
+            <UButton icon="i-lucide-chevron-right" color="neutral" variant="outline" size="sm" class="min-h-11 sm:min-h-8" :aria-label="t('admin.requestCapture.next')" :disabled="!more || loading" @click="page++; load()" />
           </div>
         </div>
       </section>
@@ -108,13 +108,13 @@
       <div v-if="detail" class="flex min-w-0 flex-col gap-4" data-testid="small-retention-detail">
         <div class="rounded-lg border border-default bg-elevated/40 p-4">
           <div class="flex flex-wrap items-center justify-between gap-3">
-            <div class="min-w-0"><p class="break-all font-mono text-sm font-semibold text-highlighted">{{ detail.record.data.method }} {{ detail.record.data.path }}</p><p class="mt-1 break-all text-xs text-muted">{{ detail.record.model }} · {{ t('admin.requestCapture.small.userID') }} #{{ detail.record.user_id }} · {{ t('admin.requestCapture.small.key') }} #{{ detail.record.api_key_id }}</p></div>
+            <div class="min-w-0"><p class="wrap-anywhere font-mono text-sm font-semibold text-highlighted">{{ detail.record.data.method }} {{ detail.record.data.path }}</p><p class="mt-1 wrap-anywhere text-xs tabular-nums text-muted">{{ detail.record.model }} · {{ t('admin.requestCapture.small.userID') }} #{{ detail.record.user_id }} · {{ t('admin.requestCapture.small.key') }} #{{ detail.record.api_key_id }}</p></div>
             <UButton data-testid="small-copy-curl" color="neutral" variant="outline" size="sm" icon="i-lucide-copy" :label="t('admin.requestCapture.small.copyCurl')" @click="copyCurl" />
           </div>
           <dl class="mt-4 grid grid-cols-2 gap-x-5 gap-y-3 text-xs sm:grid-cols-3 lg:grid-cols-6">
             <div><dt class="text-muted">{{ t('admin.requestCapture.small.repeats') }}</dt><dd class="mt-1 font-semibold tabular-nums text-highlighted">{{ detail.record.repeat_count.toLocaleString() }}</dd></div>
             <div :title="tokenBreakdown(detail.record)"><dt class="text-muted">{{ t('admin.requestCapture.small.tokens') }}</dt><dd class="mt-1 tabular-nums text-default">{{ detail.record.input_tokens + detail.record.cache_read_tokens + detail.record.cache_creation_tokens }} / {{ detail.record.output_tokens }}</dd></div>
-            <div><dt class="text-muted">{{ t('admin.requestCapture.small.cost') }}</dt><dd class="mt-1 font-mono text-highlighted">{{ retentionCost(detail.record.actual_cost) }}</dd></div>
+            <div><dt class="text-muted">{{ t('admin.requestCapture.small.cost') }}</dt><dd class="mt-1 font-mono tabular-nums text-highlighted">{{ retentionCost(detail.record.actual_cost) }}</dd></div>
             <div><dt class="text-muted">{{ t('admin.requestCapture.small.firstSeen') }}</dt><dd class="mt-1 tabular-nums text-default">{{ retentionTime(detail.record.first_seen) }}</dd></div>
             <div><dt class="text-muted">{{ t('admin.requestCapture.small.lastSeen') }}</dt><dd class="mt-1 tabular-nums text-default">{{ retentionTime(detail.record.last_seen) }}</dd></div>
             <div :title="retentionTime(detail.record.expires_at)"><dt class="text-muted">{{ t('admin.requestCapture.expiresAt') }}</dt><dd class="mt-1 text-default">{{ expiryLabel(detail.record.expires_at) }}</dd></div>
@@ -128,16 +128,16 @@
         <UCollapsible>
           <UButton color="neutral" variant="ghost" size="sm" trailing-icon="i-lucide-chevron-down" :label="t('admin.requestCapture.small.correlations')" />
           <template #content><p v-if="!detail.record.data.first_usage" data-testid="small-first-usage-expired" class="p-3 text-xs leading-5 text-muted">{{ t('admin.requestCapture.small.firstUsageExpired') }}</p><dl v-else class="grid grid-cols-2 gap-3 rounded-lg bg-elevated/40 p-3 text-xs sm:grid-cols-4">
-            <div><dt class="text-muted">{{ t('admin.requestCapture.group') }}</dt><dd class="mt-1">#{{ detail.record.data.group_id }}</dd></div>
-            <div><dt class="text-muted">{{ t('admin.requestCapture.small.accountID') }}</dt><dd class="mt-1">#{{ detail.record.data.first_usage?.account_id || '—' }}</dd></div>
+            <div><dt class="text-muted">{{ t('admin.requestCapture.group') }}</dt><dd class="mt-1 tabular-nums">#{{ detail.record.data.group_id }}</dd></div>
+            <div><dt class="text-muted">{{ t('admin.requestCapture.small.accountID') }}</dt><dd class="mt-1 tabular-nums">#{{ detail.record.data.first_usage?.account_id || '—' }}</dd></div>
             <div><dt class="text-muted">{{ t('admin.requestCapture.small.settlement') }}</dt><dd class="mt-1">{{ settlement(detail.record.data.first_usage?.settlement || '') }}</dd></div>
-            <div><dt class="text-muted">{{ t('admin.requestCapture.small.omittedLabel') }}</dt><dd class="mt-1">{{ detail.record.omitted_responses }}</dd></div>
-            <div><dt class="text-muted">{{ t('admin.requestCapture.small.platform') }}</dt><dd class="mt-1 break-all">{{ detail.record.data.first_usage?.platform || '—' }}</dd></div>
-            <div><dt class="text-muted">{{ t('admin.requestCapture.small.upstreamModel') }}</dt><dd class="mt-1 break-all">{{ detail.record.data.first_usage?.upstream_model || '—' }}</dd></div>
-            <div><dt class="text-muted">{{ t('admin.requestCapture.small.firstCharge') }}</dt><dd class="mt-1 font-mono">{{ retentionCost(detail.record.data.first_usage?.actual_cost || '') }}</dd></div>
-            <div><dt class="text-muted">{{ t('admin.requestCapture.small.calculatedCost') }}</dt><dd class="mt-1 font-mono">{{ retentionCost(detail.record.data.first_usage?.calculated_cost || '') }}</dd></div>
-            <div class="col-span-2"><dt class="text-muted">{{ t('admin.requestCapture.small.firstTokens') }}</dt><dd class="mt-1">{{ tokenBreakdown(detail.record.data.first_usage) }}</dd></div>
-            <div><dt class="text-muted">{{ t('admin.requestCapture.small.duration') }}</dt><dd class="mt-1">{{ t('admin.requestCapture.small.milliseconds', { count: detail.record.data.first_usage?.duration_ms || 0 }) }}</dd></div>
+            <div><dt class="text-muted">{{ t('admin.requestCapture.small.omittedLabel') }}</dt><dd class="mt-1 tabular-nums">{{ detail.record.omitted_responses }}</dd></div>
+            <div><dt class="text-muted">{{ t('admin.requestCapture.small.platform') }}</dt><dd class="mt-1 wrap-anywhere">{{ detail.record.data.first_usage?.platform || '—' }}</dd></div>
+            <div><dt class="text-muted">{{ t('admin.requestCapture.small.upstreamModel') }}</dt><dd class="mt-1 wrap-anywhere">{{ detail.record.data.first_usage?.upstream_model || '—' }}</dd></div>
+            <div><dt class="text-muted">{{ t('admin.requestCapture.small.firstCharge') }}</dt><dd class="mt-1 font-mono tabular-nums">{{ retentionCost(detail.record.data.first_usage?.actual_cost || '') }}</dd></div>
+            <div><dt class="text-muted">{{ t('admin.requestCapture.small.calculatedCost') }}</dt><dd class="mt-1 font-mono tabular-nums">{{ retentionCost(detail.record.data.first_usage?.calculated_cost || '') }}</dd></div>
+            <div class="col-span-2"><dt class="text-muted">{{ t('admin.requestCapture.small.firstTokens') }}</dt><dd class="mt-1 tabular-nums">{{ tokenBreakdown(detail.record.data.first_usage) }}</dd></div>
+            <div><dt class="text-muted">{{ t('admin.requestCapture.small.duration') }}</dt><dd class="mt-1 tabular-nums">{{ t('admin.requestCapture.small.milliseconds', { count: detail.record.data.first_usage?.duration_ms || 0 }) }}</dd></div>
             <div><dt class="text-muted">{{ t('admin.requestCapture.small.delivery') }}</dt><dd class="mt-1">{{ t('admin.requestCapture.small.' + (detail.record.data.first_usage?.stream ? 'stream' : 'nonStream')) }}</dd></div>
           </dl></template>
         </UCollapsible>
@@ -153,20 +153,20 @@
         <UCollapsible v-if="selectedResponse?.data.usage && part.startsWith('response')">
           <UButton color="neutral" variant="ghost" size="sm" trailing-icon="i-lucide-chevron-down" :label="t('admin.requestCapture.small.sampleUsage')" />
           <template #content><dl class="grid grid-cols-2 gap-3 rounded-lg bg-elevated/40 p-3 text-xs sm:grid-cols-4">
-            <div class="col-span-2"><dt class="text-muted">{{ t('admin.requestCapture.small.sampleTokens') }}</dt><dd class="mt-1">{{ tokenBreakdown(selectedResponse.data.usage) }}</dd></div>
-            <div><dt class="text-muted">{{ t('admin.requestCapture.small.sampleCharge') }}</dt><dd class="mt-1 font-mono">{{ retentionCost(selectedResponse.data.usage.actual_cost) }}</dd></div>
-            <div><dt class="text-muted">{{ t('admin.requestCapture.small.calculatedCost') }}</dt><dd class="mt-1 font-mono">{{ retentionCost(selectedResponse.data.usage.calculated_cost) }}</dd></div>
-            <div><dt class="text-muted">{{ t('admin.requestCapture.group') }}</dt><dd class="mt-1">#{{ selectedResponse.data.usage.group_id }}</dd></div>
-            <div><dt class="text-muted">{{ t('admin.requestCapture.small.upstreamModel') }}</dt><dd class="mt-1 break-all">{{ selectedResponse.data.usage.upstream_model || '—' }}</dd></div>
-            <div><dt class="text-muted">{{ t('admin.requestCapture.small.firstSeen') }}</dt><dd class="mt-1">{{ retentionTime(selectedResponse.first_seen) }}</dd></div>
-            <div><dt class="text-muted">{{ t('admin.requestCapture.small.lastSeen') }}</dt><dd class="mt-1">{{ retentionTime(selectedResponse.last_seen) }}</dd></div>
+            <div class="col-span-2"><dt class="text-muted">{{ t('admin.requestCapture.small.sampleTokens') }}</dt><dd class="mt-1 tabular-nums">{{ tokenBreakdown(selectedResponse.data.usage) }}</dd></div>
+            <div><dt class="text-muted">{{ t('admin.requestCapture.small.sampleCharge') }}</dt><dd class="mt-1 font-mono tabular-nums">{{ retentionCost(selectedResponse.data.usage.actual_cost) }}</dd></div>
+            <div><dt class="text-muted">{{ t('admin.requestCapture.small.calculatedCost') }}</dt><dd class="mt-1 font-mono tabular-nums">{{ retentionCost(selectedResponse.data.usage.calculated_cost) }}</dd></div>
+            <div><dt class="text-muted">{{ t('admin.requestCapture.group') }}</dt><dd class="mt-1 tabular-nums">#{{ selectedResponse.data.usage.group_id }}</dd></div>
+            <div><dt class="text-muted">{{ t('admin.requestCapture.small.upstreamModel') }}</dt><dd class="mt-1 wrap-anywhere">{{ selectedResponse.data.usage.upstream_model || '—' }}</dd></div>
+            <div><dt class="text-muted">{{ t('admin.requestCapture.small.firstSeen') }}</dt><dd class="mt-1 tabular-nums">{{ retentionTime(selectedResponse.first_seen) }}</dd></div>
+            <div><dt class="text-muted">{{ t('admin.requestCapture.small.lastSeen') }}</dt><dd class="mt-1 tabular-nums">{{ retentionTime(selectedResponse.last_seen) }}</dd></div>
           </dl></template>
         </UCollapsible>
         <UAlert v-if="selectedResponse?.data.replay_reasons?.length && part.startsWith('response')" color="warning" variant="subtle" :title="t('admin.requestCapture.small.notReplayable')" :description="selectedResponse.data.replay_reasons.map(replayReason).join('；')" />
-        <UTable v-if="part.endsWith('headers')" :data="headerRows" :columns="headerColumns" :ui="{ root: 'max-w-full overflow-x-auto rounded-lg border border-default', base: 'table-fixed w-full', th: 'first:w-1/3 bg-elevated/40 text-xs', td: 'whitespace-pre-wrap break-all align-top text-xs' }" />
+        <UTable v-if="part.endsWith('headers')" :data="headerRows" :columns="headerColumns" :ui="{ root: 'max-w-full overflow-x-auto rounded-lg border border-default', base: 'table-fixed w-full', th: 'first:w-1/3 bg-elevated/40 text-xs', td: 'whitespace-pre-wrap wrap-anywhere align-top text-xs' }" />
         <template v-else>
           <div class="flex items-center justify-between gap-3"><USwitch v-model="pretty" :label="t('admin.requestCapture.small.pretty')" size="sm" /><UButton color="neutral" variant="outline" size="sm" icon="i-lucide-copy" :label="t('admin.requestCapture.small.copyBody')" data-testid="small-copy-body" @click="copyText(bodyText)" /></div>
-          <pre class="max-h-[50vh] overflow-auto whitespace-pre-wrap break-all rounded-lg bg-elevated p-4 text-xs leading-5 text-default ring ring-inset ring-default"><code v-if="pretty && highlighted" v-html="highlighted" /><code v-else>{{ bodyText }}</code></pre>
+          <pre class="max-h-[50dvh] overflow-auto whitespace-pre-wrap wrap-anywhere rounded-lg bg-elevated p-4 text-xs leading-5 text-default ring ring-inset ring-default"><code v-if="pretty && highlighted" v-html="highlighted" /><code v-else>{{ bodyText }}</code></pre>
         </template>
       </div>
     </BaseDialog>

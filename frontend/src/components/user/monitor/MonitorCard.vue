@@ -1,11 +1,11 @@
 <template>
   <button
     type="button"
-    class="group text-left p-5 rounded-2xl min-h-[280px] w-full bg-white/70 backdrop-blur-xl border border-gray-200/80 shadow-card dark:bg-dark-800/60 dark:border-dark-700/70 hover:-translate-y-1 hover:shadow-card-hover dark:hover:border-primary-500/30 hover:border-gray-300 transition-[transform,translate,scale,border-color,box-shadow] duration-300 ease-out flex flex-col"
+    class="monitor-card group text-left p-5 rounded-2xl min-h-[280px] w-full relative z-0 bg-default/80 backdrop-blur-xl border border-default shadow-card hover:border-accented dark:hover:border-primary/40 active:scale-[0.98] transition-[transform,border-color] duration-200 ease-out flex flex-col"
     @click="emit('click')"
   >
     <!-- Header: icon + name/model + status chip -->
-    <div class="flex items-start gap-3">
+    <div class="relative z-10 flex items-start gap-3">
       <span
         class="w-9 h-9 rounded-xl ring-1 ring-black/5 dark:ring-white/10 grid place-items-center flex-shrink-0"
         :class="[providerGradient(item.provider), providerTintClass]"
@@ -13,7 +13,7 @@
         <ProviderIcon :provider="item.provider" :size="20" />
       </span>
       <div class="flex-1 min-w-0">
-        <div class="text-base font-semibold truncate text-gray-900 dark:text-gray-100">
+        <div class="text-base font-semibold truncate text-highlighted">
           {{ item.name }}
         </div>
         <div class="mt-0.5 flex items-center gap-1.5 min-w-0">
@@ -24,12 +24,12 @@
             {{ providerLabel(item.provider) }}
           </span>
           <!-- 纯配额模式主模型是占位符 "quota"，展示层替换为本地化「配额」标签 -->
-          <span class="font-mono text-xs truncate text-gray-500 dark:text-gray-400">
+          <span class="font-mono text-xs truncate text-muted">
             {{ formatMonitorModel(item.primary_model) }}
           </span>
           <span
             v-if="item.group_name"
-            class="inline-flex items-center rounded-md px-1.5 py-0.5 text-[10px] font-medium bg-gray-100 text-gray-600 dark:bg-dark-700 dark:text-gray-300 flex-shrink-0"
+            class="inline-flex items-center rounded-md px-1.5 py-0.5 text-[10px] font-medium bg-muted text-muted flex-shrink-0"
           >
             {{ item.group_name }}
           </span>
@@ -59,7 +59,7 @@
     <MonitorQuotaView v-if="quotaVisible" :snapshot="item.latest_quota" class="mt-2" />
 
     <!-- Divider -->
-    <div class="mt-4 border-t border-gray-100 dark:border-dark-700/60"></div>
+    <div class="mt-4 border-t border-default"></div>
 
     <!-- Availability row -->
     <MonitorAvailabilityRow
@@ -125,7 +125,7 @@ const {
 } = useChannelMonitorFormat()
 
 const providerTintClass = computed(() =>
-  PROVIDER_TINT[props.item.provider] ?? 'text-gray-500 dark:text-gray-300'
+  PROVIDER_TINT[props.item.provider] ?? 'text-muted'
 )
 
 const quotaVisible = computed(
@@ -143,3 +143,22 @@ const extraModelsCountLabel = computed(() => {
   return t('monitorCommon.extraModelsCount', { n: count })
 })
 </script>
+
+<style scoped>
+@media (hover: hover) and (pointer: fine) {
+  .monitor-card:hover {
+    transform: translateY(-2px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .monitor-card {
+    transition-property: border-color;
+  }
+
+  .monitor-card:hover,
+  .monitor-card:active {
+    transform: none;
+  }
+}
+</style>

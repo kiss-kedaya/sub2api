@@ -976,4 +976,52 @@ describe('user UsageView refresh window', () => {
     expect(getDashboardSnapshotV2).not.toHaveBeenCalled()
     wrapper.unmount()
   })
+
+  it('clamps the teleported column dropdown to available viewport height, flips origin-bottom, and tracks scroll', async () => {
+    const originalInnerWidth = window.innerWidth
+    const originalInnerHeight = window.innerHeight
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 667 })
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 375 })
+
+    const wrapper = mountWithSlider(sliderDateRangeStub(null))
+    await flushPromises()
+
+    const triggerBtn = wrapper.get('[data-testid="usage-column-settings"]')
+    const triggerWrap = triggerBtn.element.parentElement!
+    let topPos = 315
+    vi.spyOn(triggerWrap, 'getBoundingClientRect').mockImplementation(() => ({
+      x: 580,
+      y: topPos,
+      top: topPos,
+      bottom: topPos + 40,
+      left: 580,
+      right: 624,
+      width: 44,
+      height: 40,
+      toJSON: () => ({}),
+    }))
+
+    await triggerBtn.trigger('click')
+    await nextTick()
+
+    const el = document.body.querySelector('[data-testid="usage-column-dropdown"]') as HTMLElement
+    expect(el).not.toBeNull()
+    expect(el.classList.contains('origin-bottom')).toBe(true)
+    expect(el.classList.contains('origin-top')).toBe(false)
+    expect(Number.parseFloat(el.style.bottom)).toBeGreaterThanOrEqual(8)
+    expect(Number.parseFloat(el.style.maxHeight)).toBe(303)
+
+    // Scroll shifts trigger toward the top -> flips downward and updates top/origin-top
+    topPos = 40
+    window.dispatchEvent(new Event('scroll'))
+    await nextTick()
+
+    expect(el.classList.contains('origin-top')).toBe(true)
+    expect(Number.parseFloat(el.style.top)).toBe(84)
+    expect(Number.parseFloat(el.style.maxHeight)).toBe(283)
+
+    wrapper.unmount()
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: originalInnerWidth })
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: originalInnerHeight })
+  })
 })

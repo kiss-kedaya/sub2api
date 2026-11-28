@@ -36,12 +36,33 @@ const documents = computed(() => bundledLegalDocuments(getLocale()))
   line-height: 1.4;
   opacity: 0.72;
   text-decoration: none;
-  transition: color 0.2s ease, opacity 0.2s ease;
+  transition: color 150ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1)), opacity 150ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1));
 }
 
-.legal-footer-link:hover,
-.legal-footer-link.router-link-active {
-  color: rgb(59 130 246);
+.legal-footer-link.router-link-active,
+.legal-footer-link:active {
+  color: var(--ui-primary);
   opacity: 1;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .legal-footer-link:hover {
+    color: var(--ui-primary);
+    opacity: 1;
+  }
+}
+
+.legal-footer-link:focus-visible {
+  outline: 2px solid var(--ui-primary);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+@media (pointer: coarse) {
+  .legal-footer-link {
+    display: inline-flex;
+    align-items: center;
+    min-height: 2.75rem;
+  }
 }
 </style>

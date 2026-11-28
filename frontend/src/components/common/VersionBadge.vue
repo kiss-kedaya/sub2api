@@ -17,7 +17,7 @@
 
       <template #content>
         <div
-          class="whitespace-normal transition-[width] duration-200"
+          class="whitespace-normal"
           :class="rollbackPanelOpen && isReleaseBuild ? 'w-80' : 'w-64'"
         >
           <!-- Header with refresh button -->
@@ -47,7 +47,7 @@
               <!-- Version display - centered and prominent -->
               <div class="mb-4 text-center">
                 <div class="inline-flex items-center gap-2">
-                  <span v-if="currentVersion" class="text-2xl font-semibold text-highlighted">{{ displayCurrentVersion }}</span>
+                  <span v-if="currentVersion" class="text-2xl font-semibold text-highlighted tabular-nums">{{ displayCurrentVersion }}</span>
                   <span v-else class="text-2xl font-semibold text-dimmed">--</span>
                   <!-- Show check mark when up to date -->
                   <UIcon v-if="!hasUpdate" name="i-lucide-circle-check" class="size-5 text-success" />
@@ -198,7 +198,7 @@
                     trailing-icon="i-lucide-chevron-down"
                     :label="t('version.rollback')"
                     class="justify-between text-muted"
-                    :ui="{ trailingIcon: ['transition-transform duration-200', rollbackPanelOpen ? 'rotate-180' : ''] }"
+                    :ui="{ trailingIcon: ['transition-transform duration-200 ease-out', rollbackPanelOpen ? 'rotate-180' : ''] }"
                     @click="toggleRollbackPanel"
                   />
 
@@ -283,7 +283,7 @@
                                 @click="copyToClipboard(activeManualCommand)"
                               />
                             </div>
-                            <code class="block select-all whitespace-pre-wrap break-all bg-muted p-2.5 font-mono text-[10px] leading-relaxed text-default">{{ activeManualCommand }}</code>
+                            <code class="block select-all whitespace-pre-wrap wrap-anywhere bg-muted p-2.5 font-mono text-[10px] leading-relaxed text-default">{{ activeManualCommand }}</code>
                           </div>
 
                           <p class="flex items-start gap-1.5 px-0.5 text-[11px] leading-4 text-warning">

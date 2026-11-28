@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { flushPromises, mount, RouterLinkStub } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import LegalDocumentView from './LegalDocumentView.vue'
@@ -92,5 +94,20 @@ describe('LegalDocumentView', () => {
     const wrapper = mountLegal('not-a-real-doc')
     await flushPromises()
     expect(wrapper.text()).toContain('legal.notFound')
+  })
+
+  it('enforces Studio Blue + Obsidian Graphite tokens, dvh, hover-gating, and reduced motion', () => {
+    const source = readFileSync(resolve(__dirname, './LegalDocumentView.vue'), 'utf8')
+    expect(source).toContain('min-height: 100dvh;')
+    expect(source).toContain('height: calc(100dvh - 7rem);')
+    expect(source).not.toContain('100vh')
+    expect(source).not.toContain('legal-grid-drift')
+    expect(source).toContain('legal-in 220ms var(--ease-out')
+    expect(source).toContain('z-index: 40;')
+    expect(source).toContain('@media (prefers-reduced-transparency: reduce)')
+    expect(source).toContain('@media (hover: hover) and (pointer: fine)')
+    expect(source).toContain('color: var(--ui-text-inverted);')
+    expect(source).toContain('background: var(--ui-primary);')
+    expect(source).not.toMatch(/#(?:f4f4f5|18181b|09090b|e4e4e7|27272a|2563eb|1d4ed8|3b82f6|71717a|52525b|a1a1aa|141416)/i)
   })
 })

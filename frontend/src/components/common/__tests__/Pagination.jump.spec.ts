@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { enableAutoUnmount, mount } from '@vue/test-utils'
 import Pagination from '../Pagination.vue'
@@ -67,5 +68,13 @@ describe('pagination page buttons', () => {
     expect(labels[0]).toBe('1')
     expect(labels.at(-1)).toBe('10')
     expect(wrapper.text()).toContain('...')
+  })
+
+  it('marks desktop pagination for 44px coarse-pointer tap targets', () => {
+    const wrapper = mountAt(1)
+    expect(wrapper.get('nav[aria-label="Pagination"]').classes()).toContain('pagination-desktop')
+
+    const sfc = readFileSync('src/components/common/Pagination.vue', 'utf8')
+    expect(sfc).toMatch(/@media\s*\(pointer:\s*coarse\)\s*\{[\s\S]*\.pagination-desktop\s*:deep\(button\)\s*\{[\s\S]*min-height:\s*2\.75rem;[\s\S]*min-width:\s*2\.75rem;/s)
   })
 })

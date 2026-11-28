@@ -1,6 +1,7 @@
 import { flushPromises, mount } from "@vue/test-utils";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { defineComponent, h, ref } from "vue";
+import { computed, defineComponent, h, provide, ref } from "vue";
+import { portalTargetInjectionKey } from "@nuxt/ui/composables/usePortal";
 
 import CodexManifestAccountsField from "../CodexManifestAccountsField.vue";
 import { adminAPI } from "@/api/admin";
@@ -54,6 +55,7 @@ const mountInteractive = (initial: CodexModelsManifestConfig, accountNames?: Rec
     global: {
       stubs: {
         Icon: { props: ["name"], template: '<i :data-icon="name" />' },
+        Teleport: true,
       },
     },
   });
@@ -69,6 +71,7 @@ const mountField = (modelValue: CodexModelsManifestConfig, accountNames?: Record
     global: {
       stubs: {
         Icon: { props: ["name"], template: '<i :data-icon="name" />' },
+        Teleport: true,
       },
     },
   });
@@ -208,5 +211,167 @@ describe("CodexManifestAccountsField", () => {
     await search.trigger("focus");
     expect(wrapper.find('[data-testid="codex-manifest-dropdown"]').exists()).toBe(true);
     wrapper.unmount();
+  });
+
+  describe("conditional Teleport and viewport positioning (non-stubbed Teleport)", () => {
+    it("renders dropdown inline when no portalTarget or clipping ancestor exists", async () => {
+      vi.mocked(adminAPI.accounts.list).mockResolvedValue({
+        items: [{ id: 11, name: "inline-acc" }],
+      } as never);
+
+      const wrapper = mount(CodexManifestAccountsField, {
+        attachTo: document.body,
+        props: {
+          groupId: 7,
+          modelValue: enabledConfig(),
+        },
+        global: {
+          stubs: {
+            Icon: { props: ["name"], template: '<i :data-icon="name" />' },
+          },
+        },
+      });
+
+      await wrapper.find('[data-testid="codex-manifest-search"]').trigger("focus");
+      vi.advanceTimersByTime(300);
+      await flushPromises();
+
+      const inlineDropdown = wrapper.find('[data-testid="codex-manifest-dropdown"]');
+      expect(inlineDropdown.exists()).toBe(true);
+      expect(inlineDropdown.classes()).toContain("rounded-xl");
+      expect(inlineDropdown.text()).toContain("inline-acc");
+      wrapper.unmount();
+    });
+
+    it("teleports dropdown into portalTargetInjectionKey host when provided", async () => {
+      vi.mocked(adminAPI.accounts.list).mockResolvedValue({
+        items: [{ id: 12, name: "dialog-portal-acc" }],
+      } as never);
+
+      const PortalHost = defineComponent({
+        setup() {
+          const portalEl = ref<HTMLElement | null>(null);
+          provide(
+            portalTargetInjectionKey,
+            computed(() => portalEl.value ?? "body"),
+          );
+          return () =>
+            h("div", [
+              h(CodexManifestAccountsField, {
+                groupId: 7,
+                modelValue: enabledConfig(),
+              }),
+              h("div", { ref: portalEl, "data-testid": "custom-portal-host" }),
+            ]);
+        },
+      });
+
+      const wrapper = mount(PortalHost, {
+        attachTo: document.body,
+        global: {
+          stubs: {
+            Icon: { props: ["name"], template: '<i :data-icon="name" />' },
+          },
+        },
+      });
+
+      await wrapper.find('[data-testid="codex-manifest-search"]').trigger("focus");
+      vi.advanceTimersByTime(300);
+      await flushPromises();
+
+      const portalHost = wrapper.find('[data-testid="custom-portal-host"]');
+      const dropdownInPortal = portalHost.find('[data-testid="codex-manifest-dropdown"]');
+      expect(dropdownInPortal.exists()).toBe(true);
+      expect(dropdownInPortal.text()).toContain("dialog-portal-acc");
+      wrapper.unmount();
+    });
+
+    it("teleports dropdown to document.body when an ancestor clips overflow", async () => {
+      vi.mocked(adminAPI.accounts.list).mockResolvedValue({
+        items: [{ id: 13, name: "clipped-acc" }],
+      } as never);
+
+      const ClippedHost = defineComponent({
+        setup() {
+          return () =>
+            h("div", { style: { overflow: "hidden" }, "data-testid": "clip-container" }, [
+              h(CodexManifestAccountsField, {
+                groupId: 7,
+                modelValue: enabledConfig(),
+              }),
+            ]);
+        },
+      });
+
+      const wrapper = mount(ClippedHost, {
+        attachTo: document.body,
+        global: {
+          stubs: {
+            Icon: { props: ["name"], template: '<i :data-icon="name" />' },
+          },
+        },
+      });
+
+      await wrapper.find('[data-testid="codex-manifest-search"]').trigger("focus");
+      vi.advanceTimersByTime(300);
+      await flushPromises();
+
+      // Should NOT remain inside the overflow:hidden container; should be teleported to body.
+      expect(
+        wrapper.find('[data-testid="clip-container"] [data-testid="codex-manifest-dropdown"]').exists(),
+      ).toBe(false);
+      const bodyDropdown = document.body.querySelector('[data-testid="codex-manifest-dropdown"]');
+      expect(bodyDropdown).not.toBeNull();
+      expect(bodyDropdown?.textContent).toContain("clipped-acc");
+      wrapper.unmount();
+    });
+
+    it("flips dropdown above the input with bottom anchoring and maxHeight clamping near bottom edge", async () => {
+      vi.mocked(adminAPI.accounts.list).mockResolvedValue({
+        items: [{ id: 14, name: "bottom-edge-acc" }],
+      } as never);
+
+      const originalInnerHeight = window.innerHeight;
+      Object.defineProperty(window, "innerHeight", { value: 600, configurable: true });
+      const rectSpy = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(() => ({
+        top: 540,
+        bottom: 580,
+        left: 24,
+        right: 344,
+        width: 320,
+        height: 40,
+        x: 24,
+        y: 540,
+        toJSON: () => ({}),
+      }));
+
+      const wrapper = mount(CodexManifestAccountsField, {
+        attachTo: document.body,
+        props: {
+          groupId: 7,
+          modelValue: enabledConfig(),
+        },
+        global: {
+          stubs: {
+            Icon: { props: ["name"], template: '<i :data-icon="name" />' },
+          },
+        },
+      });
+
+      await wrapper.find('[data-testid="codex-manifest-search"]').trigger("focus");
+      vi.advanceTimersByTime(300);
+      await flushPromises();
+
+      const dropdown = wrapper.get('[data-testid="codex-manifest-dropdown"]');
+      const style = dropdown.attributes("style") ?? "";
+      expect(style).toContain("top: auto");
+      expect(style).toContain("bottom: 64px");
+      expect(style).toContain("max-height: 192px");
+      expect(style).toContain("transform-origin: bottom left");
+
+      rectSpy.mockRestore();
+      Object.defineProperty(window, "innerHeight", { value: originalInnerHeight, configurable: true });
+      wrapper.unmount();
+    });
   });
 });

@@ -137,4 +137,20 @@ describe('HelpTooltip', () => {
 
     wrapper.unmount()
   })
+
+  it('renders a button trigger with 44px coarse-pointer hit-area expansion in click mode', () => {
+    const wrapper = mount(HelpTooltip, {
+      attachTo: document.body,
+      props: { content: 'touch details', trigger: 'click', ariaLabel: 'Help' },
+    })
+
+    const button = wrapper.get('button[type="button"]')
+    expect(button.attributes('aria-label')).toBe('Help')
+    expect(button.classes()).toContain('size-5')
+    expect(button.classes()).toContain("[@media(pointer:coarse)]:after:absolute")
+    expect(button.classes()).toContain("[@media(pointer:coarse)]:after:-inset-3")
+    expect(button.classes()).toContain("[@media(pointer:coarse)]:after:content-['']")
+
+    wrapper.unmount()
+  })
 })

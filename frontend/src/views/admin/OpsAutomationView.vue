@@ -8,7 +8,7 @@
       <UAlert v-if="notice" role="status" color="success" variant="subtle" :title="notice" />
       <UAlert v-if="draft?.ramp_suspended" role="alert" color="warning" variant="subtle" :title="t('opsAutomation.rampSuspended')" />
       <form v-if="draft" class="space-y-4" @submit.prevent="save">
-        <UPageCard :title="t('opsAutomation.oauth')" :description="t('opsAutomation.oauthHint')" variant="outline" :ui="{ container: 'min-w-0', wrapper: 'min-w-0', description: 'whitespace-normal break-words' }">
+        <UPageCard :title="t('opsAutomation.oauth')" :description="t('opsAutomation.oauthHint')" variant="outline" :ui="{ root: 'min-w-0 overflow-hidden', container: 'min-w-0', wrapper: 'min-w-0 w-full items-stretch', body: 'w-full min-w-0', description: 'whitespace-normal break-words' }">
           <UTable :data="draft.oauth" :columns="oauthColumns" :ui="{ root: 'max-w-full overflow-x-auto', base: 'min-w-[760px]' }">
             <template #enabled-cell="{ row }"><USwitch v-model="row.original.enabled" :aria-label="`${row.original.platform} ${t('opsAutomation.enabled')}`" /></template>
             <template #concurrency-cell="{ row }"><UInput v-model.number="row.original.concurrency" type="number" min="1" max="10000" class="w-24" :aria-label="t('opsAutomation.concurrency')" /></template>
@@ -76,18 +76,18 @@
         <div class="flex justify-end"><UButton type="submit" :disabled="busy" :loading="busy" :label="t('opsAutomation.save')" /></div>
       </form>
       <USkeleton v-else-if="!error" class="h-48 w-full" />
-      <UPageCard :title="t('opsAutomation.reasoning')" :description="t('opsAutomation.reasoningHint')" variant="outline">
+      <UPageCard :title="t('opsAutomation.reasoning')" :description="t('opsAutomation.reasoningHint')" variant="outline" :ui="{ root: 'min-w-0 overflow-hidden', container: 'min-w-0', wrapper: 'min-w-0 w-full items-stretch', body: 'w-full min-w-0', description: 'whitespace-normal break-words' }">
         <UButton type="button" icon="i-lucide-plus" color="neutral" variant="outline" class="w-fit" :disabled="busy" :label="t('opsAutomation.newPlan')" @click="newPlan" />
         <UTable :data="plans" :columns="planColumns" :ui="{ root: 'max-w-full overflow-x-auto', base: 'min-w-[720px]' }">
-          <template #id-cell="{ row }">#{{ row.original.id }}</template>
-          <template #account-cell="{ row }">{{ accountNames.get(row.original.account_id) || '#' + row.original.account_id }}</template>
+          <template #id-cell="{ row }"><span class="tabular-nums">#{{ row.original.id }}</span></template>
+          <template #account-cell="{ row }"><span class="tabular-nums">{{ accountNames.get(row.original.account_id) || '#' + row.original.account_id }}</span></template>
           <template #enabled-cell="{ row }"><UBadge color="neutral" variant="subtle">{{ row.original.enabled ? t('opsAutomation.yes') : t('opsAutomation.no') }}</UBadge></template>
           <template #outcome-cell="{ row }">{{ row.original.last_outcome ? t('opsAutomation.' + row.original.last_outcome) : '—' }}</template>
           <template #actions-cell="{ row }">
             <div class="flex gap-1">
-              <UButton color="neutral" variant="ghost" size="sm" :disabled="busy" :label="t('opsAutomation.edit')" @click="editPlan = { ...row.original }" />
-              <UButton color="neutral" variant="ghost" size="sm" :disabled="busy" :label="t('opsAutomation.run')" @click="run(row.original)" />
-              <UButton color="neutral" variant="ghost" size="sm" :disabled="busy" :label="t('opsAutomation.ownership')" @click="review(row.original)" />
+              <UButton color="neutral" variant="ghost" size="sm" class="max-sm:min-h-11 pointer-coarse:min-h-11" :disabled="busy" :label="t('opsAutomation.edit')" @click="editPlan = { ...row.original }" />
+              <UButton color="neutral" variant="ghost" size="sm" class="max-sm:min-h-11 pointer-coarse:min-h-11" :disabled="busy" :label="t('opsAutomation.run')" @click="run(row.original)" />
+              <UButton color="neutral" variant="ghost" size="sm" class="max-sm:min-h-11 pointer-coarse:min-h-11" :disabled="busy" :label="t('opsAutomation.ownership')" @click="review(row.original)" />
             </div>
           </template>
           <template #empty>{{ t('common.noData') }}</template>
@@ -116,7 +116,7 @@
       </BaseDialog>
       <BaseDialog :show="!!ownership" :title="t('opsAutomation.ownership')" @close="!busy && (ownership = null)">
         <div v-if="ownership" class="space-y-4">
-          <p>{{ t('opsAutomation.account') }} #{{ ownership.account_id }} · {{ ownership.owned ? t('opsAutomation.owned') : t('opsAutomation.unowned') }}</p>
+          <p class="tabular-nums">{{ t('opsAutomation.account') }} #{{ ownership.account_id }} · {{ ownership.owned ? t('opsAutomation.owned') : t('opsAutomation.unowned') }}</p>
           <p class="text-sm text-muted">{{ t('opsAutomation.ownershipHint') }}</p>
           <div class="flex flex-wrap gap-3">
             <UButton color="neutral" variant="outline" :disabled="busy || !ownership.can_restore" :label="t('opsAutomation.restore')" @click="reconcile(false)" />

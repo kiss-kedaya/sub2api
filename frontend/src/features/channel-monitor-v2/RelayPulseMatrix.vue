@@ -16,7 +16,7 @@
       </div>
       <div class="flex w-full min-w-0 flex-wrap items-center justify-end gap-2 text-xs text-gray-500 dark:text-gray-400 sm:w-auto">
         <span class="badge badge-gray shrink-0">{{ bucketLabel }}</span>
-        <span class="hidden text-[11px] text-gray-400 dark:text-dark-400 sm:inline">{{ t('channelMonitorV2.matrix.wheelZoomX') }}</span>
+        <span class="hidden text-[11px] text-muted sm:inline">{{ t('channelMonitorV2.matrix.wheelZoomX') }}</span>
         <button
           type="button"
           class="inline-flex shrink-0 items-center rounded-lg border border-gray-200 bg-white px-2 py-1 text-[11px] font-semibold text-gray-600 hover:bg-gray-50 disabled:opacity-50 dark:border-dark-700 dark:bg-dark-900 dark:text-gray-300 dark:hover:bg-dark-800"
@@ -579,7 +579,7 @@ function formatBucketRange(value: string) {
   transition: opacity 0.12s ease, transform 0.12s ease, visibility 0.12s;
   white-space: nowrap;
 }
-:global(.dark) .pulse-tooltip {
+html.dark .pulse-tooltip {
   border-color: rgb(55 65 81);
   background: rgb(17 24 39);
   color: rgb(229 231 235);
@@ -590,7 +590,7 @@ function formatBucketRange(value: string) {
   line-height: 1.45;
   color: rgb(75 85 99);
 }
-:global(.dark) .pulse-tooltip-line {
+html.dark .pulse-tooltip-line {
   color: rgb(209 213 219);
 }
 .pulse-tooltip-title {
@@ -598,7 +598,7 @@ function formatBucketRange(value: string) {
   font-weight: 600;
   color: rgb(17 24 39);
 }
-:global(.dark) .pulse-tooltip-title {
+html.dark .pulse-tooltip-title {
   color: rgb(243 244 246);
 }
 .pulse-cell:hover .pulse-tooltip,
@@ -626,7 +626,7 @@ function formatBucketRange(value: string) {
   box-shadow: 0 18px 40px -12px rgb(0 0 0 / 0.28);
   white-space: nowrap;
 }
-:global(.dark) .matrix-floating-tooltip {
+html.dark .matrix-floating-tooltip {
   border-color: rgb(55 65 81);
   background: rgb(17 24 39);
   color: rgb(229 231 235);
@@ -637,7 +637,7 @@ function formatBucketRange(value: string) {
   line-height: 1.45;
   color: rgb(75 85 99);
 }
-:global(.dark) .matrix-floating-tooltip-line {
+html.dark .matrix-floating-tooltip-line {
   color: rgb(209 213 219);
 }
 .matrix-floating-tooltip-title {
@@ -645,7 +645,7 @@ function formatBucketRange(value: string) {
   font-weight: 600;
   color: rgb(17 24 39);
 }
-:global(.dark) .matrix-floating-tooltip-title {
+html.dark .matrix-floating-tooltip-title {
   color: rgb(243 244 246);
 }
 

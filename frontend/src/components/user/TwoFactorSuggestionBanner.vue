@@ -18,7 +18,7 @@
     </RouterLink>
     <button
       type="button"
-      class="shrink-0 rounded-md p-1 text-blue-700/70 transition-colors hover:bg-blue-100 hover:text-blue-900 dark:text-blue-200/70 dark:hover:bg-blue-800/40 dark:hover:text-blue-100"
+      class="relative shrink-0 rounded-md p-1 text-blue-700/70 transition-colors hover:bg-blue-100 hover:text-blue-900 dark:text-blue-200/70 dark:hover:bg-blue-800/40 dark:hover:text-blue-100 before:absolute before:-inset-2 sm:before:hidden"
       :title="t('twoFactorSuggestion.dismiss')"
       :aria-label="t('twoFactorSuggestion.dismiss')"
       @click="dismiss"

@@ -2,11 +2,11 @@
 <template>
   <section class="space-y-5 p-4 sm:p-6" :aria-label="t('traffic.title')" :aria-busy="loading">
     <p class="rounded-lg bg-sky-50 p-3 text-sm text-sky-900 dark:bg-sky-950/40 dark:text-sky-200">{{ t('traffic.scope') }}</p>
-    <div v-if="admin" class="rounded-lg border p-3 text-sm" :class="healthError || health?.status === 'degraded' ? 'border-red-300 text-red-700 dark:text-red-300' : health?.status === 'delayed' ? 'border-amber-300 text-amber-700 dark:text-amber-300' : 'border-gray-200 text-gray-600 dark:border-dark-700 dark:text-gray-300'" data-testid="traffic-health">
+    <div v-if="admin" class="rounded-lg border p-3 text-sm" :class="healthError || health?.status === 'degraded' ? 'border-red-300 text-red-700 dark:text-red-300' : health?.status === 'delayed' ? 'border-amber-300 text-amber-700 dark:text-amber-300' : 'border-default text-muted'" data-testid="traffic-health">
       <template v-if="health">
         <p class="font-medium">{{ t('traffic.nodeHealth') }} · {{ t(`traffic.healthStatuses.${health.status}`) }}</p>
-        <p>{{ t('traffic.queueSummary', { queued: health.queued_events ?? 0, capacity: health.queue_capacity ?? 0, processing: health.processing_events ?? 0, dropped: health.dropped_events ?? 0 }) }}</p>
-        <p>{{ t('traffic.healthSummary', { pending: health.pending_events, age: health.oldest_pending_age_seconds, quarantined: health.quarantined_events, lost: health.persistence_failures }) }}</p>
+        <p class="tabular-nums">{{ t('traffic.queueSummary', { queued: health.queued_events ?? 0, capacity: health.queue_capacity ?? 0, processing: health.processing_events ?? 0, dropped: health.dropped_events ?? 0 }) }}</p>
+        <p class="tabular-nums">{{ t('traffic.healthSummary', { pending: health.pending_events, age: health.oldest_pending_age_seconds, quarantined: health.quarantined_events, lost: health.persistence_failures }) }}</p>
         <p v-if="health.storage_available === false" role="alert">{{ t('traffic.storageUnavailable') }}</p>
         <p class="mt-1 text-xs">{{ t('traffic.nodeHealthScope') }} · {{ displayTime(health.checked_at) }}</p>
       </template>
@@ -16,9 +16,7 @@
     <form class="flex flex-wrap items-end gap-3" @submit.prevent="applyFilters">
       <div>
         <label for="traffic-period" class="input-label">{{ t('traffic.period') }}</label>
-        <select id="traffic-period" v-model="period" class="input">
-          <option v-for="value in periods" :key="value" :value="value">{{ t(`traffic.periods.${value}`) }}</option>
-        </select>
+        <Select id="traffic-period" v-model="period" :options="periodOptions" :searchable="false" class="w-32" :aria-label="t('traffic.period')" />
       </div>
       <div>
         <label for="traffic-date" class="input-label">{{ t('traffic.date') }}</label>
@@ -38,45 +36,45 @@
         </Select>
         <p v-if="ownKeyError" role="alert" class="mt-1 text-xs text-red-600 dark:text-red-400">{{ t('traffic.keysFailed') }} <button type="button" class="underline" @click="searchOwnKeys(ownKeyQuery)">{{ t('common.refresh') }}</button></p>
       </div>
-      <button class="btn btn-primary" type="submit" :disabled="loading">{{ t('traffic.apply') }}</button>
-      <button class="btn btn-secondary" type="button" :disabled="loading" @click="load">{{ t('common.refresh') }}</button>
-      <button class="btn btn-secondary" type="button" @click="reset">{{ t('common.reset') }}</button>
+      <button class="btn btn-primary min-h-11 lg:min-h-0" type="submit" :disabled="loading">{{ t('traffic.apply') }}</button>
+      <button class="btn btn-secondary min-h-11 lg:min-h-0" type="button" :disabled="loading" @click="load">{{ t('common.refresh') }}</button>
+      <button class="btn btn-secondary min-h-11 lg:min-h-0" type="button" @click="reset">{{ t('common.reset') }}</button>
     </form>
-    <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('traffic.keyHistoryHint') }}</p>
+    <p class="text-xs text-muted">{{ t('traffic.keyHistoryHint') }}</p>
     <div class="flex flex-wrap items-center justify-between gap-3 text-sm">
       <div class="flex gap-2">
-        <button class="btn btn-secondary btn-sm" type="button" :disabled="loading || !report" @click="shift(-1)">{{ t('traffic.previousPeriod') }}</button>
-        <button class="btn btn-secondary btn-sm" type="button" :disabled="loading || !report" @click="shift(1)">{{ t('traffic.nextPeriod') }}</button>
+        <button class="btn btn-secondary btn-sm min-h-11 lg:min-h-0" type="button" :disabled="loading || !report" @click="shift(-1)">{{ t('traffic.previousPeriod') }}</button>
+        <button class="btn btn-secondary btn-sm min-h-11 lg:min-h-0" type="button" :disabled="loading || !report" @click="shift(1)">{{ t('traffic.nextPeriod') }}</button>
       </div>
-      <span v-if="report" class="text-gray-500 dark:text-gray-400">{{ rangeLabel }} · {{ report.timezone }}</span>
+      <span v-if="report" class="tabular-nums text-muted">{{ rangeLabel }} · {{ report.timezone }}</span>
     </div>
     <p v-if="error" role="alert" class="rounded-lg bg-red-50 p-3 text-sm text-red-700 dark:bg-red-950/40 dark:text-red-300">{{ error }}</p>
     <p v-if="detailsError" role="alert" class="text-sm text-red-700 dark:text-red-300">{{ detailsError }} <button type="button" class="underline" @click="loadDetails(requestedPage)">{{ t('common.refresh') }}</button></p>
-    <p v-if="summaryLoading" role="status" class="py-8 text-center text-sm text-gray-500">{{ t('traffic.loading') }}</p>
+    <p v-if="summaryLoading" role="status" class="py-8 text-center text-sm text-muted">{{ t('traffic.loading') }}</p>
     <template v-if="summary">
       <div class="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <div v-for="card in cards" :key="card.label" class="rounded-xl border border-gray-200 p-4 dark:border-dark-700">
-          <p class="text-sm text-gray-500 dark:text-gray-400">{{ card.label }}</p>
-          <p class="mt-2 text-xl font-semibold tabular-nums text-gray-900 dark:text-white" :title="card.raw">{{ card.value }}</p>
+        <div v-for="card in cards" :key="card.label" class="rounded-xl border border-default p-4">
+          <p class="text-sm text-muted">{{ card.label }}</p>
+          <p class="mt-2 text-xl font-semibold tabular-nums text-highlighted" :title="card.raw">{{ card.value }}</p>
         </div>
       </div>
-      <p class="text-xs text-gray-500 dark:text-gray-400">{{ summary.recorded_since ? t('traffic.since', { time: displayTime(summary.recorded_since) }) : t('traffic.notRecorded') }} {{ t('traffic.history') }}</p>
-      <div v-if="summary.requests" class="rounded-xl border border-gray-200 p-4 dark:border-dark-700">
+      <p class="text-xs text-muted">{{ summary.recorded_since ? t('traffic.since', { time: displayTime(summary.recorded_since) }) : t('traffic.notRecorded') }} {{ t('traffic.history') }}</p>
+      <div v-if="summary.requests" class="rounded-xl border border-default p-4">
         <h3 class="mb-1 text-sm font-medium">{{ t('traffic.trend') }}</h3>
-        <p class="mb-3 text-xs text-gray-500 dark:text-gray-400">{{ t(`traffic.trendScopes.${trendBucket}`) }}</p>
+        <p class="mb-3 text-xs text-muted">{{ t(`traffic.trendScopes.${trendBucket}`) }}</p>
         <div class="h-64" role="img" :aria-label="t('traffic.trend')"><Bar :data="chartData" :options="chartOptions" /></div>
       </div>
-      <details v-if="summary.requests" class="overflow-x-auto rounded-xl border border-gray-200 dark:border-dark-700">
+      <details v-if="summary.requests" class="overflow-x-auto rounded-xl border border-default">
         <summary class="cursor-pointer px-4 py-3 text-sm font-medium">{{ t('traffic.trendDetails') }}</summary>
         <table class="w-full text-left text-sm">
           <caption class="px-4 py-3 text-left font-medium">{{ t('traffic.trend') }} · {{ t('traffic.upload') }} / {{ t('traffic.download') }}</caption>
-          <thead class="bg-gray-50 text-gray-500 dark:bg-dark-800"><tr><th class="px-4 py-2">{{ t('traffic.bucket') }}</th><th class="min-w-40 px-4 py-2">{{ t('traffic.upload') }}</th><th class="min-w-40 px-4 py-2">{{ t('traffic.download') }}</th><th class="px-4 py-2">{{ t('traffic.total') }}</th></tr></thead>
-          <tbody class="divide-y divide-gray-100 dark:divide-dark-700">
-            <tr v-for="point in summary.trend" :key="point.bucket">
+          <thead class="bg-elevated text-muted"><tr><th class="px-4 py-2">{{ t('traffic.bucket') }}</th><th class="min-w-40 px-4 py-2">{{ t('traffic.upload') }}</th><th class="min-w-40 px-4 py-2">{{ t('traffic.download') }}</th><th class="px-4 py-2">{{ t('traffic.total') }}</th></tr></thead>
+          <tbody class="divide-y divide-default">
+            <tr v-for="point in (summary.trend ?? [])" :key="point.bucket">
               <td class="whitespace-nowrap px-4 py-2 font-mono text-xs">{{ point.bucket }}</td>
               <td v-for="direction in directions" :key="direction" class="px-4 py-2 tabular-nums" :title="`${point[direction]} B`">
                 {{ bytes(point[direction]) }}
-                <div class="mt-1 h-1.5 rounded-sm bg-gray-100 dark:bg-dark-700"><div class="h-full rounded-sm" :class="direction === 'upload_bytes' ? 'bg-sky-500' : 'bg-emerald-500'" :style="{ width: `${point[direction] / maxBytes * 100}%` }" /></div>
+                <div class="mt-1 h-1.5 overflow-hidden rounded-sm bg-elevated"><div class="h-full w-full origin-left rounded-sm" :class="direction === 'upload_bytes' ? 'bg-primary' : 'bg-emerald-500'" :style="{ transform: `scaleX(${Math.min(1, Math.max(0, point[direction] / maxBytes))})` }" /></div>
               </td>
               <td class="px-4 py-2 tabular-nums">{{ bytes(point.total_bytes) }}</td>
             </tr>
@@ -84,29 +82,29 @@
         </table>
       </details>
     </template>
-    <p v-if="detailsLoading" role="status" class="py-8 text-center text-sm text-gray-500">{{ t('traffic.loadingRecords') }}</p>
+    <p v-if="detailsLoading" role="status" class="py-8 text-center text-sm text-muted">{{ t('traffic.loadingRecords') }}</p>
     <template v-if="details && !detailsLoading">
-      <div class="overflow-x-auto rounded-xl border border-gray-200 dark:border-dark-700">
+      <div class="overflow-x-auto rounded-xl border border-default">
         <table class="w-full text-left text-sm">
           <caption class="px-4 py-3 text-left font-medium">{{ t('traffic.records') }}</caption>
-          <thead class="bg-gray-50 text-gray-500 dark:bg-dark-800"><tr><th class="px-4 py-2">{{ t('usage.time') }}</th><th v-if="admin" class="px-4 py-2">{{ t('traffic.user') }}</th><th class="px-4 py-2">API Key</th><th class="px-4 py-2">{{ t('traffic.endpoint') }}</th><th class="px-4 py-2">{{ t('traffic.upload') }}</th><th class="px-4 py-2">{{ t('traffic.download') }}</th><th class="px-4 py-2">{{ t('traffic.result') }}</th></tr></thead>
-          <tbody class="divide-y divide-gray-100 dark:divide-dark-700">
-            <tr v-for="item in details.items" :key="item.event_id">
-              <td class="whitespace-nowrap px-4 py-3 text-xs">{{ displayTime(item.started_at) }}</td>
-              <td v-if="admin" class="px-4 py-3">#{{ item.user_id }}</td>
-              <td class="px-4 py-3">#{{ item.api_key_id }}</td>
-              <td class="px-4 py-3"><span class="whitespace-nowrap font-mono text-xs">{{ item.method }} {{ item.endpoint }}</span><span class="block text-xs text-gray-500" :title="item.event_id">{{ item.request_id || item.event_id }}</span></td>
+          <thead class="bg-elevated text-muted"><tr><th class="px-4 py-2">{{ t('usage.time') }}</th><th v-if="admin" class="px-4 py-2">{{ t('traffic.user') }}</th><th class="px-4 py-2">API Key</th><th class="px-4 py-2">{{ t('traffic.endpoint') }}</th><th class="px-4 py-2">{{ t('traffic.upload') }}</th><th class="px-4 py-2">{{ t('traffic.download') }}</th><th class="px-4 py-2">{{ t('traffic.result') }}</th></tr></thead>
+          <tbody class="divide-y divide-default">
+            <tr v-for="item in (details.items ?? [])" :key="item.event_id">
+              <td class="whitespace-nowrap px-4 py-3 text-xs tabular-nums">{{ displayTime(item.started_at) }}</td>
+              <td v-if="admin" class="px-4 py-3 tabular-nums">#{{ item.user_id }}</td>
+              <td class="px-4 py-3 tabular-nums">#{{ item.api_key_id }}</td>
+              <td class="px-4 py-3"><span class="whitespace-nowrap font-mono text-xs">{{ item.method }} {{ item.endpoint }}</span><span class="block wrap-anywhere text-xs text-muted" :title="item.event_id">{{ item.request_id || item.event_id }}</span></td>
               <td class="whitespace-nowrap px-4 py-3 tabular-nums" :title="`${item.upload_bytes} B`">{{ bytes(item.upload_bytes) }}<span v-if="!item.request_complete" class="block text-xs text-amber-700 dark:text-amber-400">{{ t('traffic.partialRead') }}</span></td>
               <td class="whitespace-nowrap px-4 py-3 tabular-nums" :title="`${item.download_bytes} B`">{{ bytes(item.download_bytes) }}</td>
-              <td class="whitespace-nowrap px-4 py-3 text-xs">HTTP {{ item.status_code }}<span class="block" :class="item.outcome === 'completed' ? 'text-emerald-700 dark:text-emerald-400' : 'text-amber-700 dark:text-amber-400'">{{ t(`traffic.outcomes.${item.outcome}`) }}</span></td>
+              <td class="whitespace-nowrap px-4 py-3 text-xs tabular-nums">HTTP {{ item.status_code }}<span class="block" :class="item.outcome === 'completed' ? 'text-emerald-700 dark:text-emerald-400' : 'text-amber-700 dark:text-amber-400'">{{ t(`traffic.outcomes.${item.outcome}`) }}</span></td>
             </tr>
-            <tr v-if="!details.items.length"><td :colspan="admin ? 7 : 6" class="p-8 text-center text-gray-500">{{ t('traffic.empty') }}</td></tr>
+            <tr v-if="!(details.items ?? []).length"><td :colspan="admin ? 7 : 6" class="p-8 text-center text-muted">{{ t('traffic.empty') }}</td></tr>
           </tbody>
         </table>
       </div>
       <div class="flex items-center justify-between text-sm">
-        <span>{{ t('traffic.page', { page }) }}</span>
-        <div class="flex gap-2"><button type="button" class="btn btn-secondary" :disabled="page <= 1 || detailsLoading" @click="previousPage">{{ t('traffic.previous') }}</button><button type="button" class="btn btn-secondary" :disabled="!details?.next_cursor || detailsLoading" @click="nextPage">{{ t('traffic.next') }}</button></div>
+        <span class="tabular-nums">{{ t('traffic.page', { page }) }}</span>
+        <div class="flex gap-2"><button type="button" class="btn btn-secondary min-h-11 sm:min-h-0" :disabled="page <= 1 || detailsLoading" @click="previousPage">{{ t('traffic.previous') }}</button><button type="button" class="btn btn-secondary min-h-11 sm:min-h-0" :disabled="!details?.next_cursor || detailsLoading" @click="nextPage">{{ t('traffic.next') }}</button></div>
       </div>
     </template>
   </section>
@@ -121,12 +119,15 @@ import UsageFilters from '@/components/usage/TrafficIdentityFilters.vue'
 import trafficZh from '@/i18n/locales/zh/traffic'
 import trafficEn from '@/i18n/locales/en/traffic'
 import Select, { type SelectOption } from '@/components/common/Select.vue'
+import { chartTooltipStyle, useChartTheme } from '@/components/charts/chartTheme'
 import { getTraffic, getTrafficKeys, getTrafficHealth, formatTrafficBytes as bytes, type TrafficPeriod, type TrafficReport, type TrafficKeyOption, type TrafficDeliveryHealth } from '@/api/traffic'
 
 const props = withDefaults(defineProps<{ admin?: boolean; apiKeyOptions?: SelectOption[] }>(), { admin: false, apiKeyOptions: () => [] })
 const { t } = useI18n({ useScope: 'local', messages: { zh: { traffic: trafficZh }, en: { traffic: trafficEn } } })
+const chartTheme = useChartTheme()
 ChartJS.register(CategoryScale, LinearScale, BarElement, Tooltip, Legend)
 const periods: TrafficPeriod[] = ['day', 'week', 'month', 'year']
+const periodOptions = computed(() => periods.map(value => ({ value, label: t(`traffic.periods.${value}`) })))
 const directions = ['upload_bytes', 'download_bytes'] as const
 const period = ref<TrafficPeriod>('month'), date = ref(''), page = ref(1)
 const searchFilters = ref<{ user_id?: number; api_key_id?: number | null }>({ api_key_id: null })
@@ -147,7 +148,9 @@ let detailsController: AbortController | undefined
 const ownKeyOptions = computed<SelectOption[]>(() => {
   const options = new Map<string | number | boolean | null, SelectOption>()
   if (!ownKeyQuery.value) for (const option of props.apiKeyOptions) options.set(option.value, option)
-  for (const key of ownKeyResults.value) options.set(key.id, { value: key.id, label: `${key.name || `#${key.id}`}${key.deleted ? ` (${t('traffic.deletedKey')})` : ''}` })
+  if (Array.isArray(ownKeyResults.value)) {
+    for (const key of ownKeyResults.value) options.set(key.id, { value: key.id, label: `${key.name || `#${key.id}`}${key.deleted ? ` (${t('traffic.deletedKey')})` : ''}` })
+  }
   options.delete(null)
   return [{ value: null, label: t('usage.allApiKeys') }, ...options.values()]
 })
@@ -159,7 +162,7 @@ async function searchOwnKeys(query = '') {
   ownKeyQuery.value = query; ownKeyLoading.value = true; ownKeyError.value = false; ownKeyResults.value = []
   try {
     const result = await getTrafficKeys(false, undefined, query, current.signal)
-    if (!current.signal.aborted) ownKeyResults.value = result
+    if (!current.signal.aborted) ownKeyResults.value = Array.isArray(result) ? result : []
   } catch {
     if (!current.signal.aborted) ownKeyError.value = true
   } finally { if (!current.signal.aborted) ownKeyLoading.value = false }
@@ -170,33 +173,66 @@ function onOwnKeyOpen(event: Event) {
   if (ownKeyQuery.value) void searchOwnKeys()
 }
 const siteDate = (value: string | Date) => {
-  const parts = new Intl.DateTimeFormat('en-CA', { timeZone: report.value?.timezone || 'UTC', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date(value))
+  if (!value) return ''
+  const d = value instanceof Date ? value : new Date(value)
+  if (Number.isNaN(d.getTime())) return ''
+  const parts = new Intl.DateTimeFormat('en-CA', { timeZone: report.value?.timezone || 'UTC', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(d)
   const get = (type: string) => parts.find(p => p.type === type)?.value || ''
   return `${get('year')}-${get('month')}-${get('day')}`
 }
 const currentDate = computed(() => report.value ? siteDate(new Date()) : '')
-const displayTime = (value: string) => new Intl.DateTimeFormat(undefined, { timeZone: report.value?.timezone || 'UTC', dateStyle: 'short', timeStyle: 'medium' }).format(new Date(value))
-const rangeLabel = computed(() => report.value ? `${siteDate(report.value.start)} — ${siteDate(new Date(new Date(report.value.end).getTime() - 1))}` : '')
+const displayTime = (value: string) => {
+  if (!value) return '—'
+  const d = new Date(value)
+  if (Number.isNaN(d.getTime())) return '—'
+  return new Intl.DateTimeFormat(undefined, { timeZone: report.value?.timezone || 'UTC', dateStyle: 'short', timeStyle: 'medium' }).format(d)
+}
+const rangeLabel = computed(() => {
+  if (!report.value) return ''
+  const start = siteDate(report.value.start)
+  const endDate = new Date(report.value.end)
+  const end = Number.isNaN(endDate.getTime()) ? '' : siteDate(new Date(endDate.getTime() - 1))
+  if (!start && !end) return '—'
+  return `${start || '—'} — ${end || '—'}`
+})
 const cards = computed(() => summary.value ? [
-  { label: t('traffic.upload'), value: bytes(summary.value.upload_bytes), raw: `${summary.value.upload_bytes} B` },
-  { label: t('traffic.download'), value: bytes(summary.value.download_bytes), raw: `${summary.value.download_bytes} B` },
-  { label: t('traffic.total'), value: bytes(summary.value.total_bytes), raw: `${summary.value.total_bytes} B` },
-  { label: t('traffic.requests'), value: summary.value.requests.toLocaleString(), raw: String(summary.value.requests) }
+  { label: t('traffic.upload'), value: bytes(summary.value.upload_bytes ?? 0), raw: `${summary.value.upload_bytes ?? 0} B` },
+  { label: t('traffic.download'), value: bytes(summary.value.download_bytes ?? 0), raw: `${summary.value.download_bytes ?? 0} B` },
+  { label: t('traffic.total'), value: bytes(summary.value.total_bytes ?? 0), raw: `${summary.value.total_bytes ?? 0} B` },
+  { label: t('traffic.requests'), value: (summary.value.requests ?? 0).toLocaleString(), raw: String(summary.value.requests ?? 0) }
 ] : [])
-const maxBytes = computed(() => Math.max(1, ...(summary.value?.trend.flatMap(p => [p.upload_bytes, p.download_bytes]) || [])))
+const maxBytes = computed(() => Math.max(1, ...((summary.value?.trend ?? []).flatMap(p => [p.upload_bytes, p.download_bytes]))))
 const trendBucket = computed(() => summary.value?.period === 'day' ? 'hour' : summary.value?.period === 'year' ? 'month' : 'day')
-const chartData = computed(() => ({
-  labels: summary.value?.trend.map(point => point.bucket) || [],
-  datasets: [
-    { label: t('traffic.upload'), data: summary.value?.trend.map(point => point.upload_bytes) || [], backgroundColor: '#0ea5e9', borderRadius: 3 },
-    { label: t('traffic.download'), data: summary.value?.trend.map(point => point.download_bytes) || [], backgroundColor: '#10b981', borderRadius: 3 }
-  ]
-}))
-const chartOptions = computed<ChartOptions<'bar'>>(() => ({
-  responsive: true, maintainAspectRatio: false,
-  plugins: { legend: { position: 'bottom' }, tooltip: { callbacks: { label: context => `${context.dataset.label}: ${bytes(Number(context.raw))}` } } },
-  scales: { x: { stacked: true, grid: { display: false }, ticks: { maxRotation: 0, maxTicksLimit: 6 } }, y: { stacked: true, beginAtZero: true, ticks: { callback: value => bytes(Number(value)) } } }
-}))
+const chartData = computed(() => {
+  const theme = chartTheme.value
+  const trend = summary.value?.trend ?? []
+  return {
+    labels: trend.map(point => point.bucket),
+    datasets: [
+      { label: t('traffic.upload'), data: trend.map(point => point.upload_bytes), backgroundColor: theme.input, borderRadius: 3 },
+      { label: t('traffic.download'), data: trend.map(point => point.download_bytes), backgroundColor: theme.output, borderRadius: 3 }
+    ]
+  }
+})
+const chartOptions = computed<ChartOptions<'bar'>>(() => {
+  const theme = chartTheme.value
+  return {
+    responsive: true,
+    maintainAspectRatio: false,
+    animation: false,
+    plugins: {
+      legend: { position: 'bottom', labels: { color: theme.text } },
+      tooltip: {
+        ...chartTooltipStyle(theme),
+        callbacks: { label: context => `${context.dataset.label}: ${bytes(Number(context.raw))}` }
+      }
+    },
+    scales: {
+      x: { stacked: true, grid: { display: false }, ticks: { color: theme.text, maxRotation: 0, maxTicksLimit: 6 } },
+      y: { stacked: true, beginAtZero: true, grid: { color: theme.grid }, ticks: { color: theme.text, callback: value => bytes(Number(value)) } }
+    }
+  }
+})
 function setDate(event: Event) { date.value = (event.target as HTMLInputElement).value }
 function applyFilters() {
   const user = searchFilters.value.user_id, key = searchFilters.value.api_key_id
@@ -231,7 +267,8 @@ async function loadDetails(targetPage: number) {
     if (!current.signal.aborted) {
       details.value = result; page.value = targetPage
       // Keep subsequent pages in the same calendar period across midnight.
-      queryDate = siteDate(result.start)
+      const nextDate = siteDate(result?.start)
+      if (nextDate) queryDate = nextDate
       if (summary.value && summary.value.start !== result.start && controller) void loadSummary(controller)
     }
   } catch {

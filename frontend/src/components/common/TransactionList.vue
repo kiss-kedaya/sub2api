@@ -87,7 +87,7 @@
           <div class="flex shrink-0 flex-col items-end gap-1.5 pt-0.5">
             <span
               :class="transactionAmountClass(item)"
-              class="amount text-[15px] leading-snug tracking-tight"
+              class="amount text-[15px] leading-snug tracking-tight tabular-nums"
               data-testid="transaction-amount"
             >{{ formatTransactionAmount(item) ?? '—' }}</span>
             <UBadge
@@ -103,7 +103,7 @@
         </div>
 
         <slot name="item-details" :item="item" />
-        <p v-if="item.meta" class="mt-1.5 break-all font-mono text-xs leading-relaxed text-dimmed">
+        <p v-if="item.meta" class="mt-1.5 wrap-anywhere font-mono text-xs leading-relaxed text-dimmed">
           {{ item.meta }}
         </p>
       </div>
@@ -187,11 +187,11 @@ function completeLeaveImmediately(_el: Element, done: () => void) {
   }
 }
 
-/* Keep the 380ms pop-in animation on the row itself and place the 2.2s wash on
-   ::after so Vue's TransitionGroup finishes enter cleanly at 380ms instead of
+/* Keep the 220ms pop-in animation on the row itself and place the 2.2s wash on
+   ::after so Vue's TransitionGroup finishes enter cleanly at 220ms instead of
    holding enter-active for the entire glow decay. */
 .tx-list-row--fresh {
-  animation: tx-row-pop-in 380ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation: tx-row-pop-in 220ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1)) both;
 }
 
 .tx-list-row--fresh::before {
@@ -212,13 +212,20 @@ function completeLeaveImmediately(_el: Element, done: () => void) {
   position: absolute;
   z-index: 0;
   inset: 0;
+  border-radius: inherit;
   background-color: color-mix(in oklab, var(--ui-primary) 12%, transparent);
   animation: tx-row-fresh-glow 2200ms ease-out both;
   pointer-events: none;
 }
 
+@supports (corner-shape: squircle) {
+  .tx-list-row--fresh::after {
+    corner-shape: inherit;
+  }
+}
+
 .tx-list-group--moving .tx-list-move {
-  transition: transform 360ms cubic-bezier(0.22, 1, 0.36, 1);
+  transition: transform 220ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1));
 }
 
 @keyframes tx-row-pop-in {
@@ -270,7 +277,7 @@ function completeLeaveImmediately(_el: Element, done: () => void) {
   }
 }
 
-:global(html.dark) .tx-list-row--fresh::after {
+html.dark .tx-list-row--fresh::after {
   background-color: color-mix(in oklab, var(--ui-primary) 16%, transparent);
 }
 </style>

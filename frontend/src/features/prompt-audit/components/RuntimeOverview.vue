@@ -15,7 +15,7 @@
           <dt class="text-xs text-muted">{{ item.label }}</dt>
           <dd class="mt-1.5 flex min-w-0 items-center gap-2 text-sm font-semibold text-highlighted">
             <UBadge v-if="item.badge" :color="item.badge" variant="subtle" :label="item.value" class="max-w-full truncate" />
-            <span v-else class="min-w-0 truncate">{{ item.value }}</span>
+            <span v-else class="min-w-0 truncate tabular-nums">{{ item.value }}</span>
           </dd>
         </div>
       </dl>
@@ -31,14 +31,14 @@
           </dl>
           <p class="mt-4 text-xs leading-5 text-muted">
             {{ t('admin.promptAudit.runtime.queueBreakdown', {
-              queued: runtime.queue.queued,
-              processing: runtime.queue.processing,
-              retry: runtime.queue.retry,
-              done: runtime.queue.done,
-              failed: runtime.queue.failed,
+              queued: runtime.queue?.queued ?? 0,
+              processing: runtime.queue?.processing ?? 0,
+              retry: runtime.queue?.retry ?? 0,
+              done: runtime.queue?.done ?? 0,
+              failed: runtime.queue?.failed ?? 0,
             }) }}
             <span class="mx-1.5 text-dimmed">·</span>
-            {{ t('admin.promptAudit.runtime.deliveryTotals', { enqueued: runtime.enqueued_total, dropped: runtime.dropped_total, processed: runtime.processed_total, failed: runtime.failed_total }) }}
+            {{ t('admin.promptAudit.runtime.deliveryTotals', { enqueued: runtime.enqueued_total ?? 0, dropped: runtime.dropped_total ?? 0, processed: runtime.processed_total ?? 0, failed: runtime.failed_total ?? 0 }) }}
           </p>
         </div>
         <div>
@@ -49,8 +49,8 @@
           <p v-if="runtime.last_error_code" class="mt-1 wrap-break-word text-sm text-error">
             {{ runtime.last_error_code }}<span v-if="runtime.last_error_message"> · {{ runtime.last_error_message }}</span>
           </p>
-          <div v-if="Object.keys(runtime.endpoints).length" class="mt-3 flex flex-wrap gap-1.5">
-            <UBadge v-for="(probe, id) in runtime.endpoints" :key="id" :color="probe.ok ? 'success' : 'error'" variant="subtle">
+          <div v-if="Object.keys(runtime.endpoints ?? {}).length" class="mt-3 flex flex-wrap gap-1.5">
+            <UBadge v-for="(probe, id) in (runtime.endpoints ?? {})" :key="id" :color="probe.ok ? 'success' : 'error'" variant="subtle" class="tabular-nums">
               {{ id }} · {{ probe.status }} · {{ probe.latency_ms }} ms
             </UBadge>
           </div>
@@ -71,14 +71,14 @@ const { t, locale } = useI18n()
 
 const statusItems = computed(() => {
   const runtime = props.runtime
-  if (!runtime) return []
+  if (!runtime?.queue) return []
   return [
     { label: t('admin.promptAudit.runtime.process'), value: t(`admin.promptAudit.status.${runtime.process_status}`), badge: statusColor(runtime.process_status) },
     { label: t('admin.promptAudit.runtime.mode'), value: t(`admin.promptAudit.mode.${runtime.effective_mode}`) },
-    { label: t('admin.promptAudit.runtime.version'), value: `${runtime.active_config_version} / ${runtime.expected_config_version}` },
-    { label: t('admin.promptAudit.runtime.workers'), value: `${runtime.worker_active} / ${runtime.worker_total}` },
-    { label: t('admin.promptAudit.runtime.queue'), value: `${runtime.queue.active} / ${runtime.queue_capacity}` },
-    { label: t('admin.promptAudit.runtime.dependencies'), value: `DB ${runtime.database_status} · Redis ${runtime.redis_status}` },
+    { label: t('admin.promptAudit.runtime.version'), value: `${runtime.active_config_version ?? 0} / ${runtime.expected_config_version ?? 0}` },
+    { label: t('admin.promptAudit.runtime.workers'), value: `${runtime.worker_active ?? 0} / ${runtime.worker_total ?? 0}` },
+    { label: t('admin.promptAudit.runtime.queue'), value: `${runtime.queue?.active ?? 0} / ${runtime.queue_capacity ?? 0}` },
+    { label: t('admin.promptAudit.runtime.dependencies'), value: `DB ${runtime.database_status ?? 'unknown'} · Redis ${runtime.redis_status ?? 'unknown'}` },
   ]
 })
 
@@ -98,7 +98,10 @@ const guardMetricItems = computed(() => {
 })
 
 function formatDate(value: string): string {
-  return new Intl.DateTimeFormat(locale.value, { dateStyle: 'medium', timeStyle: 'medium' }).format(new Date(value))
+  if (!value) return '—'
+  const d = new Date(value)
+  if (Number.isNaN(d.getTime())) return '—'
+  return new Intl.DateTimeFormat(locale.value, { dateStyle: 'medium', timeStyle: 'medium' }).format(d)
 }
 
 function statusColor(status: string): 'success' | 'neutral' | 'warning' | 'error' {

@@ -84,8 +84,10 @@ const gridClass = computed(() => [
   --tw-ring-color: var(--app-control-border);
 }
 
-.social-login-buttons :deep(.social-auth-button:hover:not(:disabled)) {
-  background-color: var(--ui-bg-accented);
+@media (hover: hover) and (pointer: fine) {
+  .social-login-buttons :deep(.social-auth-button:hover:not(:disabled)) {
+    background-color: var(--ui-bg-accented);
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

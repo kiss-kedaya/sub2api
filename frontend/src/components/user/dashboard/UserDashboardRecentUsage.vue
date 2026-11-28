@@ -15,10 +15,10 @@
         :ui="dashboardTableUi"
       >
         <template #model-cell="{ row }">
-          <span class="signal-request-model font-medium text-highlighted break-all">{{ row.original.model }}</span>
+          <span class="signal-request-model font-medium text-highlighted wrap-anywhere">{{ row.original.model }}</span>
         </template>
         <template #created_at-cell="{ row }">
-          <time :datetime="row.original.created_at">{{ formatDateTime(row.original.created_at) }}</time>
+          <time class="tabular-nums" :datetime="row.original.created_at">{{ formatDateTime(row.original.created_at) }}</time>
         </template>
         <template #tokens-header><div class="text-right">{{ t('dashboard.tokens') }}</div></template>
         <template #tokens-cell="{ row }">

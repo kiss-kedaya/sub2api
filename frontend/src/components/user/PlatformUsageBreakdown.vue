@@ -9,18 +9,18 @@
     @focusout="closeTooltip"
   >
     <div class="flex items-center gap-1.5">
-      <span class="text-gray-500 dark:text-gray-400">{{ t('admin.users.today') }}:</span>
-      <span class="font-medium text-gray-900 dark:text-white">${{ today.toFixed(4) }}</span>
+      <span class="text-muted">{{ t('admin.users.today') }}:</span>
+      <span class="font-medium tabular-nums text-highlighted">${{ today.toFixed(4) }}</span>
       <Icon
         v-if="hasBreakdown"
         name="infoCircle"
         size="xs"
-        class="text-gray-400 dark:text-gray-500"
+        class="text-dimmed"
       />
     </div>
     <div class="mt-0.5 flex items-center gap-1.5">
-      <span class="text-gray-500 dark:text-gray-400">{{ t('admin.users.total') }}:</span>
-      <span class="font-medium text-gray-900 dark:text-white">${{ total.toFixed(4) }}</span>
+      <span class="text-muted">{{ t('admin.users.total') }}:</span>
+      <span class="font-medium tabular-nums text-highlighted">${{ total.toFixed(4) }}</span>
     </div>
 
     <Teleport to="body">
@@ -29,9 +29,9 @@
         data-testid="platform-usage-breakdown-tooltip"
         role="tooltip"
         :style="tooltipStyle"
-        class="pointer-events-none fixed z-[60] min-w-[220px] max-w-[calc(100vw-24px)] whitespace-nowrap rounded-md bg-gray-900 px-3 py-2 text-xs text-white shadow-xl dark:bg-dark-600"
+        class="pointer-events-none fixed z-50 min-w-[220px] max-w-[calc(100vw-24px)] whitespace-nowrap rounded-md border border-default bg-elevated px-3 py-2 text-xs text-highlighted shadow-lg"
       >
-        <div class="mb-1.5 flex items-center justify-between gap-3 border-b border-white/10 pb-1 text-[11px] opacity-80">
+        <div class="mb-1.5 flex items-center justify-between gap-3 border-b border-default pb-1 text-[11px] text-muted">
           <span>{{ t('admin.users.platformBreakdown') }}</span>
           <span class="font-mono">{{ t('admin.users.today') }} / {{ t('admin.users.total') }}</span>
         </div>
@@ -44,7 +44,7 @@
           <span class="capitalize">
             {{ item.isOther ? t('admin.users.platformOther') : platformLabel(item.platform) }}
           </span>
-          <span class="font-mono">
+          <span class="font-mono tabular-nums">
             ${{ item.today_actual_cost.toFixed(4) }}
             <span class="opacity-50">/</span>
             ${{ item.total_actual_cost.toFixed(4) }}

@@ -3,67 +3,67 @@
     <div class="model-comparison space-y-5">
       <AdminPageHeader :title="t('opsCenter.pages.comparison')" :description="text('同一模型在各分组的实付价、价差和最稳渠道；价格已乘分组倍率，按 1M token 展示。', 'Effective prices per group for the same model, with spread and the most stable option. Prices already include the group ratio, shown per 1M tokens.')">
         <template #actions>
-          <RouterLink to="/admin/groups" class="btn btn-secondary">{{ text('分组与倍率', 'Groups and ratios') }}</RouterLink>
-          <RouterLink to="/model-plaza?embedded=1" class="btn btn-secondary">{{ text('模型广场', 'Model plaza') }}</RouterLink>
-          <button type="button" class="btn btn-secondary inline-flex items-center gap-2" :disabled="loading" @click="load">
+          <RouterLink to="/admin/groups" class="btn btn-secondary min-h-11 sm:min-h-9">{{ text('分组与倍率', 'Groups and ratios') }}</RouterLink>
+          <RouterLink to="/model-plaza?embedded=1" class="btn btn-secondary min-h-11 sm:min-h-9">{{ text('模型广场', 'Model plaza') }}</RouterLink>
+          <button type="button" class="btn btn-secondary inline-flex min-h-11 items-center gap-2 sm:min-h-9" :disabled="loading" @click="load">
             <Icon name="refresh" size="sm" :class="{ 'animate-spin': loading }" />
             {{ text('刷新', 'Refresh') }}
           </button>
-          <button type="button" class="btn btn-primary" :disabled="!offers.length" @click="exportCsv">{{ text('导出 CSV', 'Export CSV') }}</button>
+          <button type="button" class="btn btn-primary min-h-11 sm:min-h-9" :disabled="!offers.length" @click="exportCsv">{{ text('导出 CSV', 'Export CSV') }}</button>
         </template>
       </AdminPageHeader>
 
-      <p v-if="error" role="alert" class="rounded-lg bg-amber-50 p-3 text-sm text-amber-800 dark:bg-amber-950/30 dark:text-amber-300">{{ error }}</p>
-      <p v-if="usingPublicFallback" class="rounded-lg bg-primary-50 p-3 text-sm text-primary-800 dark:bg-dark-800 dark:text-primary-300">
+      <p v-if="error" role="alert" class="rounded-lg bg-warning/10 p-3 text-sm text-warning">{{ error }}</p>
+      <p v-if="usingPublicFallback" class="rounded-lg bg-primary/10 p-3 text-sm text-primary">
         {{ text('当前后端没有管理端全量接口，已回退到公开模型广场；专属分组可能缺失。', 'The admin endpoint is unavailable; fell back to the public model plaza, so exclusive groups may be missing.') }}
       </p>
 
       <section class="grid gap-3 sm:grid-cols-2 xl:grid-cols-4" :aria-label="text('比价概览', 'Comparison overview')">
         <article class="card p-5">
           <div class="flex items-start justify-between gap-2">
-            <p class="text-xs font-medium text-gray-500">{{ text('可比模型', 'Comparable models') }}</p>
-            <span class="rounded-lg bg-primary-50 p-2 text-primary-600 dark:bg-primary-950/40"><Icon name="chartBar" size="sm" /></span>
+            <p class="text-xs font-medium text-muted">{{ text('可比模型', 'Comparable models') }}</p>
+            <span class="rounded-lg bg-primary/10 p-2 text-primary"><Icon name="chartBar" size="sm" /></span>
           </div>
-          <p class="mt-3 text-2xl font-semibold tabular-nums">{{ comparableCount }}</p>
-          <p class="mt-2 text-xs text-gray-500">{{ text('至少两个分组同时提供', 'Offered by at least two groups') }}</p>
+          <p class="mt-3 text-2xl font-semibold tabular-nums text-highlighted">{{ comparableCount }}</p>
+          <p class="mt-2 text-xs text-muted">{{ text('至少两个分组同时提供', 'Offered by at least two groups') }}</p>
         </article>
         <article class="card p-5">
           <div class="flex items-start justify-between gap-2">
-            <p class="text-xs font-medium text-gray-500">{{ text('覆盖分组', 'Groups covered') }}</p>
-            <span class="rounded-lg bg-sky-50 p-2 text-sky-600 dark:bg-sky-950/40"><Icon name="users" size="sm" /></span>
+            <p class="text-xs font-medium text-muted">{{ text('覆盖分组', 'Groups covered') }}</p>
+            <span class="rounded-lg bg-info/10 p-2 text-info"><Icon name="users" size="sm" /></span>
           </div>
-          <p class="mt-3 text-2xl font-semibold tabular-nums">{{ groupCount }}</p>
-          <p class="mt-2 text-xs text-gray-500">{{ text('有可售模型的分组', 'Groups with sellable models') }}</p>
+          <p class="mt-3 text-2xl font-semibold tabular-nums text-highlighted">{{ groupCount }}</p>
+          <p class="mt-2 text-xs text-muted">{{ text('有可售模型的分组', 'Groups with sellable models') }}</p>
         </article>
         <article class="card p-5">
           <div class="flex items-start justify-between gap-2">
-            <p class="text-xs font-medium text-gray-500">{{ text('最大价差', 'Largest spread') }}</p>
-            <span class="rounded-lg bg-amber-50 p-2 text-amber-600 dark:bg-amber-950/40"><Icon name="chart" size="sm" /></span>
+            <p class="text-xs font-medium text-muted">{{ text('最大价差', 'Largest spread') }}</p>
+            <span class="rounded-lg bg-warning/10 p-2 text-warning"><Icon name="chart" size="sm" /></span>
           </div>
-          <p class="mt-3 text-2xl font-semibold tabular-nums">{{ maxSpreadLabel }}</p>
-          <p class="mt-2 truncate text-xs text-gray-500">{{ maxSpread ? maxSpread.name : text('暂无可比模型', 'No comparable models yet') }}</p>
+          <p class="mt-3 text-2xl font-semibold tabular-nums text-highlighted">{{ maxSpreadLabel }}</p>
+          <p class="mt-2 truncate text-xs text-muted">{{ maxSpread ? maxSpread.name : text('暂无可比模型', 'No comparable models yet') }}</p>
         </article>
         <article class="card p-5">
           <div class="flex items-start justify-between gap-2">
-            <p class="text-xs font-medium text-gray-500">{{ text('降智异常分组', 'Suspect groups') }}</p>
-            <span class="rounded-lg bg-red-50 p-2 text-red-600 dark:bg-red-950/40"><Icon name="shield" size="sm" /></span>
+            <p class="text-xs font-medium text-muted">{{ text('降智异常分组', 'Suspect groups') }}</p>
+            <span class="rounded-lg bg-error/10 p-2 text-error"><Icon name="shield" size="sm" /></span>
           </div>
-          <p class="mt-3 text-2xl font-semibold tabular-nums" :class="suspectGroups ? 'text-red-600 dark:text-red-400' : ''">{{ suspectGroups }}</p>
-          <p class="mt-2 text-xs text-gray-500">{{ text('近 1 小时检测为异常', 'Flagged by quality checks in the last hour') }}</p>
+          <p class="mt-3 text-2xl font-semibold tabular-nums" :class="suspectGroups ? 'text-error' : 'text-highlighted'">{{ suspectGroups }}</p>
+          <p class="mt-2 text-xs text-muted">{{ text('近 1 小时检测为异常', 'Flagged by quality checks in the last hour') }}</p>
         </article>
       </section>
 
       <section class="card overflow-hidden">
-        <div class="flex flex-wrap items-center justify-between gap-3 border-b border-gray-100 px-5 py-4 dark:border-dark-700">
+        <div class="flex flex-wrap items-center justify-between gap-3 border-b border-default px-5 py-4">
           <div>
-            <h2 class="text-base font-semibold">{{ text('分组倍率速览', 'Group ratios') }}</h2>
-            <p class="mt-1 text-xs text-gray-500">{{ text('倍率、账号数和模型数一眼对齐；价格页按生效倍率计算。', 'Ratios, account counts and model counts in one table. Effective prices use these ratios.') }}</p>
+            <h2 class="text-base font-semibold text-highlighted">{{ text('分组倍率速览', 'Group ratios') }}</h2>
+            <p class="mt-1 text-xs text-muted">{{ text('倍率、账号数和模型数一眼对齐；价格页按生效倍率计算。', 'Ratios, account counts and model counts in one table. Effective prices use these ratios.') }}</p>
           </div>
-          <span class="text-xs text-gray-500">{{ groupRows.length }} {{ text('个分组', 'groups') }}</span>
+          <span class="text-xs tabular-nums text-muted">{{ groupRows.length }} {{ text('个分组', 'groups') }}</span>
         </div>
         <div class="overflow-x-auto">
           <table class="w-full min-w-[820px] text-left text-sm">
-            <thead class="bg-gray-50 text-xs text-gray-500 dark:bg-dark-800">
+            <thead class="bg-elevated text-xs text-muted">
               <tr>
                 <th class="px-5 py-3">{{ text('分组', 'Group') }}</th>
                 <th class="px-4 py-3">{{ text('平台', 'Platform') }}</th>
@@ -75,16 +75,16 @@
               </tr>
             </thead>
             <tbody>
-              <tr v-for="row in groupRows" :key="row.id" class="border-t border-gray-100 dark:border-dark-700">
+              <tr v-for="row in groupRows" :key="row.id" class="border-t border-default">
                 <td class="px-5 py-3">
-                  <p class="font-medium">{{ row.name }}</p>
-                  <p class="mt-0.5 text-xs text-gray-500">#{{ row.id }}</p>
+                  <p class="font-medium text-highlighted">{{ row.name }}</p>
+                  <p class="mt-0.5 text-xs tabular-nums text-muted">#{{ row.id }}</p>
                 </td>
                 <td class="px-4 py-3">{{ row.platform }}</td>
                 <td class="px-4 py-3 tabular-nums">{{ rateLabel(row.rate_multiplier) }}</td>
                 <td class="px-4 py-3 tabular-nums">
                   <template v-if="row.activeAccountCount != null">{{ row.activeAccountCount }} / {{ row.accountCount ?? '—' }}</template>
-                  <span v-else class="text-gray-400">—</span>
+                  <span v-else class="text-dimmed">—</span>
                 </td>
                 <td class="px-4 py-3 tabular-nums">{{ row.modelCount }}</td>
                 <td class="px-4 py-3"><span class="badge" :class="qualityClass(row.quality_status)">{{ qualityLabel(row.quality_status) }}</span></td>
@@ -100,35 +100,18 @@
       </section>
 
       <section class="card overflow-hidden">
-        <div class="flex flex-wrap items-center justify-between gap-3 border-b border-gray-100 px-5 py-4 dark:border-dark-700">
+        <div class="flex flex-wrap items-center justify-between gap-3 border-b border-default px-5 py-4">
           <div>
-            <h2 class="text-base font-semibold">{{ text('模型比价', 'Model comparison') }}</h2>
-            <p class="mt-1 text-xs text-gray-500">{{ text('最低价按输入价排序；价差 = 最高输入价 / 最低输入价 − 1。', 'Cheapest is ranked by input price; spread = highest input / lowest input − 1.') }}</p>
+            <h2 class="text-base font-semibold text-highlighted">{{ text('模型比价', 'Model comparison') }}</h2>
+            <p class="mt-1 text-xs text-muted">{{ text('最低价按输入价排序；价差 = 最高输入价 / 最低输入价 − 1。', 'Cheapest is ranked by input price; spread = highest input / lowest input − 1.') }}</p>
           </div>
           <div class="flex flex-wrap items-center gap-2">
-            <input v-model="search" class="input w-44 text-sm" :placeholder="text('搜索模型', 'Search model')" :aria-label="text('搜索模型', 'Search model')" />
-            <select v-model="platform" class="input w-auto text-sm" :aria-label="text('平台', 'Platform')">
-              <option value="">{{ text('全部平台', 'All platforms') }}</option>
-              <option v-for="item in platforms" :key="item" :value="item">{{ item }}</option>
-            </select>
-            <select v-model.number="groupId" class="input w-auto text-sm" :aria-label="text('分组', 'Group')">
-              <option :value="0">{{ text('全部分组', 'All groups') }}</option>
-              <option v-for="item in groupOptions" :key="item.value" :value="item.value">{{ item.label }}</option>
-            </select>
-            <select v-model="billingMode" class="input w-auto text-sm" :aria-label="text('计费方式', 'Billing mode')">
-              <option value="">{{ text('全部计费', 'All billing modes') }}</option>
-              <option value="token">{{ text('按 token', 'Per token') }}</option>
-              <option value="per_request">{{ text('按次', 'Per request') }}</option>
-              <option value="image">{{ text('按图', 'Per image') }}</option>
-              <option value="video">{{ text('按秒', 'Per second') }}</option>
-            </select>
-            <select v-model="sort" class="input w-auto text-sm" :aria-label="text('排序', 'Sort')">
-              <option value="spread">{{ text('价差从大到小', 'Largest spread') }}</option>
-              <option value="input">{{ text('输入价从低到高', 'Lowest input') }}</option>
-              <option value="output">{{ text('输出价从低到高', 'Lowest output') }}</option>
-              <option value="name">{{ text('模型名称', 'Model name') }}</option>
-            </select>
-            <label class="flex items-center gap-1.5 text-xs text-gray-600 dark:text-gray-300">
+            <input v-model="search" class="input w-full text-sm sm:w-44" :placeholder="text('搜索模型', 'Search model')" :aria-label="text('搜索模型', 'Search model')" />
+            <Select :model-value="platform" :options="platformOptions" :aria-label="text('平台', 'Platform')" class="w-full sm:w-36" @update:model-value="platform = String($event ?? '')" />
+            <Select :model-value="groupId" :options="groupSelectOptions" :aria-label="text('分组', 'Group')" class="w-full sm:w-44" @update:model-value="groupId = Number($event ?? 0)" />
+            <Select :model-value="billingMode" :options="billingModeOptions" :aria-label="text('计费方式', 'Billing mode')" class="w-full sm:w-36" @update:model-value="billingMode = String($event ?? '')" />
+            <Select :model-value="sort" :options="sortOptions" :aria-label="text('排序', 'Sort')" class="w-full sm:w-40" @update:model-value="sort = $event === 'input' || $event === 'output' || $event === 'name' ? $event : 'spread'" />
+            <label class="flex min-h-11 items-center gap-1.5 text-xs text-default sm:min-h-9">
               <input v-model="onlyComparable" type="checkbox" />
               {{ text('只看多分组', 'Multi-group only') }}
             </label>
@@ -137,7 +120,7 @@
 
         <div class="overflow-x-auto">
           <table v-if="pageRows.length" class="w-full min-w-[1120px] text-left text-sm">
-            <thead class="bg-gray-50 text-xs text-gray-500 dark:bg-dark-800">
+            <thead class="bg-elevated text-xs text-muted">
               <tr>
                 <th class="px-5 py-3">{{ text('模型', 'Model') }}</th>
                 <th class="px-4 py-3">{{ text('最低价', 'Cheapest') }}</th>
@@ -150,61 +133,61 @@
             </thead>
             <tbody>
               <template v-for="row in pageRows" :key="row.key">
-                <tr class="border-t border-gray-100 align-top dark:border-dark-700">
+                <tr class="border-t border-default align-top">
                   <td class="px-5 py-3">
-                    <p class="font-medium">{{ row.name }}</p>
-                    <p class="mt-0.5 text-xs text-gray-500">
+                    <p class="font-medium text-highlighted">{{ row.name }}</p>
+                    <p class="mt-0.5 text-xs text-muted">
                       {{ row.platform }} · {{ row.offers.length }} {{ text('个分组', 'groups') }}
                       <span v-if="row.multiTier" class="badge badge-gray ml-1">{{ text('多档', 'Tiered') }}</span>
                     </p>
                   </td>
                   <td class="px-4 py-3">
                     <template v-if="row.cheapest">
-                      <p class="font-medium">{{ row.cheapest.groupName }}</p>
-                      <p class="mt-0.5 text-xs tabular-nums text-gray-600 dark:text-gray-300">{{ pricePair(row.cheapest) }}</p>
-                      <p class="mt-0.5 text-[11px] text-gray-400">{{ text('倍率', 'Ratio') }} {{ rateLabel(row.cheapest.groupRate) }}</p>
+                      <p class="font-medium text-highlighted">{{ row.cheapest.groupName }}</p>
+                      <p class="mt-0.5 text-xs tabular-nums text-default">{{ pricePair(row.cheapest) }}</p>
+                      <p class="mt-0.5 text-[11px] tabular-nums text-dimmed">{{ text('倍率', 'Ratio') }} {{ rateLabel(row.cheapest.groupRate) }}</p>
                     </template>
-                    <span v-else class="text-gray-400">—</span>
+                    <span v-else class="text-dimmed">—</span>
                   </td>
                   <td class="px-4 py-3">
                     <template v-if="row.expensive">
-                      <p class="font-medium">{{ row.expensive.groupName }}</p>
-                      <p class="mt-0.5 text-xs tabular-nums text-gray-600 dark:text-gray-300">{{ pricePair(row.expensive) }}</p>
+                      <p class="font-medium text-highlighted">{{ row.expensive.groupName }}</p>
+                      <p class="mt-0.5 text-xs tabular-nums text-default">{{ pricePair(row.expensive) }}</p>
                     </template>
-                    <span v-else class="text-gray-400">—</span>
+                    <span v-else class="text-dimmed">—</span>
                   </td>
                   <td class="px-4 py-3">
-                    <span v-if="row.spreadValue != null" class="badge" :class="spreadClass(row.spreadValue)">{{ formatSpread(row.spreadValue) }}</span>
-                    <span v-else class="text-gray-400">—</span>
+                    <span v-if="row.spreadValue != null" class="badge tabular-nums" :class="spreadClass(row.spreadValue)">{{ formatSpread(row.spreadValue) }}</span>
+                    <span v-else class="text-dimmed">—</span>
                   </td>
                   <td class="px-4 py-3">
                     <template v-if="row.bestValue">
-                      <p class="font-medium">{{ row.bestValue.groupName }}</p>
-                      <p class="mt-0.5 text-xs tabular-nums text-gray-600 dark:text-gray-300">{{ pricePair(row.bestValue) }}</p>
-                      <p class="mt-1 text-[11px] text-gray-400">{{ text('综合价最低', 'Lowest blended price') }}</p>
+                      <p class="font-medium text-highlighted">{{ row.bestValue.groupName }}</p>
+                      <p class="mt-0.5 text-xs tabular-nums text-default">{{ pricePair(row.bestValue) }}</p>
+                      <p class="mt-1 text-[11px] text-dimmed">{{ text('综合价最低', 'Lowest blended price') }}</p>
                     </template>
-                    <span v-else class="text-gray-400">—</span>
+                    <span v-else class="text-dimmed">—</span>
                   </td>
                   <td class="px-4 py-3">
                     <template v-if="row.bestStable">
-                      <p class="font-medium">{{ row.bestStable.groupName }}</p>
-                      <p class="mt-0.5 text-xs tabular-nums text-gray-600 dark:text-gray-300">{{ pricePair(row.bestStable) }}</p>
+                      <p class="font-medium text-highlighted">{{ row.bestStable.groupName }}</p>
+                      <p class="mt-0.5 text-xs tabular-nums text-default">{{ pricePair(row.bestStable) }}</p>
                       <span class="badge badge-success mt-1">{{ text('检测正常', 'Healthy') }}</span>
                     </template>
-                    <span v-else class="text-xs text-gray-400">{{ text('无检测正常分组', 'No healthy group') }}</span>
+                    <span v-else class="text-xs text-dimmed">{{ text('无检测正常分组', 'No healthy group') }}</span>
                   </td>
                   <td class="px-5 py-3 text-right">
-                    <button type="button" class="inline-flex items-center gap-1 text-xs text-primary-600" @click="toggle(row.key)">
+                    <button type="button" class="inline-flex min-h-11 items-center gap-1 text-xs text-primary sm:min-h-9" @click="toggle(row.key)">
                       {{ expanded.has(row.key) ? text('收起', 'Collapse') : text('展开', 'Expand') }}
                       <Icon :name="expanded.has(row.key) ? 'chevronDown' : 'chevronRight'" size="sm" />
                     </button>
                   </td>
                 </tr>
-                <tr v-if="expanded.has(row.key)" class="bg-gray-50/60 dark:bg-dark-800/40">
+                <tr v-if="expanded.has(row.key)" class="bg-elevated/50">
                   <td colspan="7" class="px-5 py-4">
-                    <div class="overflow-x-auto rounded-lg border border-gray-200 bg-white dark:border-dark-700 dark:bg-dark-900">
+                    <div class="overflow-x-auto rounded-lg border border-default bg-default">
                       <table class="w-full min-w-[860px] text-left text-xs">
-                        <thead class="bg-gray-50 text-gray-500 dark:bg-dark-800">
+                        <thead class="bg-elevated text-muted">
                           <tr>
                             <th class="px-4 py-2">{{ text('分组', 'Group') }}</th>
                             <th class="px-3 py-2">{{ text('倍率', 'Ratio') }}</th>
@@ -215,17 +198,17 @@
                           </tr>
                         </thead>
                         <tbody>
-                          <tr v-for="offer in sortedOffers(row)" :key="offer.key" class="border-t border-gray-100 dark:border-dark-700">
+                          <tr v-for="offer in sortedOffers(row)" :key="offer.key" class="border-t border-default">
                             <td class="px-4 py-2">
-                              <p class="font-medium">{{ offer.groupName }}</p>
-                              <p class="text-[11px] text-gray-500">#{{ offer.groupId }} · {{ offer.platform }}</p>
+                              <p class="font-medium text-highlighted">{{ offer.groupName }}</p>
+                              <p class="text-[11px] tabular-nums text-muted">#{{ offer.groupId }} · {{ offer.platform }}</p>
                             </td>
                             <td class="px-3 py-2 tabular-nums">{{ rateLabel(offer.groupRate) }}</td>
                             <td class="px-3 py-2">{{ billingLabel(offer.billingMode) }}</td>
                             <td class="px-3 py-2 tabular-nums">{{ pricePair(offer) }}</td>
                             <td class="px-3 py-2 tabular-nums">
                               <template v-if="offer.billingMode === 'token'">{{ formatMoney(offer.cacheWritePerMillion) }} / {{ formatMoney(offer.cacheReadPerMillion) }}</template>
-                              <span v-else class="text-gray-400">—</span>
+                              <span v-else class="text-dimmed">—</span>
                             </td>
                             <td class="px-3 py-2">
                               <span class="badge" :class="qualityClass(offer.qualityStatus)">{{ qualityLabel(offer.qualityStatus) }}</span>
@@ -240,17 +223,17 @@
               </template>
             </tbody>
           </table>
-          <div v-else class="p-10 text-center text-sm text-gray-500">
+          <div v-else class="p-10 text-center text-sm text-muted">
             {{ loading ? text('加载中…', 'Loading…') : text('没有匹配的模型。', 'No models match the filters.') }}
           </div>
         </div>
 
-        <div class="flex flex-wrap items-center justify-between gap-3 border-t border-gray-100 px-5 py-3 text-xs text-gray-500 dark:border-dark-700">
-          <span>{{ text('显示', 'Showing') }} {{ rangeStart }}–{{ rangeEnd }} / {{ filtered.length }}</span>
+        <div class="flex flex-wrap items-center justify-between gap-3 border-t border-default px-5 py-3 text-xs text-muted">
+          <span class="tabular-nums">{{ text('显示', 'Showing') }} {{ rangeStart }}–{{ rangeEnd }} / {{ filtered.length }}</span>
           <div class="flex items-center gap-2">
-            <button type="button" class="btn btn-secondary" :disabled="page <= 1" @click="page--">{{ text('上一页', 'Previous') }}</button>
-            <span>{{ page }} / {{ pageCount }}</span>
-            <button type="button" class="btn btn-secondary" :disabled="page >= pageCount" @click="page++">{{ text('下一页', 'Next') }}</button>
+            <button type="button" class="btn btn-secondary min-h-11 sm:min-h-9" :disabled="page <= 1" @click="page--">{{ text('上一页', 'Previous') }}</button>
+            <span class="tabular-nums">{{ page }} / {{ pageCount }}</span>
+            <button type="button" class="btn btn-secondary min-h-11 sm:min-h-9" :disabled="page >= pageCount" @click="page++">{{ text('下一页', 'Next') }}</button>
           </div>
         </div>
       </section>
@@ -264,6 +247,7 @@ import { useI18n } from 'vue-i18n'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import AdminPageHeader from '@/components/admin/page/AdminPageHeader.vue'
 import Icon from '@/components/icons/Icon.vue'
+import Select, { type SelectOption } from '@/components/common/Select.vue'
 import {
   getAdminModelPlaza,
   getModelPlaza,
@@ -334,9 +318,30 @@ const maxSpreadLabel = computed(() => {
   return value == null ? '—' : formatSpread(value)
 })
 const platforms = computed(() => Array.from(new Set(groups.value.map(group => group.platform))).sort())
+const platformOptions = computed<SelectOption[]>(() => [
+  { value: '', label: text('全部平台', 'All platforms') },
+  ...platforms.value.map(item => ({ value: item, label: item })),
+])
 const groupOptions = computed(() => groups.value
   .map(group => ({ value: group.id, label: group.name }))
   .sort((a, b) => a.label.localeCompare(b.label)))
+const groupSelectOptions = computed<SelectOption[]>(() => [
+  { value: 0, label: text('全部分组', 'All groups') },
+  ...groupOptions.value,
+])
+const billingModeOptions = computed<SelectOption[]>(() => [
+  { value: '', label: text('全部计费', 'All billing modes') },
+  { value: 'token', label: text('按 token', 'Per token') },
+  { value: 'per_request', label: text('按次', 'Per request') },
+  { value: 'image', label: text('按图', 'Per image') },
+  { value: 'video', label: text('按秒', 'Per second') },
+])
+const sortOptions = computed<SelectOption[]>(() => [
+  { value: 'spread', label: text('价差从大到小', 'Largest spread') },
+  { value: 'input', label: text('输入价从低到高', 'Lowest input') },
+  { value: 'output', label: text('输出价从低到高', 'Lowest output') },
+  { value: 'name', label: text('模型名称', 'Model name') },
+])
 const groupRows = computed(() => {
   const accountMap = new Map(adminGroups.value.map(group => [group.id, group]))
   return groups.value

@@ -574,3 +574,19 @@ describe('HomeView i18n keys', () => {
     }
   })
 })
+
+describe('HomeView craft invariants', () => {
+  it('uses dvh/svh viewports, semantic tokens in compact mode, and GPU-only agent card transitions', () => {
+    expect(homeViewSource).toContain('min-h-dvh')
+    expect(homeViewSource).toContain('h-dvh')
+    expect(homeViewSource).toContain('min-h-svh')
+    expect(homeViewSource).not.toContain('min-h-screen')
+    expect(homeViewSource).not.toContain('h-screen')
+    expect(homeViewSource).not.toMatch(/\b(?:text|bg|border)-(?:gray|dark|slate)-/)
+    expect(homeViewSource).toContain('motion-reduce:transition-none motion-reduce:group-hover:translate-x-0')
+
+    const styleMatch = homeViewSource.match(/<style scoped>([\s\S]*)<\/style>/)
+    expect(styleMatch?.[1]).toBeTruthy()
+    expect(styleMatch![1]).not.toMatch(/transition\s*:[^;]*box-shadow/)
+  })
+})

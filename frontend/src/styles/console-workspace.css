@@ -223,6 +223,10 @@
 }
 
 @media (max-width: 639px) {
+  .console-signal .signal-main .signal-pagination button {
+    min-height: 44px;
+  }
+
   .console-signal .signal-keys [data-field] > span {
     flex-shrink: 0;
   }

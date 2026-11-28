@@ -67,18 +67,18 @@
           />
           <dl class="grid gap-2 sm:grid-cols-[9rem_minmax(0,1fr)]" data-testid="shard-unlock-audit">
             <dt class="text-muted">{{ t('admin.crypto.signer.unlock.auditAddresses') }}</dt>
-            <dd class="text-default">{{ audit?.swept ?? 0 }} / {{ audit?.planned ?? 0 }}</dd>
+            <dd class="tabular-nums text-default">{{ audit?.swept ?? 0 }} / {{ audit?.planned ?? 0 }}</dd>
             <dt class="text-muted">{{ t('admin.crypto.signer.unlock.auditAmount') }}</dt>
-            <dd class="text-default">{{ audit?.amountUsd == null ? '—' : audit.amountUsd.toFixed(2) }}</dd>
+            <dd class="tabular-nums text-default">{{ audit?.amountUsd == null ? '—' : audit.amountUsd.toFixed(2) }}</dd>
             <dt class="text-muted">{{ t('admin.crypto.signer.unlock.auditStatus') }}</dt>
-            <dd class="text-default">{{ audit?.status ?? '—' }}<span v-if="(audit?.failed ?? 0) > 0" class="text-error"> · failed {{ audit?.failed }}</span></dd>
+            <dd class="tabular-nums text-default">{{ audit?.status ?? '—' }}<span v-if="(audit?.failed ?? 0) > 0" class="text-error"> · failed {{ audit?.failed }}</span></dd>
             <dt class="text-muted">{{ t('admin.crypto.signer.unlock.auditTx') }}</dt>
             <dd class="min-w-0 space-y-1">
               <p v-if="!audit?.txHashes.length" class="text-muted">{{ t('admin.crypto.signer.unlock.auditNoTx') }}</p>
               <p
                 v-for="hash in audit?.txHashes.slice(0, 12)"
                 :key="hash"
-                class="font-mono text-xs break-all text-default"
+                class="font-mono text-xs wrap-anywhere text-default"
               >{{ hash }}</p>
             </dd>
           </dl>

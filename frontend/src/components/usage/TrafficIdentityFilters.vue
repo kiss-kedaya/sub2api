@@ -2,22 +2,62 @@
 <template>
   <div class="flex w-full flex-wrap items-end gap-3 lg:w-auto">
     <div ref="userRoot" class="relative w-full sm:w-60">
-      <label class="input-label">{{ t('admin.usage.userFilter') }}</label>
-      <input v-model="userKeyword" class="input pr-8" :placeholder="t('admin.usage.searchUserPlaceholder')" @input="scheduleUsers" @focus="userOpen = true" />
-      <button v-if="modelValue.user_id" type="button" class="absolute right-2 top-9 text-gray-400" :aria-label="t('common.clear')" @click="clearUser">×</button>
-      <div v-if="userOpen && userResults.length" class="absolute z-50 mt-1 max-h-60 w-full overflow-auto rounded-lg border bg-white shadow-lg dark:bg-dark-800">
-        <button v-for="user in userResults" :key="user.id" type="button" class="w-full px-4 py-2 text-left hover:bg-gray-100 dark:hover:bg-dark-700" @click="selectUser(user)">{{ user.email }} <span class="text-xs text-gray-400">#{{ user.id }}</span></button>
+      <label for="traffic-user-filter" class="input-label">{{ t('admin.usage.userFilter') }}</label>
+      <UInput
+        id="traffic-user-filter"
+        v-model="userKeyword"
+        class="w-full"
+        :placeholder="t('admin.usage.searchUserPlaceholder')"
+        @update:model-value="scheduleUsers"
+        @focus="userOpen = true"
+      >
+        <template v-if="modelValue.user_id" #trailing>
+          <UButton
+            type="button"
+            icon="i-lucide-x"
+            color="neutral"
+            variant="link"
+            size="xs"
+            :padded="false"
+            class="max-sm:min-h-11 max-sm:min-w-11"
+            :aria-label="t('common.clear')"
+            @click="clearUser"
+          />
+        </template>
+      </UInput>
+      <div v-if="userOpen && userResults.length" class="absolute z-50 mt-1 max-h-60 w-full overflow-auto rounded-lg border border-default bg-default shadow-lg">
+        <button v-for="user in userResults" :key="user.id" type="button" class="w-full px-4 py-2 text-left text-default [@media(hover:hover)]:hover:bg-elevated" @click="selectUser(user)">{{ user.email }} <span class="text-xs tabular-nums text-dimmed">#{{ user.id }}</span></button>
       </div>
-      <p v-if="userError" role="alert" class="mt-1 text-xs text-red-600">{{ t('traffic.identityFailed') }}</p>
+      <p v-if="userError" role="alert" class="mt-1 text-xs text-red-600 dark:text-red-400">{{ t('traffic.identityFailed') }}</p>
     </div>
     <div ref="keyRoot" class="relative w-full sm:w-60">
-      <label class="input-label">{{ t('usage.apiKeyFilter') }}</label>
-      <input v-model="keyKeyword" class="input pr-8" :placeholder="t('admin.usage.searchApiKeyPlaceholder')" @input="scheduleKeys" @focus="openKeys" />
-      <button v-if="modelValue.api_key_id" type="button" class="absolute right-2 top-9 text-gray-400" :aria-label="t('common.clear')" @click="clearKey">×</button>
-      <div v-if="keyOpen && keyResults.length" class="absolute z-50 mt-1 max-h-60 w-full overflow-auto rounded-lg border bg-white shadow-lg dark:bg-dark-800">
-        <button v-for="key in keyResults" :key="key.id" type="button" class="w-full px-4 py-2 text-left hover:bg-gray-100 dark:hover:bg-dark-700" @click="selectKey(key)">{{ key.name || `#${key.id}` }} <span v-if="key.deleted" class="text-xs text-gray-400">({{ t('traffic.deletedKey') }})</span></button>
+      <label for="traffic-key-filter" class="input-label">{{ t('usage.apiKeyFilter') }}</label>
+      <UInput
+        id="traffic-key-filter"
+        v-model="keyKeyword"
+        class="w-full"
+        :placeholder="t('admin.usage.searchApiKeyPlaceholder')"
+        @update:model-value="scheduleKeys"
+        @focus="openKeys"
+      >
+        <template v-if="modelValue.api_key_id" #trailing>
+          <UButton
+            type="button"
+            icon="i-lucide-x"
+            color="neutral"
+            variant="link"
+            size="xs"
+            :padded="false"
+            class="max-sm:min-h-11 max-sm:min-w-11"
+            :aria-label="t('common.clear')"
+            @click="clearKey"
+          />
+        </template>
+      </UInput>
+      <div v-if="keyOpen && keyResults.length" class="absolute z-50 mt-1 max-h-60 w-full overflow-auto rounded-lg border border-default bg-default shadow-lg">
+        <button v-for="key in keyResults" :key="key.id" type="button" class="w-full px-4 py-2 text-left text-default [@media(hover:hover)]:hover:bg-elevated" @click="selectKey(key)">{{ key.name || `#${key.id}` }} <span v-if="key.deleted" class="text-xs text-dimmed">({{ t('traffic.deletedKey') }})</span></button>
       </div>
-      <p v-if="keyError" role="alert" class="mt-1 text-xs text-red-600">{{ t('traffic.keysFailed') }}</p>
+      <p v-if="keyError" role="alert" class="mt-1 text-xs text-red-600 dark:text-red-400">{{ t('traffic.keysFailed') }}</p>
     </div>
   </div>
 </template>

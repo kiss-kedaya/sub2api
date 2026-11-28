@@ -71,7 +71,7 @@
                 <span class="font-medium text-highlighted">{{ pod.id }} <span class="font-normal text-muted">· {{ pod.region || '—' }}</span></span>
                 <span class="flex items-center gap-2">
                   <UBadge :color="pod.ready ? 'success' : 'neutral'" variant="subtle">{{ t('serverless.ready') }}: {{ pod.ready ? t('serverless.yes') : t('serverless.no') }}</UBadge>
-                  <span class="text-muted">{{ t('serverless.version') }}: {{ pod.version }}</span>
+                  <span class="tabular-nums text-muted">{{ t('serverless.version') }}: {{ pod.version }}</span>
                 </span>
               </div>
             </template>
@@ -82,7 +82,7 @@
           <template #content>
             <UPageGrid class="gap-4 sm:grid-cols-2 lg:grid-cols-2">
               <UPageCard v-for="key in (['requests', 'errors'] as const)" :key="key" variant="subtle" :title="t('serverless.' + key)" :ui="{ container: 'gap-y-1.5', title: 'font-normal text-muted text-xs uppercase' }">
-                <span class="text-2xl font-semibold text-highlighted">{{ total(key) }}</span>
+                <span class="text-2xl font-semibold tabular-nums text-highlighted">{{ total(key) }}</span>
               </UPageCard>
             </UPageGrid>
           </template>

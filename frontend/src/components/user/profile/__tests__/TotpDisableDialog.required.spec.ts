@@ -12,8 +12,10 @@ enableAutoUnmount(afterEach)
 beforeEach(() => { vi.clearAllMocks(); mocks.role = 'admin'; mocks.method = 'password'; mocks.disable.mockResolvedValue({ success: true }) })
 
 describe('Administrator TOTP disable UI protection', () => {
+  const mountDialog = () => mount(TotpDisableDialog, { global: { stubs: { teleport: true } } })
+
   it('defaults to an exactly six digit TOTP code for admins', async () => {
-    const wrapper = mount(TotpDisableDialog)
+    const wrapper = mountDialog()
     await flushPromises()
     const input = wrapper.get('#disable-totp-code')
     expect(input.attributes('required')).toBeDefined()
@@ -35,7 +37,7 @@ describe('Administrator TOTP disable UI protection', () => {
 
   it('does not render or submit email verification for admins when password is the old method', async () => {
     mocks.method = 'email'
-    const wrapper = mount(TotpDisableDialog)
+    const wrapper = mountDialog()
     await flushPromises()
     expect(wrapper.find('#password').exists()).toBe(false)
     expect(wrapper.find('input[placeholder="profile.totp.enterEmailCode"]').exists()).toBe(false)
@@ -48,7 +50,7 @@ describe('Administrator TOTP disable UI protection', () => {
 
   it('requires a current authenticator code for non-admin users even when the server returns password', async () => {
     mocks.role = 'user'
-    const wrapper = mount(TotpDisableDialog)
+    const wrapper = mountDialog()
     await flushPromises()
     expect(wrapper.find('#password').exists()).toBe(false)
     await wrapper.get('#disable-totp-code').setValue('123456')
@@ -58,10 +60,10 @@ describe('Administrator TOTP disable UI protection', () => {
   })
 
   it('offers server recovery only for administrators and sends only the chosen credential', async () => {
-    const wrapper = mount(TotpDisableDialog)
+    const wrapper = mountDialog()
     await flushPromises()
     await wrapper.get('[data-testid="totp-disable-code"]').setValue('12345')
-    await wrapper.get('[data-testid="totp-disable-method-server"]').setValue()
+    await wrapper.get('[data-testid="totp-disable-method-server"]').trigger('click')
     expect(wrapper.find('[data-testid="totp-disable-code"]').exists()).toBe(false)
     const input = wrapper.get('[data-testid="totp-disable-server-code"]')
     expect(input.attributes('type')).toBe('password')
@@ -82,14 +84,14 @@ describe('Administrator TOTP disable UI protection', () => {
   })
 
   it('clears authenticator and recovery codes when switching methods', async () => {
-    const wrapper = mount(TotpDisableDialog)
+    const wrapper = mountDialog()
     await flushPromises()
     await wrapper.get('[data-testid="totp-disable-code"]').setValue('12345')
-    await wrapper.get('[data-testid="totp-disable-method-server"]').setValue()
+    await wrapper.get('[data-testid="totp-disable-method-server"]').trigger('click')
     await wrapper.get('[data-testid="totp-disable-server-code"]').setValue('a'.repeat(64))
-    await wrapper.get('[data-testid="totp-disable-method-authenticator"]').setValue()
+    await wrapper.get('[data-testid="totp-disable-method-authenticator"]').trigger('click')
     expect(wrapper.get('[data-testid="totp-disable-code"]').element).toHaveProperty('value', '')
-    await wrapper.get('[data-testid="totp-disable-method-server"]').setValue()
+    await wrapper.get('[data-testid="totp-disable-method-server"]').trigger('click')
     expect(wrapper.get('[data-testid="totp-disable-server-code"]').element).toHaveProperty('value', '')
     await wrapper.get('form').trigger('submit')
     expect(mocks.disable).not.toHaveBeenCalled()
@@ -97,9 +99,9 @@ describe('Administrator TOTP disable UI protection', () => {
 
   it('clears the rejected server authorization before retrying and does not disable 2FA', async () => {
     mocks.disable.mockRejectedValueOnce({ message: 'Server authorization expired' })
-    const wrapper = mount(TotpDisableDialog)
+    const wrapper = mountDialog()
     await flushPromises()
-    await wrapper.get('[data-testid="totp-disable-method-server"]').setValue()
+    await wrapper.get('[data-testid="totp-disable-method-server"]').trigger('click')
     await wrapper.get('[data-testid="totp-disable-server-code"]').setValue('a'.repeat(64))
     await wrapper.get('form').trigger('submit')
     await flushPromises()
@@ -109,11 +111,11 @@ describe('Administrator TOTP disable UI protection', () => {
   })
 
   it('clears a server authorization immediately on cancel without submitting', async () => {
-    const wrapper = mount(TotpDisableDialog)
+    const wrapper = mountDialog()
     await flushPromises()
-    await wrapper.get('[data-testid="totp-disable-method-server"]').setValue()
+    await wrapper.get('[data-testid="totp-disable-method-server"]').trigger('click')
     await wrapper.get('[data-testid="totp-disable-server-code"]').setValue('a'.repeat(64))
-    await wrapper.get('.btn-secondary').trigger('click')
+    await wrapper.get('[data-testid="totp-disable-cancel"]').trigger('click')
     expect(wrapper.get('[data-testid="totp-disable-server-code"]').element).toHaveProperty('value', '')
     expect(wrapper.emitted('close')).toHaveLength(1)
     expect(mocks.disable).not.toHaveBeenCalled()
@@ -122,7 +124,7 @@ describe('Administrator TOTP disable UI protection', () => {
   it('requires a current authenticator code for non-admin users even when the server returns email', async () => {
     mocks.role = 'user'
     mocks.method = 'email'
-    const wrapper = mount(TotpDisableDialog)
+    const wrapper = mountDialog()
     await flushPromises()
     expect(wrapper.find('[data-testid="totp-disable-method-server"]').exists()).toBe(false)
     expect(wrapper.find('#password').exists()).toBe(false)
@@ -135,7 +137,7 @@ describe('Administrator TOTP disable UI protection', () => {
 
   it('shows server rejection and removes the consumed input before retry', async () => {
     mocks.disable.mockRejectedValueOnce({ message: 'Invalid TOTP code' })
-    const wrapper = mount(TotpDisableDialog)
+    const wrapper = mountDialog()
     await flushPromises()
     await wrapper.get('#disable-totp-code').setValue('123456')
     await wrapper.get('form').trigger('submit')

@@ -2,7 +2,7 @@
   <UPageCard :icon="icon" :title="title" variant="subtle" :ui="statCardUi">
     <template v-if="$slots.title" #title><slot name="title" /></template>
     <div class="flex min-w-0 flex-wrap items-center gap-2">
-      <span class="text-2xl font-semibold text-highlighted">
+      <span class="text-2xl font-semibold tabular-nums text-highlighted">
         <slot name="value">{{ value }}</slot>
       </span>
       <slot name="badge" />

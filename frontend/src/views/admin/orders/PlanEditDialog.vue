@@ -1,7 +1,7 @@
 <template>
   <BaseDialog :show="show" :title="plan ? t('payment.admin.editPlan') : t('payment.admin.createPlan')" width="wide" @close="emit('close')">
     <UForm id="plan-form" :state="planForm" class="space-y-4" @submit="handleSavePlan">
-      <div class="grid grid-cols-2 gap-4">
+      <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <UFormField :label="t('payment.admin.planName')" required>
           <UInput v-model="planForm.name" required class="w-full" />
         </UFormField>
@@ -22,18 +22,18 @@
       <!-- Group info preview: the group's limits, no box -->
       <div v-if="selectedGroupInfo" class="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
         <GroupBadge :name="selectedGroupInfo.name" :platform="selectedGroupInfo.platform" :rate-multiplier="selectedGroupInfo.rate_multiplier" />
-        <span><span class="text-muted">{{ t('payment.admin.dailyLimit') }}:</span> <span class="ml-1 font-medium text-default">{{ selectedGroupInfo.daily_limit_usd != null ? '$' + selectedGroupInfo.daily_limit_usd : t('payment.admin.unlimited') }}</span></span>
-        <span><span class="text-muted">{{ t('payment.admin.weeklyLimit') }}:</span> <span class="ml-1 font-medium text-default">{{ selectedGroupInfo.weekly_limit_usd != null ? '$' + selectedGroupInfo.weekly_limit_usd : t('payment.admin.unlimited') }}</span></span>
-        <span><span class="text-muted">{{ t('payment.admin.monthlyLimit') }}:</span> <span class="ml-1 font-medium text-default">{{ selectedGroupInfo.monthly_limit_usd != null ? '$' + selectedGroupInfo.monthly_limit_usd : t('payment.admin.unlimited') }}</span></span>
+        <span><span class="text-muted">{{ t('payment.admin.dailyLimit') }}:</span> <span class="ml-1 font-medium tabular-nums text-default">{{ selectedGroupInfo.daily_limit_usd != null ? '$' + selectedGroupInfo.daily_limit_usd : t('payment.admin.unlimited') }}</span></span>
+        <span><span class="text-muted">{{ t('payment.admin.weeklyLimit') }}:</span> <span class="ml-1 font-medium tabular-nums text-default">{{ selectedGroupInfo.weekly_limit_usd != null ? '$' + selectedGroupInfo.weekly_limit_usd : t('payment.admin.unlimited') }}</span></span>
+        <span><span class="text-muted">{{ t('payment.admin.monthlyLimit') }}:</span> <span class="ml-1 font-medium tabular-nums text-default">{{ selectedGroupInfo.monthly_limit_usd != null ? '$' + selectedGroupInfo.monthly_limit_usd : t('payment.admin.unlimited') }}</span></span>
       </div>
 
       <UFormField :label="t('payment.admin.planDescription')" required>
         <UTextarea v-model="planForm.description" :rows="2" required class="w-full" />
       </UFormField>
-      <div class="grid grid-cols-2 gap-4">
+      <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <UFormField :label="t('payment.admin.price')" required>
           <UInput v-model.number="planForm.price" type="number" step="0.01" min="0.01" required class="w-full" />
-          <p v-if="subscriptionCnyPreview" class="mt-1 text-xs font-medium text-primary">
+          <p v-if="subscriptionCnyPreview" class="mt-1 text-xs font-medium tabular-nums text-primary">
             {{ t('payment.admin.subscriptionCnyPayPreview', { amount: subscriptionCnyPreview.amount }) }}
             <span v-if="subscriptionCnyPreview.feeRate > 0">
               {{ t('payment.admin.subscriptionCnyPayPreviewWithFee', { feeRate: subscriptionCnyPreview.feeRate, total: subscriptionCnyPreview.total }) }}
@@ -44,7 +44,7 @@
           <USwitch v-model="planForm.for_sale" class="mt-1.5" />
         </UFormField>
       </div>
-      <div class="grid grid-cols-2 gap-4">
+      <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <UFormField :label="t('payment.admin.validity')" required>
           <UInput v-model.number="planForm.validity_days" type="number" min="1" required class="w-full" />
         </UFormField>
@@ -66,7 +66,7 @@
         />
         <template #content>
           <div class="space-y-4">
-            <div class="grid grid-cols-2 gap-4">
+            <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <UFormField :label="t('payment.admin.originalPrice')">
                 <UInput v-model.number="planForm.original_price" type="number" step="0.01" min="0" class="w-full" />
               </UFormField>

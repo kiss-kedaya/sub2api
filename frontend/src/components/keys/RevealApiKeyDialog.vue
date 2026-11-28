@@ -17,7 +17,7 @@
       <div v-if="!plaintext" class="space-y-2">
         <div
           v-if="factorsLoading"
-          class="rounded-lg bg-gray-50 p-3 text-xs text-muted ring ring-inset ring-default dark:bg-dark-900"
+          class="rounded-lg bg-muted p-3 text-xs text-muted ring ring-inset ring-default"
           data-test="api-key-reveal-factors-loading"
         >
           {{ t('keys.reveal.factorsLoading') }}
@@ -32,7 +32,7 @@
           />
           <p
             v-if="factorUnavailable"
-            class="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-800 dark:bg-amber-900/20 dark:text-amber-100"
+            class="rounded-lg border border-warning/30 bg-warning/10 p-3 text-xs text-warning"
             data-test="api-key-reveal-factor-unavailable"
           >
             {{ t('keys.reveal.factorUnavailable', { factor: factorLabel(apiKey?.seal_auth_factor || '') }) }}
@@ -42,7 +42,7 @@
 
       <p
         v-if="error"
-        class="text-xs text-red-600 dark:text-red-400"
+        class="text-xs text-error"
         role="alert"
         data-test="api-key-reveal-error"
       >
@@ -50,8 +50,8 @@
       </p>
 
       <div v-if="plaintext" class="space-y-2">
-        <div class="flex items-start gap-2 rounded-lg bg-gray-50 p-3 ring ring-inset ring-default dark:bg-dark-900">
-          <code class="min-w-0 flex-1 break-all font-mono text-xs leading-5 text-highlighted" data-test="api-key-reveal-value">{{ plaintext }}</code>
+        <div class="flex items-start gap-2 rounded-lg bg-muted p-3 ring ring-inset ring-default">
+          <code class="min-w-0 flex-1 wrap-anywhere font-mono text-xs leading-5 text-highlighted" data-test="api-key-reveal-value">{{ plaintext }}</code>
           <UButton
             color="neutral"
             variant="soft"

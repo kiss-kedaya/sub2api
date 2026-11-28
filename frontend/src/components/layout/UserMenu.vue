@@ -196,8 +196,8 @@ function formatMoney(value: number) {
    hit area instead of the desktop 32px. */
 @media (pointer: coarse) {
   .header-user-button {
-    min-width: 40px;
-    min-height: 40px;
+    min-width: 44px;
+    min-height: 44px;
   }
 }
 </style>

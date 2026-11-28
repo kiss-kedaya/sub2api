@@ -1,6 +1,6 @@
 <template>
   <div class="relative">
-    <UPopover v-model:open="isOpen" :content="{ align: 'start' }">
+    <UPopover v-model:open="isOpen" :content="{ align: 'start' }" :ui="{ content: 'z-50' }">
       <UButton
         color="neutral"
         variant="outline"
@@ -8,11 +8,11 @@
         class="group w-full max-w-full data-[state=open]:bg-elevated"
         data-test="date-range-trigger"
       >
-        <span class="truncate font-medium" :title="displayValue">{{ displayValue }}</span>
+        <span class="truncate font-medium tabular-nums" :title="displayValue">{{ displayValue }}</span>
         <template #trailing>
           <UIcon
             name="i-lucide-chevron-down"
-            class="size-5 shrink-0 text-dimmed transition-transform duration-200 group-data-[state=open]:rotate-180"
+            class="size-5 shrink-0 text-dimmed transition-transform duration-200 ease-out group-data-[state=open]:rotate-180"
           />
         </template>
       </UButton>
@@ -28,7 +28,7 @@
               variant="ghost"
               data-test="date-range-preset"
               :aria-pressed="isPresetActive(preset) ? 'true' : 'false'"
-              :class="['justify-center sm:justify-start sm:rounded-none sm:px-4', isPresetActive(preset) ? 'bg-elevated text-highlighted' : 'text-muted hover:bg-elevated/50']"
+              :class="['justify-center [@media(pointer:coarse)]:min-h-11 sm:justify-start sm:rounded-none sm:px-4', isPresetActive(preset) ? 'bg-elevated text-highlighted' : 'text-muted hover:bg-elevated/50']"
               :label="t(preset.labelKey)"
               truncate
               @click="selectPreset(preset)"

@@ -21,7 +21,7 @@
     </div>
 
     <div class="p-5 sm:p-6">
-      <div v-if="!enabled" class="mb-5 text-sm text-gray-500 dark:text-gray-400">
+      <div v-if="!enabled" class="mb-5 text-sm text-muted">
         {{ t('profile.passkey.featureDisabled') }}
       </div>
       <div v-if="enabled && !supported" class="mb-5 text-sm text-amber-600 dark:text-amber-400">
@@ -30,7 +30,7 @@
       <div>
         <form
           v-if="enabled && supported && showAddForm"
-          class="mb-5 flex flex-col gap-3 rounded-lg border border-gray-200 p-4 dark:border-dark-700"
+          class="mb-5 flex flex-col gap-3 rounded-lg border border-default p-4"
           @submit.prevent="addPasskey"
         >
           <p
@@ -114,13 +114,13 @@
 
         <div
           v-else-if="credentials.length === 0"
-          class="rounded-lg border border-dashed border-gray-200 px-4 py-8 text-center text-sm text-gray-500 dark:border-dark-700 dark:text-gray-400"
+          class="rounded-lg border border-dashed border-default px-4 py-8 text-center text-sm text-muted"
           data-testid="passkey-empty"
         >
           {{ t('profile.passkey.empty') }}
         </div>
 
-        <div v-else class="divide-y divide-gray-100 dark:divide-dark-700">
+        <div v-else class="divide-y divide-default">
           <div
             v-for="credential in credentials"
             :key="credential.id"
@@ -129,7 +129,7 @@
             <div class="min-w-0">
               <div class="flex items-center gap-2">
                 <Icon name="key" size="md" class="shrink-0 text-primary-500" />
-                <p class="truncate font-medium text-gray-900 dark:text-white">
+                <p class="truncate font-medium text-highlighted">
                   {{ credential.name }}
                 </p>
                 <UBadge
@@ -142,7 +142,7 @@
                   {{ t('profile.passkey.synced') }}
                 </UBadge>
               </div>
-              <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              <p class="mt-1 text-xs tabular-nums text-muted">
                 {{ t('profile.passkey.createdAt', { date: formatDate(credential.created_at) }) }}
                 <template v-if="credential.last_used_at">
                   · {{ t('profile.passkey.lastUsed', { date: formatDate(credential.last_used_at) }) }}
@@ -177,57 +177,60 @@
     </div>
 
     <!-- 删除确认：吊销凭据需验证当前密码，防止被窃会话静默移除 Passkey -->
-    <div v-if="deleteTarget" class="fixed inset-0 z-50 overflow-y-auto">
-      <div class="flex min-h-full items-center justify-center p-4">
-        <div class="fixed inset-0 bg-black/50 transition-opacity" @click="closeDeleteDialog"></div>
-        <div
-          class="relative w-full max-w-md transform rounded-xl bg-white p-6 shadow-xl dark:bg-dark-800"
+    <BaseDialog
+      v-if="clientMounted"
+      :show="!!deleteTarget"
+      :title="t('profile.passkey.deleteTitle')"
+      width="narrow"
+      :close-on-click-outside="!busy"
+      :close-on-escape="!busy"
+      @close="closeDeleteDialog"
+    >
+      <div class="space-y-4">
+        <p class="text-sm text-muted">
+          {{ t('profile.passkey.deleteConfirm', { name: deleteTarget?.name ?? '' }) }}
+        </p>
+        <p
+          v-if="totpEnabled"
+          class="rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-700 dark:bg-amber-900/20 dark:text-amber-300"
         >
-          <h3 class="text-lg font-semibold text-gray-900 dark:text-white">
-            {{ t('profile.passkey.deleteTitle') }}
-          </h3>
-          <p class="mt-2 text-sm text-gray-500 dark:text-gray-400">
-            {{ t('profile.passkey.deleteConfirm', { name: deleteTarget.name }) }}
-          </p>
-          <p
-            v-if="totpEnabled"
-            class="mt-3 rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-700 dark:bg-amber-900/20 dark:text-amber-300"
-          >
-            {{ t('profile.passkey.stepUpHint') }}
-          </p>
-          <form class="mt-4 space-y-4" @submit.prevent="confirmDelete">
-            <div>
-              <label for="passkey-delete-password" class="input-label">{{
-                t('profile.currentPassword')
-              }}</label>
-              <UInput
-                id="passkey-delete-password"
-                v-model="deletePassword"
-                type="password"
-                autocomplete="current-password"
-                class="w-full"
-                :placeholder="t('profile.passkey.passwordPlaceholder')"
-                autofocus
-              />
-            </div>
-            <div class="flex justify-end gap-3">
-              <UButton type="button" color="neutral" variant="outline" :disabled="busy" data-test="passkey-delete-cancel" @click="closeDeleteDialog">
-                {{ t('common.cancel') }}
-              </UButton>
-              <UButton
-                type="submit"
-                color="error"
-                :disabled="busy || deletePassword.length === 0"
-                :loading="busy"
-                data-test="passkey-delete-confirm"
-              >
-                {{ busy ? t('common.processing') : t('common.delete') }}
-              </UButton>
-            </div>
-          </form>
-        </div>
+          {{ t('profile.passkey.stepUpHint') }}
+        </p>
+        <form id="passkey-delete-form" class="space-y-4" @submit.prevent="confirmDelete">
+          <div>
+            <label for="passkey-delete-password" class="input-label">{{
+              t('profile.currentPassword')
+            }}</label>
+            <UInput
+              id="passkey-delete-password"
+              v-model="deletePassword"
+              type="password"
+              autocomplete="current-password"
+              class="w-full"
+              :placeholder="t('profile.passkey.passwordPlaceholder')"
+              autofocus
+            />
+          </div>
+        </form>
       </div>
-    </div>
+      <template #footer>
+        <div class="flex justify-end gap-3">
+          <UButton type="button" color="neutral" variant="outline" :disabled="busy" data-test="passkey-delete-cancel" @click="closeDeleteDialog">
+            {{ t('common.cancel') }}
+          </UButton>
+          <UButton
+            type="submit"
+            form="passkey-delete-form"
+            color="error"
+            :disabled="busy || deletePassword.length === 0"
+            :loading="busy"
+            data-test="passkey-delete-confirm"
+          >
+            {{ busy ? t('common.processing') : t('common.delete') }}
+          </UButton>
+        </div>
+      </template>
+    </BaseDialog>
   </div>
 </template>
 
@@ -235,6 +238,7 @@
 import { onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { passkeyAPI, totpAPI, type PasskeyCredentialSummary } from '@/api'
+import BaseDialog from '@/components/common/BaseDialog.vue'
 import { Icon } from '@/components/icons'
 import { useAppStore } from '@/stores/app'
 
@@ -242,7 +246,8 @@ const props = defineProps<{ enabled: boolean }>()
 
 const { t } = useI18n()
 const appStore = useAppStore()
-// Keep the server and first hydration render identical; WebAuthn is browser-only.
+// Keep the server and first hydration render identical; WebAuthn and Teleport dialogs are browser-only.
+const clientMounted = ref(false)
 const supported = ref(false)
 // 账号自身的 TOTP 状态只用于提示「创建/删除前要输动态码」，门禁在服务端。
 const totpEnabled = ref(false)
@@ -414,6 +419,7 @@ function formatDate(value: string): string {
 }
 
 onMounted(() => {
+  clientMounted.value = true
   supported.value = passkeyAPI.isSupported()
   void loadCredentials()
   void loadTotpStatus()

@@ -532,7 +532,7 @@ describe('登录页两步之间的过渡（与注册页同一套：旧的一格�
     mocks.login.mockResolvedValue({ requires_2fa: true, temp_token: 'temp-totp', required_factors: ['totp'], next_factor: 'totp' })
   })
 
-  it('前进：第一格先退出 320ms（这段时间第二格不在屏幕上、内容也没挂载），再换成第二格', async () => {
+  it('前进：第一格先退出 150ms（这段时间第二格不在屏幕上、内容也没挂载），再换成第二格', async () => {
     const wrapper = mountLogin()
     await flushPromises()
     await submitCredentials(wrapper)
@@ -545,7 +545,7 @@ describe('登录页两步之间的过渡（与注册页同一套：旧的一格�
     // the code box focuses itself when it mounts: it must not exist while its pane is hidden
     expect(wrapper.find('[data-testid="totp-verify"]').exists()).toBe(false)
 
-    await sleep(360)
+    await sleep(190)
     expect(paneState(wrapper, 'login-credentials-pane')).toBe('idle')
     expect(paneState(wrapper, 'login-factor-pane')).toBe('active')
     expect(wrapper.get('[data-testid="login-heading"]').text()).toBe('profile.totp.loginTitle')
@@ -558,7 +558,7 @@ describe('登录页两步之间的过渡（与注册页同一套：旧的一格�
     const wrapper = mountLogin()
     await flushPromises()
     await submitCredentials(wrapper)
-    await sleep(360)
+    await sleep(190)
     expect(paneState(wrapper, 'login-factor-pane')).toBe('active')
 
     await wrapper.get('[data-testid="login-back"]').trigger('click')
@@ -568,7 +568,7 @@ describe('登录页两步之间的过渡（与注册页同一套：旧的一格�
     expect(paneState(wrapper, 'login-credentials-pane')).toBe('idle')
     expect(mocks.captchaReset).not.toHaveBeenCalled()
 
-    await sleep(360)
+    await sleep(190)
     await flushPromises()
     expect(paneState(wrapper, 'login-credentials-pane')).toBe('active')
     expect(wrapper.find('[data-testid="login-factor-pane"]').exists()).toBe(false)
@@ -576,7 +576,7 @@ describe('登录页两步之间的过渡（与注册页同一套：旧的一格�
     expect(mocks.captchaReset).toHaveBeenCalledTimes(1)
   })
 
-  it('第一格退出的这 320ms 里再按回车不会重复提交（登录请求只发一次）', async () => {
+  it('第一格退出的这 150ms 里再按回车不会重复提交（登录请求只发一次）', async () => {
     const wrapper = mountLogin()
     await flushPromises()
     await submitCredentials(wrapper)
@@ -594,7 +594,7 @@ describe('登录页两步之间的过渡（与注册页同一套：旧的一格�
     expect(paneState(wrapper, 'login-credentials-pane')).toBe('leaving')
 
     await wrapper.get('input[type="password"]').setValue('updated-password')
-    await sleep(360)
+    await sleep(190)
     expect(paneState(wrapper, 'login-credentials-pane')).toBe('active')
     expect(wrapper.find('[data-testid="login-factor-pane"]').exists()).toBe(false)
   })

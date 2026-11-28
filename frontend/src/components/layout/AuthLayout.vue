@@ -105,7 +105,7 @@ onMounted(() => {
   will-change: transform;
 }
 
-:global(html.dark) .auth-grid {
+html.dark .auth-grid {
   background-image:
     linear-gradient(rgba(145, 169, 201, 0.11) 1px, transparent 1px),
     linear-gradient(90deg, rgba(145, 169, 201, 0.11) 1px, transparent 1px);

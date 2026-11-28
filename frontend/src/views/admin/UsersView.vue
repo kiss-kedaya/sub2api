@@ -242,17 +242,17 @@
                   variant="ghost"
                   size="xs"
                   icon="i-lucide-shield"
-                  class="-mx-1.5"
+                  class="-mx-1.5 max-sm:min-h-11 pointer-coarse:min-h-11"
                   :title="getUserGroups(row).exclusive.map(g => g.name).join('\n')"
                 >
-                  <span class="font-medium text-highlighted">{{ getUserGroups(row).exclusive.length }}</span>
+                  <span class="font-medium tabular-nums text-highlighted">{{ getUserGroups(row).exclusive.length }}</span>
                   <span class="text-muted">{{ t('admin.users.exclusiveLabel') }}</span>
                 </UButton>
               </UDropdownMenu>
               <UTooltip v-if="getUserGroups(row).publicGroups.length > 0" :content="{ side: 'bottom', align: 'start' }">
                 <span class="inline-flex cursor-default items-center gap-1 px-0.5 text-xs">
                   <UIcon name="i-lucide-globe" class="size-3.5 text-dimmed" />
-                  <span class="font-medium text-default">{{ getUserGroups(row).publicGroups.length }}</span>
+                  <span class="font-medium tabular-nums text-default">{{ getUserGroups(row).publicGroups.length }}</span>
                   <span class="text-muted">{{ t('admin.users.publicLabel') }}</span>
                 </span>
                 <template #content>
@@ -301,6 +301,7 @@
                 color="success"
                 variant="ghost"
                 size="xs"
+                class="max-sm:min-h-11 pointer-coarse:min-h-11"
                 :label="t('admin.users.deposit')"
                 :title="t('admin.users.deposit')"
                 @click.stop="handleDeposit(row)"
@@ -334,6 +335,7 @@
                   :color="usageSort && usageSort.key === usageKey ? 'primary' : 'neutral'"
                   variant="ghost"
                   size="xs"
+                  class="max-sm:min-h-11 max-sm:min-w-11 pointer-coarse:min-h-11 pointer-coarse:min-w-11"
                   :trailing-icon="usageSortIcon(usageKey)"
                   :label="usageSort && usageSort.key === usageKey ? (usageSort.metric === 'today' ? t('admin.users.today') : t('admin.users.total')) : undefined"
                   :title="t('admin.users.sortBy')"

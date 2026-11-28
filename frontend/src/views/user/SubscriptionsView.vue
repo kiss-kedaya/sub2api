@@ -5,21 +5,21 @@
       <!-- Loading State -->
       <div v-if="loading" class="flex justify-center py-12">
         <div
-          class="h-8 w-8 animate-spin rounded-full border-2 border-primary-500 border-t-transparent"
+          class="h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent motion-reduce:animate-none"
         ></div>
       </div>
 
       <!-- Empty State -->
-      <div v-else-if="subscriptions.length === 0" class="signal-subscriptions-empty">
+      <div v-else-if="subscriptions.length === 0" class="signal-subscriptions-empty rounded-lg">
         <div
-          class="signal-subscriptions-empty__icon"
+          class="signal-subscriptions-empty__icon rounded-lg"
         >
-          <Icon name="creditCard" size="xl" class="text-gray-400" />
+          <Icon name="creditCard" size="xl" class="text-dimmed" />
         </div>
-        <h3 class="mb-2 text-lg font-semibold text-gray-900 dark:text-white">
+        <h3 class="mb-2 text-lg font-semibold text-highlighted">
           {{ t('userSubscriptions.noActiveSubscriptions') }}
         </h3>
-        <p class="text-gray-500 dark:text-dark-400">
+        <p class="text-muted">
           {{ t('userSubscriptions.noActiveSubscriptionsDesc') }}
         </p>
       </div>
@@ -29,28 +29,28 @@
         <div
           v-for="subscription in subscriptions"
           :key="subscription.id"
-          class="signal-subscription-card"
+          class="signal-subscription-card rounded-lg"
           :class="platformBorderClass(subscription.group?.platform || '')"
         >
           <!-- Header -->
           <div
             class="signal-subscription-card__header"
           >
-            <div class="flex items-center gap-3">
-              <div :class="['h-1.5 w-1.5 shrink-0 rounded-full', platformAccentDotClass(subscription.group?.platform || '')]" />
-              <div>
-                <div class="flex items-center gap-2">
-                  <h3 class="font-semibold text-gray-900 dark:text-white">
+            <div class="flex items-start gap-3">
+              <div :class="['mt-2 h-1.5 w-1.5 shrink-0 rounded-full', platformAccentDotClass(subscription.group?.platform || '')]" />
+              <div class="min-w-0">
+                <div class="flex flex-wrap items-center gap-2">
+                  <h3 class="min-w-0 font-semibold text-highlighted">
                     {{ subscription.group?.name || `Group #${subscription.group_id}` }}
                   </h3>
-                  <span :class="['rounded-md border px-2 py-0.5 text-[11px] font-medium', platformBadgeClass(subscription.group?.platform || '')]">
+                  <span :class="['shrink-0 rounded-md border px-2 py-0.5 text-[11px] font-medium', platformBadgeClass(subscription.group?.platform || '')]">
                     {{ platformLabel(subscription.group?.platform || '') }}
                   </span>
                 </div>
-                <p v-if="subscription.group?.description" class="mt-0.5 text-xs text-gray-500 dark:text-dark-400">
+                <p v-if="subscription.group?.description" class="mt-0.5 text-xs text-muted">
                   {{ subscription.group.description }}
                 </p>
-                <div class="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-gray-400 dark:text-gray-500">
+                <div class="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[11px] tabular-nums text-dimmed">
                   <span>{{ t('payment.planCard.rate') }}: ×{{ subscription.group?.rate_multiplier ?? 1 }}</span>
                   <span v-if="subscriptionHasPeakRate(subscription)" class="text-amber-700 dark:text-amber-300">
                     {{ t('payment.planCard.peakRate') }}: {{ subscriptionPeakRateLabel(subscription) }}
@@ -65,7 +65,7 @@
                   subscription.status === 'active'
                     ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300'
                     : subscription.status === 'expired'
-                      ? 'bg-gray-100 text-gray-600 dark:bg-dark-700 dark:text-gray-400'
+                      ? 'bg-elevated text-muted'
                       : 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300'
                 ]"
               >
@@ -73,6 +73,7 @@
               </span>
               <button
                 v-if="subscription.status === 'active'"
+                type="button"
                 :class="['signal-subscription-renew', platformButtonClass(subscription.group?.platform || '')]"
                 @click="router.push({ path: '/purchase', query: { tab: 'subscription', group: String(subscription.group_id) } })"
               >
@@ -86,18 +87,18 @@
           <div class="signal-subscription-card__body">
             <!-- Expiration Info -->
             <div v-if="subscription.expires_at" class="flex items-center justify-between text-sm">
-              <span class="text-gray-500 dark:text-dark-400">{{
+              <span class="text-muted">{{
                 t('userSubscriptions.expires')
               }}</span>
-              <span :class="getExpirationClass(subscription.expires_at)">
+              <span :class="['tabular-nums', getExpirationClass(subscription.expires_at)]">
                 {{ formatExpirationDate(subscription.expires_at) }}
               </span>
             </div>
             <div v-else class="flex items-center justify-between text-sm">
-              <span class="text-gray-500 dark:text-dark-400">{{
+              <span class="text-muted">{{
                 t('userSubscriptions.expires')
               }}</span>
-              <span class="text-gray-700 dark:text-gray-300">{{
+              <span class="text-default">{{
                 t('userSubscriptions.noExpiration')
               }}</span>
             </div>
@@ -105,18 +106,18 @@
             <!-- Daily Usage -->
             <div v-if="subscription.group?.daily_limit_usd" class="space-y-2">
               <div class="flex items-center justify-between">
-                <span class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                <span class="text-sm font-medium text-default">
                   {{ t('userSubscriptions.daily') }}
                 </span>
-                <span class="text-sm text-gray-500 dark:text-dark-400">
+                <span class="text-sm tabular-nums text-muted">
                   ${{ (subscription.daily_usage_usd || 0).toFixed(2) }} / ${{
                     subscription.group.daily_limit_usd.toFixed(2)
                   }}
                 </span>
               </div>
-              <div class="relative h-2 overflow-hidden rounded-full bg-gray-200 dark:bg-dark-600">
+              <div class="relative h-2 overflow-hidden rounded-full bg-accented">
                 <div
-                  class="absolute inset-y-0 left-0 rounded-full transition-[width,background-color] duration-300"
+                  class="absolute inset-0 origin-left rounded-full transition-[transform,background-color] duration-200 ease-[var(--ease-out)] motion-reduce:transition-none"
                   :class="
                     getProgressBarClass(
                       subscription.daily_usage_usd,
@@ -124,7 +125,7 @@
                     )
                   "
                   :style="{
-                    width: getProgressWidth(
+                    transform: getProgressTransform(
                       subscription.daily_usage_usd,
                       subscription.group.daily_limit_usd
                     )
@@ -133,7 +134,7 @@
               </div>
               <p
                 v-if="subscription.daily_window_start"
-                class="text-xs text-gray-500 dark:text-dark-400"
+                class="text-xs tabular-nums text-muted"
               >
                 {{ formatDailyUsageWindow(subscription) }}
               </p>
@@ -142,18 +143,18 @@
             <!-- Weekly Usage -->
             <div v-if="subscription.group?.weekly_limit_usd" class="space-y-2">
               <div class="flex items-center justify-between">
-                <span class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                <span class="text-sm font-medium text-default">
                   {{ t('userSubscriptions.weekly') }}
                 </span>
-                <span class="text-sm text-gray-500 dark:text-dark-400">
+                <span class="text-sm tabular-nums text-muted">
                   ${{ (subscription.weekly_usage_usd || 0).toFixed(2) }} / ${{
                     subscription.group.weekly_limit_usd.toFixed(2)
                   }}
                 </span>
               </div>
-              <div class="relative h-2 overflow-hidden rounded-full bg-gray-200 dark:bg-dark-600">
+              <div class="relative h-2 overflow-hidden rounded-full bg-accented">
                 <div
-                  class="absolute inset-y-0 left-0 rounded-full transition-[width,background-color] duration-300"
+                  class="absolute inset-0 origin-left rounded-full transition-[transform,background-color] duration-200 ease-[var(--ease-out)] motion-reduce:transition-none"
                   :class="
                     getProgressBarClass(
                       subscription.weekly_usage_usd,
@@ -161,7 +162,7 @@
                     )
                   "
                   :style="{
-                    width: getProgressWidth(
+                    transform: getProgressTransform(
                       subscription.weekly_usage_usd,
                       subscription.group.weekly_limit_usd
                     )
@@ -170,7 +171,7 @@
               </div>
               <p
                 v-if="subscription.weekly_window_start"
-                class="text-xs text-gray-500 dark:text-dark-400"
+                class="text-xs tabular-nums text-muted"
               >
                 {{
                   t('userSubscriptions.resetIn', {
@@ -183,18 +184,18 @@
             <!-- Monthly Usage -->
             <div v-if="subscription.group?.monthly_limit_usd" class="space-y-2">
               <div class="flex items-center justify-between">
-                <span class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                <span class="text-sm font-medium text-default">
                   {{ t('userSubscriptions.monthly') }}
                 </span>
-                <span class="text-sm text-gray-500 dark:text-dark-400">
+                <span class="text-sm tabular-nums text-muted">
                   ${{ (subscription.monthly_usage_usd || 0).toFixed(2) }} / ${{
                     subscription.group.monthly_limit_usd.toFixed(2)
                   }}
                 </span>
               </div>
-              <div class="relative h-2 overflow-hidden rounded-full bg-gray-200 dark:bg-dark-600">
+              <div class="relative h-2 overflow-hidden rounded-full bg-accented">
                 <div
-                  class="absolute inset-y-0 left-0 rounded-full transition-[width,background-color] duration-300"
+                  class="absolute inset-0 origin-left rounded-full transition-[transform,background-color] duration-200 ease-[var(--ease-out)] motion-reduce:transition-none"
                   :class="
                     getProgressBarClass(
                       subscription.monthly_usage_usd,
@@ -202,7 +203,7 @@
                     )
                   "
                   :style="{
-                    width: getProgressWidth(
+                    transform: getProgressTransform(
                       subscription.monthly_usage_usd,
                       subscription.group.monthly_limit_usd
                     )
@@ -211,7 +212,7 @@
               </div>
               <p
                 v-if="subscription.monthly_window_start"
-                class="text-xs text-gray-500 dark:text-dark-400"
+                class="text-xs tabular-nums text-muted"
               >
                 {{
                   t('userSubscriptions.resetIn', {
@@ -228,7 +229,7 @@
                 !subscription.group?.weekly_limit_usd &&
                 !subscription.group?.monthly_limit_usd
               "
-              class="signal-unlimited-quota"
+              class="signal-unlimited-quota rounded-lg"
             >
               <div class="flex items-center gap-3">
                 <span class="text-4xl text-emerald-600 dark:text-emerald-400">∞</span>
@@ -275,7 +276,7 @@ function platformAccentDotClass(p: string): string {
     case 'openai': return 'bg-emerald-500'
     case 'antigravity': return 'bg-purple-500'
     case 'gemini': return 'bg-blue-500'
-    default: return 'bg-gray-400'
+    default: return 'bg-(--ui-text-dimmed)'
   }
 }
 
@@ -306,14 +307,14 @@ async function loadSubscriptions() {
   }
 }
 
-function getProgressWidth(used: number | undefined, limit: number | null | undefined): string {
-  if (!limit || limit === 0) return '0%'
-  const percentage = Math.min(((used || 0) / limit) * 100, 100)
-  return `${percentage}%`
+function getProgressTransform(used: number | undefined, limit: number | null | undefined): string {
+  if (!limit || limit <= 0) return 'scaleX(0)'
+  const ratio = Math.max(0, Math.min((used || 0) / limit, 1))
+  return `scaleX(${ratio})`
 }
 
 function getProgressBarClass(used: number | undefined, limit: number | null | undefined): string {
-  if (!limit || limit === 0) return 'bg-gray-400'
+  if (!limit || limit === 0) return 'bg-(--ui-text-dimmed)'
   const percentage = ((used || 0) / limit) * 100
   if (percentage >= 90) return 'bg-red-500'
   if (percentage >= 70) return 'bg-orange-500'
@@ -354,7 +355,7 @@ function getExpirationClass(expiresAt: string): string {
   if (diff <= 0) return 'text-red-600 dark:text-red-400 font-medium'
   if (days <= 3) return 'text-red-600 dark:text-red-400'
   if (days <= 7) return 'text-orange-600 dark:text-orange-400'
-  return 'text-gray-700 dark:text-gray-300'
+  return 'text-default'
 }
 
 function formatDurationParts(parts: RemainingDurationParts): string {
@@ -398,14 +399,14 @@ onMounted(() => {
 
 <style scoped>
 .signal-subscriptions {
-  --subscriptions-bg: var(--signal-bg, #f5f6f5);
+  --subscriptions-bg: var(--signal-bg, var(--app-page-bg, #ffffff));
   --subscriptions-surface: var(--ui-bg);
   --subscriptions-line: var(--ui-border);
   --subscriptions-text: var(--ui-text-highlighted);
   --subscriptions-muted: var(--ui-text-muted);
-  --subscriptions-accent: var(--signal-accent, #087f68);
-  --subscriptions-accent-soft: var(--signal-accent-soft, #e5f3ee);
-  --subscriptions-amber: var(--signal-amber, #a86610);
+  --subscriptions-accent: var(--signal-accent, var(--ui-primary, #155dfc));
+  --subscriptions-accent-soft: var(--signal-accent-soft, color-mix(in oklab, var(--ui-primary, #155dfc) 10%, transparent));
+  --subscriptions-amber: var(--signal-amber, var(--ui-warning, #b45309));
   display: grid;
   gap: 16px;
   min-width: 0;
@@ -437,7 +438,7 @@ onMounted(() => {
   border: 1px solid var(--subscriptions-line);
   border-radius: 8px;
   background: var(--subscriptions-surface);
-  box-shadow: 0 1px 2px rgba(10, 10, 10, 0.05);
+  box-shadow: var(--app-shadow-card, 0 1px 2px rgba(10, 10, 10, 0.05));
 }
 
 .signal-subscription-card__header {
@@ -466,7 +467,6 @@ onMounted(() => {
 }
 
 .signal-subscription-status {
-  border-radius: 4px;
   white-space: nowrap;
 }
 
@@ -483,11 +483,20 @@ onMounted(() => {
   background: var(--subscriptions-surface) !important;
   font-size: 12px;
   font-weight: 650;
-  transition: background-color 120ms ease;
+  transition:
+    transform var(--cb-t-fast, 140ms) var(--cb-ease-press, cubic-bezier(0.3, 0, 0.2, 1)),
+    background-color 140ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1));
 }
 
-.signal-subscription-renew:hover {
-  background: var(--subscriptions-accent-soft) !important;
+.signal-subscription-renew:focus-visible {
+  outline: 2px solid var(--subscriptions-accent);
+  outline-offset: 2px;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .signal-subscription-renew:hover {
+    background: var(--subscriptions-accent-soft) !important;
+  }
 }
 
 .signal-unlimited-quota {
@@ -506,7 +515,7 @@ onMounted(() => {
   border: 1px solid var(--subscriptions-line);
   border-radius: 8px;
   background: var(--subscriptions-surface);
-  box-shadow: 0 1px 2px rgba(10, 10, 10, 0.05);
+  box-shadow: var(--app-shadow-card, 0 1px 2px rgba(10, 10, 10, 0.05));
   text-align: center;
 }
 
@@ -519,6 +528,13 @@ onMounted(() => {
 @media (max-width: 1023px) {
   .signal-subscriptions-grid {
     grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 639px) {
+  .signal-subscription-renew {
+    min-height: 44px;
+    padding-inline: 12px;
   }
 }
 
@@ -547,14 +563,21 @@ onMounted(() => {
     flex-shrink: 0;
   }
 }
+
+@media (prefers-reduced-motion: reduce) {
+  .signal-subscription-renew {
+    transition: none;
+  }
+}
 </style>
 
 <style>
-html.dark .signal-subscription-card {
-  box-shadow: none;
+html.dark .signal-subscription-card,
+html.dark .signal-subscriptions-empty {
+  box-shadow: var(--app-shadow-card);
 }
 
 html.dark .signal-subscription-card__header {
-  background: var(--subscriptions-bg);
+  background: var(--ui-bg-muted);
 }
 </style>

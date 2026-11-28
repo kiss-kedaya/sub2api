@@ -9,7 +9,7 @@
       <!-- Account Info Card -->
       <div
         v-if="account"
-        class="flex items-center justify-between rounded-xl border border-gray-200 bg-linear-to-r/srgb from-gray-50 to-gray-100 p-3 dark:border-dark-500 dark:from-dark-700 dark:to-dark-600"
+        class="flex items-center justify-between rounded-xl border border-default bg-muted p-3"
       >
         <div class="flex items-center gap-3">
           <div
@@ -18,10 +18,10 @@
             <Icon name="play" size="md" class="text-white" :stroke-width="2" />
           </div>
           <div>
-            <div class="font-semibold text-gray-900 dark:text-gray-100">{{ account.name }}</div>
-            <div class="flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400">
+            <div class="font-semibold text-highlighted">{{ account.name }}</div>
+            <div class="flex items-center gap-1.5 text-xs text-muted">
               <span
-                class="rounded-sm bg-gray-200 px-1.5 py-0.5 text-[10px] font-medium uppercase dark:bg-dark-500"
+                class="rounded-sm bg-elevated px-1.5 py-0.5 text-[10px] font-medium uppercase text-toned"
               >
                 {{ account.type }}
               </span>
@@ -34,7 +34,7 @@
             'rounded-full px-2.5 py-1 text-xs font-semibold',
             account.status === 'active'
               ? 'bg-green-100 text-green-700 dark:bg-green-500/20 dark:text-green-400'
-              : 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-400'
+              : 'bg-elevated text-muted'
           ]"
         >
           {{ account.status }}
@@ -42,7 +42,7 @@
       </div>
 
       <div class="space-y-1.5">
-        <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
+        <label class="text-sm font-medium text-toned">
           {{ t('admin.accounts.selectTestModel') }}
         </label>
         <Select
@@ -56,7 +56,7 @@
       </div>
 
       <div v-if="isOpenAIAccount" class="space-y-1.5">
-        <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
+        <label class="text-sm font-medium text-toned">
           {{ t('admin.accounts.openai.testMode') }}
         </label>
         <Select
@@ -81,10 +81,10 @@
       <div class="group relative">
         <div
           ref="terminalRef"
-          class="max-h-[240px] min-h-[120px] overflow-y-auto rounded-xl border border-gray-700 bg-gray-900 p-4 font-mono text-sm dark:border-gray-800 dark:bg-black"
+          class="max-h-[240px] min-h-[120px] overflow-y-auto rounded-xl border border-neutral-800 bg-neutral-950 p-4 font-mono text-sm"
         >
           <!-- Status Line -->
-          <div v-if="status === 'idle'" class="flex items-center gap-2 text-gray-500">
+          <div v-if="status === 'idle'" class="flex items-center gap-2 text-neutral-400">
             <Icon name="play" size="sm" :stroke-width="2" />
             <span>{{ t('admin.accounts.readyToTest') }}</span>
           </div>
@@ -106,14 +106,14 @@
           <!-- Result Status -->
           <div
             v-if="status === 'success'"
-            class="mt-3 flex items-center gap-2 border-t border-gray-700 pt-3 text-green-400"
+            class="mt-3 flex items-center gap-2 border-t border-neutral-800 pt-3 text-green-400"
           >
             <Icon name="check" size="sm" :stroke-width="2" />
             <span>{{ t('admin.accounts.testCompleted') }}</span>
           </div>
           <div
             v-else-if="status === 'error'"
-            class="mt-3 flex items-center gap-2 border-t border-gray-700 pt-3 text-red-400"
+            class="mt-3 flex items-center gap-2 border-t border-neutral-800 pt-3 text-red-400"
           >
             <Icon name="x" size="sm" :stroke-width="2" />
             <span>{{ errorMessage }}</span>
@@ -121,25 +121,25 @@
         </div>
 
         <!-- Copy Button -->
-        <UButton v-if="outputLines.length > 0" color="neutral" variant="soft" size="xs" icon="i-lucide-copy" square class="absolute right-2 top-2 opacity-0 transition-opacity group-hover:opacity-100" :title="t('admin.accounts.copyOutput')" :aria-label="t('admin.accounts.copyOutput')" @click="copyOutput" />
+        <UButton v-if="outputLines.length > 0" color="neutral" variant="soft" size="xs" icon="i-lucide-copy" square class="absolute right-2 top-2 opacity-0 transition-opacity [@media(hover:hover)]:group-hover:opacity-100 max-sm:opacity-100" :title="t('admin.accounts.copyOutput')" :aria-label="t('admin.accounts.copyOutput')" @click="copyOutput" />
       </div>
 
       <div v-if="generatedImages.length > 0" class="space-y-2">
-        <div class="text-xs font-medium text-gray-600 dark:text-gray-300">
+        <div class="text-xs font-medium text-toned">
           {{ t('admin.accounts.imagePreview') }}
         </div>
         <div class="flex flex-wrap justify-center gap-3">
           <div
             v-for="(image, index) in generatedImages"
             :key="`${image.url}-${index}`"
-            class="group/img relative cursor-pointer overflow-hidden rounded-xl border border-gray-200 bg-white shadow-xs transition hover:border-primary-300 hover:shadow-md dark:border-dark-500 dark:bg-dark-700"
+            class="group/img relative cursor-pointer overflow-hidden rounded-xl border border-default bg-default shadow-xs transition-colors [@media(hover:hover)]:hover:border-primary-300"
             @click="previewImageUrl = image.url"
           >
             <img :src="image.url" :alt="`test-image-${index + 1}`" class="max-h-[360px] w-full object-contain" />
-            <div class="absolute inset-0 flex items-center justify-center bg-black/0 transition-colors group-hover/img:bg-black/20">
-              <Icon name="eye" size="lg" class="text-white opacity-0 drop-shadow-lg transition-opacity group-hover/img:opacity-100" :stroke-width="2" />
+            <div class="absolute inset-0 flex items-center justify-center bg-black/0 transition-colors [@media(hover:hover)]:group-hover/img:bg-black/20">
+              <Icon name="eye" size="lg" class="text-white opacity-0 drop-shadow-lg transition-opacity [@media(hover:hover)]:group-hover/img:opacity-100" :stroke-width="2" />
             </div>
-            <div class="border-t border-gray-100 px-3 py-1.5 text-xs text-gray-500 dark:border-dark-500 dark:text-gray-300">
+            <div class="border-t border-muted px-3 py-1.5 text-xs text-muted">
               {{ image.mimeType || 'image/*' }}
             </div>
           </div>
@@ -151,21 +151,21 @@
         <Transition name="fade">
           <div
             v-if="previewImageUrl"
-            class="fixed inset-0 z-100 flex items-center justify-center bg-black/80 p-4"
+            class="fixed inset-0 z-60 flex items-center justify-center bg-black/80 p-4"
             @click.self="previewImageUrl = ''"
           >
             <UButton color="neutral" variant="solid" icon="i-lucide-x" square class="absolute right-4 top-4 rounded-full" :aria-label="t('common.close')" @click="previewImageUrl = ''" />
             <img
               :src="previewImageUrl"
               alt="preview"
-              class="max-h-[90vh] max-w-[90vw] rounded-lg object-contain shadow-2xl"
+              class="max-h-[90dvh] max-w-[90vw] rounded-lg object-contain shadow-2xl"
             />
           </div>
         </Transition>
       </Teleport>
 
       <!-- Test Info -->
-      <div class="flex items-center justify-between px-1 text-xs text-gray-500 dark:text-gray-400">
+      <div class="flex items-center justify-between px-1 text-xs text-muted">
         <div class="flex items-center gap-3">
           <span class="flex items-center gap-1">
             <Icon name="grid" size="sm" :stroke-width="2" />
@@ -363,7 +363,7 @@ const abortStream = () => {
   }
 }
 
-const addLine = (text: string, className: string = 'text-gray-300') => {
+const addLine = (text: string, className: string = 'text-neutral-300') => {
   outputLines.value.push({ text, class: className })
   scrollToBottom()
 }
@@ -381,8 +381,8 @@ const startTest = async () => {
   resetState()
   status.value = 'connecting'
   addLine(t('admin.accounts.startingTestForAccount', { name: props.account.name }), 'text-blue-400')
-  addLine(t('admin.accounts.testAccountTypeLabel', { type: props.account.type }), 'text-gray-400')
-  addLine('', 'text-gray-300')
+  addLine(t('admin.accounts.testAccountTypeLabel', { type: props.account.type }), 'text-neutral-400')
+  addLine('', 'text-neutral-300')
 
   abortStream()
 
@@ -470,9 +470,9 @@ const handleEvent = (event: {
         supportsImageTest.value
             ? t('admin.accounts.sendingImageRequest')
             : t('admin.accounts.sendingTestMessage'),
-        'text-gray-400'
+        'text-neutral-400'
       )
-      addLine('', 'text-gray-300')
+      addLine('', 'text-neutral-300')
       addLine(t('admin.accounts.response'), 'text-yellow-400')
       break
 
@@ -531,12 +531,20 @@ const copyOutput = () => {
 </script>
 
 <style>
-.fade-enter-active,
+.fade-enter-active {
+  transition: opacity 200ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1));
+}
 .fade-leave-active {
-  transition: opacity 0.2s ease;
+  transition: opacity 150ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1));
 }
 .fade-enter-from,
 .fade-leave-to {
   opacity: 0;
+}
+@media (prefers-reduced-motion: reduce) {
+  .fade-enter-active,
+  .fade-leave-active {
+    transition-duration: 120ms;
+  }
 }
 </style>

@@ -1,6 +1,6 @@
 <template>
-  <div class="channel-signal-timeline mt-4 border-t border-white/70 pt-3 dark:border-dark-700/60">
-    <div class="channel-signal-timeline__legend mb-2 flex justify-between text-[10px] font-semibold uppercase tracking-widest text-gray-400">
+  <div class="channel-signal-timeline mt-4 border-t border-default pt-3">
+    <div class="channel-signal-timeline__legend mb-2 flex justify-between text-[10px] font-semibold uppercase tracking-widest text-dimmed">
       <span>{{ t('monitorCommon.history60pts', { n: length }) }}</span>
       <span class="tabular-nums">{{ t('monitorCommon.nextUpdateIn', { n: countdownSeconds }) }}</span>
     </div>
@@ -29,7 +29,7 @@
               v-if="bar.colorClass"
               class="v3-soft-glass-bar"
               :class="bar.colorClass"
-              :style="{ height: `${bar.heightPct}%`, animationDelay: `${index * 18}ms` }"
+              :style="{ height: `${bar.heightPct}%` }"
             />
           </span>
         </button>
@@ -38,7 +38,7 @@
           <Transition name="v3-timeline-tooltip">
             <div
               v-if="hoveredBarIndex === index && bar.title"
-              class="v3-timeline-tooltip"
+              class="v3-timeline-tooltip rounded-lg"
               role="tooltip"
               :style="tooltipStyle"
             >
@@ -49,7 +49,7 @@
       </div>
     </div>
 
-    <div class="channel-signal-timeline__axis mt-1 flex justify-between text-[9px] uppercase tracking-widest text-gray-400">
+    <div class="channel-signal-timeline__axis mt-1 flex justify-between text-[9px] uppercase tracking-widest text-dimmed">
       <span>{{ t('monitorCommon.past') }}</span>
       <span>{{ t('monitorCommon.now') }}</span>
     </div>
@@ -107,7 +107,8 @@ function barMotionStyle(index: number) {
   const distance = barDistance(index)
   if (hoveredBarIndex.value === null) {
     return {
-      '--bar-scale': '1',
+      '--bar-scale-x': '1',
+      '--bar-scale-y': '1',
       '--bar-opacity': '1',
       '--bar-lift': '0px',
     }
@@ -132,7 +133,7 @@ const STATUS_STYLE = {
   healthy: { colorClass: 'bg-emerald-500', heightPct: 100 },
   warning: { colorClass: 'bg-amber-500', heightPct: 65 },
   critical: { colorClass: 'bg-red-500', heightPct: 35 },
-  unknown: { colorClass: 'bg-gray-300 dark:bg-dark-600', heightPct: 15 },
+  unknown: { colorClass: 'bg-accented', heightPct: 15 },
 } as const
 
 interface TimelineBar {
@@ -212,8 +213,7 @@ const tooltipStyle = computed(() => ({
 	width: 100%;
 	min-height: 3px;
 	border-radius: 4px;
-  transform-origin: bottom;
-  animation: v3-soft-glass-rise 0.7s cubic-bezier(0.22, 1, 0.36, 1) both;
+	transform-origin: bottom;
 }
 
 .v3-timeline-bars {
@@ -253,16 +253,21 @@ const tooltipStyle = computed(() => ({
 	align-items: flex-end;
 	width: 100%;
 	height: 100%;
-	transform: translateY(var(--bar-lift, 0px)) scaleX(var(--bar-scale-x, 1)) scaleY(var(--bar-scale-y, 1));
 	transform-origin: center bottom;
 	opacity: var(--bar-opacity, 1);
 	pointer-events: none;
-	will-change: transform, opacity;
-	transition: transform 240ms cubic-bezier(0.22, 1, 0.36, 1), opacity 220ms ease;
+	transition: opacity 150ms var(--motion-out, cubic-bezier(0.23, 1, 0.32, 1));
+}
+
+@media (hover: hover) and (pointer: fine) {
+	.v3-bar-visual {
+		transform: translateY(var(--bar-lift, 0px)) scaleX(var(--bar-scale-x, 1)) scaleY(var(--bar-scale-y, 1));
+		transition: transform 200ms var(--motion-out, cubic-bezier(0.23, 1, 0.32, 1)), opacity 160ms var(--motion-out, cubic-bezier(0.23, 1, 0.32, 1));
+	}
 }
 
 .v3-bar-hitbox:focus-visible {
-	outline: 2px solid rgb(59 130 246 / 0.6);
+	outline: 2px solid var(--ui-primary, #155dfc);
 	outline-offset: 2px;
 	border-radius: 4px;
 }
@@ -272,8 +277,8 @@ const tooltipStyle = computed(() => ({
 }
 
 .v3-bar-hitbox.is-active .v3-soft-glass-bar {
-	filter: saturate(1.12) brightness(1.05);
-	box-shadow: 0 4px 10px rgb(15 118 110 / 0.24);
+	filter: saturate(1.12) brightness(1.06);
+	outline: 1px solid rgb(255 255 255 / 0.4);
 }
 
 .v3-bar-hitbox.is-pressed {
@@ -289,7 +294,6 @@ const tooltipStyle = computed(() => ({
 	max-width: min(280px, calc(100vw - 32px));
 	transform: translateX(var(--tooltip-x, -50%)) translateY(-100%);
 	border: 1px solid rgb(255 255 255 / 0.84);
-	border-radius: 9px;
 	background: rgb(15 23 42 / 0.92);
 	padding: 6px 9px;
 	color: rgb(248 250 252);
@@ -298,7 +302,7 @@ const tooltipStyle = computed(() => ({
 	line-height: 1.35;
 	letter-spacing: 0;
 	white-space: normal;
-	box-shadow: 0 10px 24px rgb(15 23 42 / 0.2);
+	box-shadow: var(--app-shadow-popover, 0 10px 24px rgb(15 23 42 / 0.2));
 	pointer-events: none;
 }
 
@@ -315,37 +319,36 @@ const tooltipStyle = computed(() => ({
 	content: '';
 }
 
-.v3-timeline-tooltip-enter-active,
-.v3-timeline-tooltip-leave-active {
-	transition: opacity 100ms ease, transform 120ms cubic-bezier(0.22, 1, 0.36, 1);
+.v3-timeline-tooltip-enter-active {
+	transition: opacity 120ms var(--motion-out, cubic-bezier(0.23, 1, 0.32, 1)), transform 140ms var(--motion-out, cubic-bezier(0.23, 1, 0.32, 1));
 }
 
-.v3-timeline-tooltip-enter-from,
-.v3-timeline-tooltip-leave-to {
+.v3-timeline-tooltip-leave-active {
+	transition: opacity 90ms var(--motion-out, cubic-bezier(0.23, 1, 0.32, 1));
+}
+
+.v3-timeline-tooltip-enter-from {
 	opacity: 0;
 	transform: translateX(var(--tooltip-x, -50%)) translateY(calc(-100% + 3px)) scale(0.96);
 }
 
-@keyframes v3-soft-glass-rise {
-  from {
-    transform: scaleY(0.15);
-    opacity: 0.3;
-  }
-  to {
-    transform: scaleY(1);
-    opacity: 1;
-  }
+.v3-timeline-tooltip-leave-to {
+	opacity: 0;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .v3-soft-glass-bar {
-    animation: none;
+  .v3-bar-visual {
+    transform: none;
+    transition: opacity 120ms ease;
   }
 
-  .v3-bar-hitbox,
   .v3-timeline-tooltip-enter-active,
   .v3-timeline-tooltip-leave-active {
-    transition: none;
+    transition: opacity 100ms ease;
+  }
+
+  .v3-timeline-tooltip-enter-from {
+    transform: translateX(var(--tooltip-x, -50%)) translateY(-100%);
   }
 }
 </style>

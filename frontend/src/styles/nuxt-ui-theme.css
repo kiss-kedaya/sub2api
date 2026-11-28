@@ -11,6 +11,12 @@
   --ui-radius: 0.25rem;
   /* Fallback until useSiteTheme runs: Studio Blue 600 (5.17:1 WCAG AA with white text). */
   --ui-primary: #155dfc;
+  --ui-text-dimmed: #52525b;
+  --ui-text-muted: #3f3f46;
+  --ui-success: #166534;
+  --ui-warning: #92400e;
+  --ui-error: #b91c1c;
+  --ui-info: #1d4ed8;
 
   /* Frame surfaces: pure crisp canvas + whisper-tinted sidebar. */
   --app-page-bg: var(--ui-bg);
@@ -26,7 +32,7 @@
     --ui-error: those follow the admin's appearance palette, and a "credited" row
     must stay green even when the theme's success colour is re-pointed.
   */
-  --app-amount-positive: #15803d;
+  --app-amount-positive: #166534;
   --app-amount-negative: var(--ui-text-highlighted);
   --app-amount-reversal: #b91c1c;
   --app-amount-pending: #6b7280;

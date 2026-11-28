@@ -8,13 +8,13 @@
           type="text"
           :placeholder="t('modelPlaza.filters.searchPlaceholder')"
           :aria-label="t('modelPlaza.filters.modelLabel')"
-          class="input plaza-search-input"
+          class="input plaza-search-input rounded-lg"
           @input="$emit('update:search', ($event.target as HTMLInputElement).value)"
         />
         <button
           v-if="search"
           type="button"
-          class="plaza-search-clear"
+          class="plaza-search-clear rounded-lg"
           :aria-label="t('common.clear')"
           @click="$emit('update:search', '')"
         >
@@ -184,7 +184,6 @@ function onRateChange(value: string | number | boolean | null) {
   width: 100%;
   min-height: 36px;
   padding: 8px 36px 8px 36px;
-  border-radius: 8px;
 }
 
 .plaza-search-clear {
@@ -196,14 +195,26 @@ function onRateChange(value: string | number | boolean | null) {
   width: 24px;
   height: 24px;
   border: 0;
-  border-radius: 8px;
   background: transparent;
   color: var(--signal-muted, #63636c);
   transform: translateY(-50%);
+  transition: color 140ms var(--motion-out, cubic-bezier(0.23, 1, 0.32, 1)), transform 140ms var(--motion-out, cubic-bezier(0.23, 1, 0.32, 1));
 }
 
-.plaza-search-clear:hover {
-  color: var(--signal-text, #1c1c1e);
+.plaza-search-clear::before {
+  content: '';
+  position: absolute;
+  inset: -10px;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .plaza-search-clear:hover {
+    color: var(--signal-text, #1c1c1e);
+  }
+}
+
+.plaza-search-clear:active {
+  transform: translateY(-50%) scale(0.95);
 }
 
 .plaza-select {
@@ -260,7 +271,7 @@ function onRateChange(value: string | number | boolean | null) {
   }
 
   .plaza-seg-item {
-    min-height: 40px;
+    min-height: 44px;
   }
 }
 </style>

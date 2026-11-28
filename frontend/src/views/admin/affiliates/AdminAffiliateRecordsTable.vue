@@ -64,7 +64,7 @@
           </template>
           <template #cell-order="{ row }">
             <div class="space-y-0.5">
-              <div class="font-mono text-highlighted">#{{ row.order_id }}</div>
+              <div class="font-mono tabular-nums text-highlighted">#{{ row.order_id }}</div>
               <div class="max-w-56 truncate text-muted">{{ row.out_trade_no }}</div>
             </div>
           </template>
@@ -102,7 +102,7 @@
             <NullableAmountText :value="row.history_quota_after" />
           </template>
           <template #cell-created_at="{ row }">
-            <span class="text-muted">{{ formatDateTime(row.created_at) }}</span>
+            <span class="tabular-nums text-muted">{{ formatDateTime(row.created_at) }}</span>
           </template>
         </DataTable>
       </template>
@@ -133,7 +133,7 @@
           <UAvatar :alt="selectedOverview.email || String(selectedOverview.user_id)" :text="(selectedOverview.email || String(selectedOverview.user_id)).charAt(0).toUpperCase()" size="md" />
           <div class="min-w-0">
             <p class="truncate text-sm font-medium text-highlighted">{{ selectedOverview.email || '-' }}</p>
-            <p class="text-xs text-muted">#{{ selectedOverview.user_id }} · {{ selectedOverview.username || '-' }}</p>
+            <p class="text-xs tabular-nums text-muted">#{{ selectedOverview.user_id }} · {{ selectedOverview.username || '-' }}</p>
           </div>
         </div>
         <USeparator />
@@ -369,7 +369,7 @@ const UserCell = defineComponent({
   emits: ['open'],
   setup(cellProps, { emit }) {
     return () => h('div', { class: 'space-y-0.5' }, [
-      h('div', { class: 'font-mono text-xs text-muted' }, `#${cellProps.id}`),
+      h('div', { class: 'font-mono text-xs tabular-nums text-muted' }, `#${cellProps.id}`),
       cellProps.clickable
         ? h(UButton, {
             color: 'primary',

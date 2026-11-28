@@ -3,7 +3,7 @@
        `${id}-tab-${key}` ids, which UTabs generates itself. -->
   <div
     ref="tablist"
-    class="relative inline-flex max-w-full flex-wrap gap-1 rounded-xl bg-elevated/80 p-1 ring-1 ring-black/5 backdrop-blur dark:bg-white/5 dark:ring-white/10"
+    class="relative z-10 inline-flex max-w-full flex-wrap gap-1 rounded-xl bg-elevated/80 p-1 ring-1 ring-black/5 backdrop-blur dark:bg-white/5 dark:ring-white/10"
     data-test="console-tabs"
     role="tablist"
     :aria-label="label"
@@ -27,7 +27,7 @@
         :variant="'ghost'"
         size="md"
         :class="[
-          'min-w-0 justify-center rounded-lg px-3 py-1.5 font-medium transition-all duration-200 ease-out',
+          'min-w-0 justify-center rounded-lg px-3 py-1.5 font-medium transition-colors duration-150 ease-out [@media(pointer:coarse)]:min-h-11',
           modelValue === item.key
             ? 'bg-white text-highlighted shadow-sm ring-1 ring-black/5 dark:bg-white/15 dark:text-white dark:ring-white/15 dark:shadow-[0_1px_2px_rgba(0,0,0,0.4)]'
             : 'text-muted hover:bg-transparent hover:text-default',
@@ -69,7 +69,7 @@
         type="button"
         data-test="console-tabs-set-default"
         :data-default-tab-key="item.key"
-        class="absolute -right-1 -top-1 flex size-4 items-center justify-center rounded-full bg-default text-muted opacity-0 shadow-sm ring-1 ring-black/10 transition-opacity hover:text-default focus-visible:opacity-100 group-hover:opacity-100 dark:bg-white/15 dark:text-white/80 dark:ring-white/20"
+        class="absolute -right-1 -top-1 flex size-4 items-center justify-center rounded-full bg-default text-muted opacity-0 shadow-sm ring-1 ring-black/10 transition-opacity hover:text-default focus-visible:opacity-100 group-hover:opacity-100 [@media(hover:none)]:opacity-100 [@media(pointer:coarse)]:after:absolute [@media(pointer:coarse)]:after:-inset-3.5 [@media(pointer:coarse)]:after:content-[''] dark:bg-white/15 dark:text-white/80 dark:ring-white/20"
         :aria-label="setDefaultLabel"
         :title="setDefaultLabel"
         aria-pressed="false"

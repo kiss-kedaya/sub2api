@@ -1,11 +1,13 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import AdminAccessKeysSettings from '../AdminAccessKeysSettings.vue'
+import Select from '@/components/common/Select.vue'
 import zh from '@/i18n/locales/zh/adminAccessKeys'
 import en from '@/i18n/locales/en/adminAccessKeys'
 const mountSettings = () => mount(AdminAccessKeysSettings)
 vi.mock('vue-i18n', () => ({ useI18n: () => ({
   t: (key: string, values: Record<string, unknown> = {}) => {
+    if (!key.startsWith('adminAccessKeys.')) return key
     const message = zh[key.replace('adminAccessKeys.', '') as keyof typeof zh]
     if (!message) throw new Error(`缺少翻译：${key}`)
     return message.replace(/\{(\w+)\}/g, (_, name: string) => String(values[name]))
@@ -47,7 +49,12 @@ describe('管理员受限密钥配置', () => {
     await flushPromises()
     await wrapper.get('[data-test="create"]').trigger('click')
     await wrapper.get('[data-test="name"]').setValue('分组模型工具')
-    await wrapper.get('[data-test="groups-0"]').setValue(['7'])
+    const groupSelect = wrapper.findAllComponents(Select)[0]!
+    expect(groupSelect.props('multiple')).toBe(true)
+    expect(groupSelect.props('valueKey')).toBe('id')
+    expect(groupSelect.props('labelKey')).toBe('name')
+    groupSelect.vm.$emit('update:modelValue', [7])
+    await flushPromises()
     expect(wrapper.text()).toContain('分组模型白名单会限制分组可调用的模型')
     await wrapper.get('input[value="groups.models.read"]').setValue(true)
     await wrapper.get('input[value="groups.models.write"]').setValue(true)
@@ -65,7 +72,12 @@ describe('管理员受限密钥配置', () => {
     await flushPromises()
     await wrapper.get('[data-test="create"]').trigger('click')
     await wrapper.get('[data-test="name"]').setValue('自动化')
-    await wrapper.get('[data-test="groups-0"]').setValue(['7'])
+    const selects = wrapper.findAllComponents(Select)
+    expect(selects[0]!.props('multiple')).toBe(true)
+    expect(selects[1]!.props('multiple')).toBe(true)
+    selects[0]!.vm.$emit('update:modelValue', [7])
+    selects[1]!.vm.$emit('update:modelValue', ['openai'])
+    await flushPromises()
     await wrapper.get('[data-test="add-rule"]').trigger('click')
     await wrapper.get('[data-test="save"]').trigger('click')
     await flushPromises()
@@ -75,6 +87,7 @@ describe('管理员受限密钥配置', () => {
     expect(input.policy.rules[0].permissions).toEqual([])
     expect(input.policy.rules[0].account_types).toEqual([])
     expect(input.policy.rules[0].group_ids).toEqual([7])
+    expect(input.policy.rules[0].platforms).toEqual(['openai'])
     expect(mocks.stepUp).toHaveBeenCalledOnce()
     expect(wrapper.text()).toContain('once-secret')
     await wrapper.get('[data-test="dismiss-secret"]').trigger('click')

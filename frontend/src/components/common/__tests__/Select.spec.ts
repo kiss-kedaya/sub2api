@@ -177,6 +177,128 @@ describe('Select values and options', () => {
   })
 })
 
+describe('Select multiple mode', () => {
+  it('renders UBadge chips with +N overflow for number[] and string[] selections', async () => {
+    const numberOptions = [
+      { value: 1, label: 'Alpha' },
+      { value: 2, label: 'Beta' },
+      { value: 3, label: 'Gamma' },
+      { value: 4, label: 'Delta' },
+    ]
+    const numWrapper = mount(Select, {
+      props: {
+        multiple: true,
+        modelValue: [1, 2, 3, 4],
+        options: numberOptions,
+      },
+    })
+    unmountWrapper = () => numWrapper.unmount()
+
+    const triggerText = numWrapper.get('button').text()
+    expect(triggerText).toContain('Alpha')
+    expect(triggerText).toContain('Beta')
+    expect(triggerText).toContain('Gamma')
+    expect(triggerText).not.toContain('Delta')
+    expect(triggerText).toContain('+1')
+
+    numWrapper.unmount()
+
+    const strWrapper = mount(Select, {
+      props: {
+        multiple: true,
+        modelValue: ['claude', 'openai'],
+        options: [
+          { value: 'claude', label: 'Anthropic' },
+          { value: 'openai', label: 'OpenAI' },
+        ],
+      },
+    })
+    unmountWrapper = () => strWrapper.unmount()
+
+    expect(strWrapper.get('button').text()).toContain('Anthropic')
+    expect(strWrapper.get('button').text()).toContain('OpenAI')
+  })
+
+  it('clears multiple selection to an empty array without opening the menu', async () => {
+    const wrapper = mount(Select, {
+      props: {
+        multiple: true,
+        clearable: true,
+        modelValue: [1, 2],
+        options: [
+          { value: 1, label: 'One' },
+          { value: 2, label: 'Two' },
+        ],
+      },
+    })
+    unmountWrapper = () => wrapper.unmount()
+
+    await wrapper.get('[aria-label="Clear selection"]').trigger('click')
+    expect(wrapper.emitted('update:modelValue')).toEqual([[[]]])
+    expect(wrapper.emitted('change')).toEqual([[[], []]])
+    expect(document.body.querySelector('.select-dropdown-portal')).toBeNull()
+  })
+
+  it('preserves already-selected options when local search filters them out', async () => {
+    const { wrapper, dropdown } = await openSelect({
+      multiple: true,
+      searchable: true,
+      modelValue: [1],
+      options: [
+        { value: 1, label: 'Alpha Group' },
+        { value: 2, label: 'Beta Group' },
+      ],
+    })
+
+    const input = dropdown!.querySelector<HTMLInputElement>('.select-search-input')!
+    input.value = 'Beta'
+    input.dispatchEvent(new Event('input'))
+    await nextTick()
+
+    expect(optionLabels(dropdown)).toEqual(['Beta Group'])
+    dropdown!.querySelector<HTMLElement>('[role="option"]')!.click()
+    await nextTick()
+
+    expect(wrapper.emitted('update:modelValue')?.at(-1)).toEqual([[1, 2]])
+    expect(wrapper.emitted('change')?.at(-1)?.[0]).toEqual([1, 2])
+  })
+
+  it('preserves previously selected options across remote search pages when multiple + remote are combined', async () => {
+    const page1 = [
+      { value: 'alpha', label: 'Alpha account' },
+      { value: 'beta', label: 'Beta account' },
+    ]
+    const page2 = [{ value: 'gamma', label: 'Gamma account' }]
+
+    const { wrapper, dropdown } = await openSelect({
+      multiple: true,
+      remote: true,
+      modelValue: ['alpha'],
+      options: page1,
+    })
+
+    expect(wrapper.get('button').text()).toContain('Alpha account')
+
+    await wrapper.setProps({ options: page2 })
+    await nextTick()
+
+    expect(wrapper.get('button').text()).toContain('Alpha account')
+    expect(optionLabels(dropdown)).toEqual(['Gamma account'])
+
+    dropdown!.querySelector<HTMLElement>('[role="option"]')!.click()
+    await nextTick()
+
+    expect(wrapper.emitted('update:modelValue')?.at(-1)).toEqual([['alpha', 'gamma']])
+    expect(wrapper.emitted('change')?.at(-1)).toEqual([
+      ['alpha', 'gamma'],
+      [
+        { value: 'alpha', label: 'Alpha account' },
+        { value: 'gamma', label: 'Gamma account' },
+      ],
+    ])
+  })
+})
+
 describe('Select remote search', () => {
   const mountRemoteSelect = (props: Record<string, unknown> = {}) => {
     const wrapper = mount(Select, {

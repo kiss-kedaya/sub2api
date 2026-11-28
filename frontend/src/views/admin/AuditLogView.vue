@@ -82,7 +82,7 @@
       <template #table>
         <DataTable :columns="visibleColumns" :data="logs" :loading="loading" row-key="id">
           <template #cell-created_at="{ value }">
-            <span class="whitespace-nowrap text-muted">{{ formatTime(value) }}</span>
+            <span class="whitespace-nowrap tabular-nums text-muted">{{ formatTime(value) }}</span>
           </template>
           <template #cell-actor="{ row }">
             <div class="min-w-0 max-w-[220px]">
@@ -148,39 +148,39 @@
       <div v-else-if="detail" class="space-y-5">
         <div class="space-y-2">
           <div class="flex flex-wrap items-center gap-2">
-            <UBadge :color="statusColor(detail.status_code)" variant="subtle" :label="detail.status_code + ' ' + statusText(detail.status_code)" />
-            <span class="break-all font-mono text-base font-semibold text-highlighted">{{ detail.action }}</span>
+            <UBadge :color="statusColor(detail.status_code)" variant="subtle" class="tabular-nums" :label="detail.status_code + ' ' + statusText(detail.status_code)" />
+            <span class="wrap-anywhere font-mono text-base font-semibold text-highlighted">{{ detail.action }}</span>
           </div>
-          <p class="flex items-center gap-2 break-all font-mono text-xs text-default">
+          <p class="flex items-center gap-2 wrap-anywhere font-mono text-xs text-default">
             <UBadge color="neutral" variant="outline" size="sm" :label="detail.method" />
             {{ detail.path }}
           </p>
-          <p class="flex flex-wrap items-center gap-x-5 gap-y-1 text-xs text-muted">
+          <p class="flex flex-wrap items-center gap-x-5 gap-y-1 text-xs tabular-nums text-muted">
             <span class="inline-flex items-center gap-1"><UIcon name="i-lucide-clock" class="size-3.5" />{{ formatTime(detail.created_at) }}</span>
             <span>{{ t('admin.audit.detail.latency') }} {{ detail.latency_ms }} ms</span>
-            <span v-if="detail.request_id">{{ t('admin.audit.detail.requestId') }} <span class="break-all font-mono">{{ detail.request_id }}</span></span>
+            <span v-if="detail.request_id">{{ t('admin.audit.detail.requestId') }} <span class="wrap-anywhere font-mono">{{ detail.request_id }}</span></span>
           </p>
         </div>
         <USeparator />
         <dl class="grid grid-cols-1 gap-4 sm:grid-cols-3">
           <div>
             <dt class="text-xs text-muted">{{ t('admin.audit.columns.actor') }}</dt>
-            <dd class="mt-1 break-all text-sm font-medium text-highlighted">{{ detail.actor_email || '—' }}</dd>
+            <dd class="mt-1 wrap-anywhere text-sm font-medium text-highlighted">{{ detail.actor_email || '—' }}</dd>
             <dd class="text-xs text-muted">{{ detail.actor_role }}</dd>
           </div>
           <div>
             <dt class="text-xs text-muted">{{ t('admin.audit.filters.authMethod') }}</dt>
             <dd class="mt-1 text-sm font-medium text-highlighted">{{ authMethodLabel(detail.auth_method) || '—' }}</dd>
-            <dd v-if="detail.credential_masked" class="break-all font-mono text-xs text-muted">{{ detail.credential_masked }}</dd>
+            <dd v-if="detail.credential_masked" class="wrap-anywhere font-mono text-xs text-muted">{{ detail.credential_masked }}</dd>
           </div>
           <div>
             <dt class="text-xs text-muted">{{ t('admin.audit.columns.clientIp') }}</dt>
-            <dd class="mt-1 break-all font-mono text-sm font-medium text-highlighted">{{ detail.client_ip || '—' }}</dd>
+            <dd class="mt-1 wrap-anywhere font-mono text-sm font-medium text-highlighted">{{ detail.client_ip || '—' }}</dd>
           </div>
         </dl>
         <section>
           <h4 class="mb-1.5 text-xs text-muted">{{ t('admin.audit.detail.userAgent') }}</h4>
-          <p class="break-all font-mono text-xs leading-relaxed text-default">{{ detail.user_agent || '—' }}</p>
+          <p class="wrap-anywhere font-mono text-xs leading-relaxed text-default">{{ detail.user_agent || '—' }}</p>
         </section>
         <section v-if="detail.request_body">
           <h4 class="mb-1.5 text-xs text-muted">{{ t('admin.audit.detail.requestBody') }}</h4>

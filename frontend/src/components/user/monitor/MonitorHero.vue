@@ -3,7 +3,7 @@
     <div class="flex items-center justify-end gap-3 flex-wrap">
       <div
         role="tablist"
-        class="inline-flex p-0.5 rounded-xl bg-gray-100 dark:bg-dark-800 border border-gray-200/60 dark:border-dark-700/60 text-xs"
+        class="inline-flex p-0.5 rounded-xl bg-muted border border-default text-xs"
       >
         <button
           v-for="opt in windowOptions"
@@ -11,10 +11,10 @@
           type="button"
           role="tab"
           :aria-selected="window === opt.value"
-          class="px-3 py-1 rounded-lg transition-colors"
+          class="px-3 py-1 min-h-11 sm:min-h-0 flex items-center rounded-lg transition-colors"
           :class="window === opt.value
-            ? 'bg-white dark:bg-dark-700 shadow-xs text-gray-900 dark:text-white font-semibold'
-            : 'text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'"
+            ? 'bg-default shadow-xs text-highlighted font-semibold'
+            : 'text-muted hover:text-default'"
           @click="emit('update:window', opt.value)"
         >
           {{ opt.label }}
@@ -34,7 +34,7 @@
 
       <button
         type="button"
-        class="h-8 w-8 rounded-lg flex items-center justify-center text-gray-500 hover:text-gray-700 hover:bg-gray-100 dark:text-gray-400 dark:hover:text-gray-200 dark:hover:bg-dark-700 transition-colors disabled:opacity-50"
+        class="relative h-9 w-9 sm:h-8 sm:w-8 rounded-lg flex items-center justify-center text-muted hover:text-default hover:bg-elevated transition-colors disabled:opacity-50 before:absolute before:-inset-1.5 sm:before:hidden"
         :disabled="loading"
         :title="t('common.refresh')"
         @click="emit('refresh')"

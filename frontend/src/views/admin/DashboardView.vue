@@ -256,6 +256,14 @@ const chartTheme = useChartTheme()
 
 // Line chart options (for user trend chart)
 const lineOptions = computed(() => ({
+  animation: false as const,
+  transitions: {
+    active: {
+      animation: {
+        duration: 0
+      }
+    }
+  },
   responsive: true,
   maintainAspectRatio: false,
   interaction: {
@@ -269,6 +277,8 @@ const lineOptions = computed(() => ({
         color: chartTheme.value.text,
         usePointStyle: true,
         pointStyle: 'circle',
+        boxWidth: 8,
+        boxHeight: 8,
         padding: 15,
         font: {
           size: 11
@@ -291,6 +301,7 @@ const lineOptions = computed(() => ({
   },
   scales: {
     x: {
+      border: { display: false },
       grid: {
         color: chartTheme.value.grid
       },
@@ -302,6 +313,7 @@ const lineOptions = computed(() => ({
       }
     },
     y: {
+      border: { display: false },
       grid: {
         color: chartTheme.value.grid
       },
@@ -348,20 +360,7 @@ const userTrendChartData = computed(() => {
   })
 
   const sortedDates = Array.from(allDates).sort()
-  const colors = [
-    '#3b82f6',
-    '#10b981',
-    '#f59e0b',
-    '#ef4444',
-    '#8b5cf6',
-    '#ec4899',
-    '#14b8a6',
-    '#f97316',
-    '#6366f1',
-    '#84cc16',
-    '#06b6d4',
-    '#a855f7'
-  ]
+  const colors = chartTheme.value.categorical
 
   const datasets = Array.from(userGroups.values()).map((group, idx) => ({
     label: group.name,

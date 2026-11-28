@@ -3,7 +3,7 @@
     <div class="flex flex-col gap-4">
       <AdminPageHeader :title="t('admin.requestCapture.title')" :description="t('admin.requestCapture.description')">
         <template #actions>
-          <UButton icon="i-lucide-refresh-cw" color="neutral" variant="outline" :label="t('admin.requestCapture.refresh')" :disabled="loading || !configLoaded || captureConfig.storage_ready === false" @click="refresh" />
+          <UButton icon="i-lucide-refresh-cw" color="neutral" variant="outline" :label="t('admin.requestCapture.refresh')" :disabled="loading || !configLoaded || captureConfig.storage_ready === false" @click="refresh(false)" />
           <UButton icon="i-lucide-plus" :label="t('admin.requestCapture.create')" @click="openCreate" />
         </template>
       </AdminPageHeader>
@@ -22,10 +22,10 @@
         <template v-if="stats">
           <UPageGrid class="gap-4 sm:gap-6 lg:grid-cols-4 lg:gap-px">
             <UPageCard v-for="card in statCards" :key="card.key" :icon="card.icon" :title="card.label" variant="subtle" :ui="statCardUi" class="lg:rounded-none first:rounded-l-lg last:rounded-r-lg">
-              <span class="truncate text-2xl font-semibold text-highlighted">{{ card.value }}</span>
+              <span class="truncate text-2xl font-semibold tabular-nums text-highlighted">{{ card.value }}</span>
             </UPageCard>
           </UPageGrid>
-          <div v-if="stats.admission_skipped || stats.expired_records || stats.storage_error || dropReasons.length" class="flex flex-wrap items-center gap-x-5 gap-y-2 text-sm text-muted">
+          <div v-if="stats.admission_skipped || stats.expired_records || stats.storage_error || dropReasons.length" class="flex flex-wrap items-center gap-x-5 gap-y-2 text-sm tabular-nums text-muted">
             <span v-if="stats.admission_skipped">{{ t('admin.requestCapture.admissionSkipped') }}: <span class="text-highlighted">{{ stats.admission_skipped }}</span></span>
             <span v-if="stats.expired_records">{{ t('admin.requestCapture.expiredRecords') }}: <span class="text-highlighted">{{ stats.expired_records }}</span></span>
             <UBadge v-if="stats.storage_error" color="error" variant="subtle">{{ t('admin.requestCapture.storageError') }}</UBadge>
@@ -47,9 +47,9 @@
             <UBadge :color="taskStatusColor(task.status)" variant="subtle">{{ task.status }}</UBadge>
             <div v-if="task.reason" class="mt-1 text-xs text-warning">{{ task.reason }}</div>
           </template>
-          <template #remaining-cell="{ row: { original: task } }">{{ remaining(task) }}</template>
-          <template #incomplete-cell="{ row: { original: task } }">{{ task.partial }} / {{ task.skipped }}</template>
-          <template #bytes-cell="{ row: { original: task } }">{{ bytes(task.bytes) }}</template>
+          <template #remaining-cell="{ row: { original: task } }"><span class="tabular-nums">{{ remaining(task) }}</span></template>
+          <template #incomplete-cell="{ row: { original: task } }"><span class="tabular-nums">{{ task.partial }} / {{ task.skipped }}</span></template>
+          <template #bytes-cell="{ row: { original: task } }"><span class="tabular-nums">{{ bytes(task.bytes) }}</span></template>
           <template #actions-cell="{ row: { original: task } }">
             <div class="flex items-center justify-end gap-1">
               <UButton v-if="task.status === 'running' && !isDiagnostic(task)" icon="i-lucide-square" color="neutral" variant="ghost" size="sm" :label="t('admin.requestCapture.stop')" :disabled="busy" @click="stop(task)" />
@@ -63,9 +63,9 @@
         <div class="flex flex-wrap items-center justify-between gap-3 border-t border-default pt-4">
           <span class="text-sm text-muted">{{ streamExport ? '' : t('admin.requestCapture.exportBrowser') }}</span>
           <div class="flex items-center gap-1.5">
-            <UButton icon="i-lucide-chevron-left" color="neutral" variant="outline" :aria-label="t('admin.requestCapture.previous')" :disabled="taskPage <= 1" @click="changeTaskPage(-1)" />
-            <span class="min-w-8 text-center text-sm text-muted">{{ taskPage }}</span>
-            <UButton icon="i-lucide-chevron-right" color="neutral" variant="outline" :aria-label="t('admin.requestCapture.next')" :disabled="!taskMore" @click="changeTaskPage(1)" />
+            <UButton icon="i-lucide-chevron-left" color="neutral" variant="outline" class="min-h-11 sm:min-h-9" :aria-label="t('admin.requestCapture.previous')" :disabled="taskPage <= 1" @click="changeTaskPage(-1)" />
+            <span class="min-w-8 text-center text-sm tabular-nums text-muted">{{ taskPage }}</span>
+            <UButton icon="i-lucide-chevron-right" color="neutral" variant="outline" class="min-h-11 sm:min-h-9" :aria-label="t('admin.requestCapture.next')" :disabled="!taskMore" @click="changeTaskPage(1)" />
           </div>
         </div>
 
@@ -77,8 +77,8 @@
           </form>
           <UTable :data="records" :columns="recordColumns" :ui="tableUi">
             <template #request-cell="{ row: { original: record } }">
-              <UButton variant="link" class="break-all p-0 text-left" @click="viewRecord(record)">{{ record.request_id || record.id }}</UButton>
-              <div class="text-xs text-muted">{{ record.created_at }} / {{ record.protocol }}<span v-if="record.turn"> / {{ t('admin.requestCapture.turn') }} {{ record.turn }}</span></div>
+              <UButton variant="link" class="wrap-anywhere p-0 text-left" @click="viewRecord(record)">{{ record.request_id || record.id }}</UButton>
+              <div class="text-xs tabular-nums text-muted">{{ record.created_at }} / {{ record.protocol }}<span v-if="record.turn"> / {{ t('admin.requestCapture.turn') }} {{ record.turn }}</span></div>
             </template>
             <template #model-cell="{ row: { original: record } }">{{ record.model }}</template>
             <template #status-cell="{ row: { original: record } }">
@@ -87,18 +87,18 @@
                 <span v-if="record.is_error" class="text-error" data-testid="capture-outcome">{{ captureOutcome(record) }}</span>
                 <span v-if="record.partial" class="text-warning">{{ record.reason || t('admin.requestCapture.partial') }}</span>
               </div>
-              <div v-if="record.error_code" class="mt-1 break-all text-xs text-error">{{ record.error_code }}</div>
+              <div v-if="record.error_code" class="mt-1 wrap-anywhere text-xs text-error">{{ record.error_code }}</div>
             </template>
-            <template #bytes-cell="{ row: { original: record } }">{{ bytes(record.bytes) }}</template>
+            <template #bytes-cell="{ row: { original: record } }"><span class="tabular-nums">{{ bytes(record.bytes) }}</span></template>
           </UTable>
           <div class="flex items-center justify-end gap-1.5 border-t border-default pt-4">
-            <UButton icon="i-lucide-chevron-left" color="neutral" variant="outline" :aria-label="t('admin.requestCapture.previous')" :disabled="recordPage <= 1" @click="recordPage--; loadRecords()" />
-            <span class="min-w-8 text-center text-sm text-muted">{{ recordPage }}</span>
-            <UButton icon="i-lucide-chevron-right" color="neutral" variant="outline" :aria-label="t('admin.requestCapture.next')" :disabled="!recordMore" @click="recordPage++; loadRecords()" />
+            <UButton icon="i-lucide-chevron-left" color="neutral" variant="outline" class="min-h-11 sm:min-h-9" :aria-label="t('admin.requestCapture.previous')" :disabled="recordPage <= 1" @click="recordPage--; loadRecords()" />
+            <span class="min-w-8 text-center text-sm tabular-nums text-muted">{{ recordPage }}</span>
+            <UButton icon="i-lucide-chevron-right" color="neutral" variant="outline" class="min-h-11 sm:min-h-9" :aria-label="t('admin.requestCapture.next')" :disabled="!recordMore" @click="recordPage++; loadRecords()" />
           </div>
         </section>
         <section v-if="detail" class="flex flex-col gap-4 pt-2">
-          <UPageCard :title="`${t('admin.requestCapture.detail')} - ${detail.request_id}`" variant="naked" orientation="horizontal" :ui="{ title: 'break-all' }">
+          <UPageCard :title="`${t('admin.requestCapture.detail')} - ${detail.request_id}`" variant="naked" orientation="horizontal" :ui="{ title: 'wrap-anywhere' }">
             <UButton icon="i-lucide-download" color="neutral" variant="outline" class="w-fit lg:ms-auto" :label="t('admin.requestCapture.export')" data-testid="export-capture-record" :disabled="busy || !streamExport || (selectedTask?.status === 'running' && !isDiagnostic(selectedTask))" @click="download(detail.task_id, detail.id)" />
           </UPageCard>
           <div class="flex flex-col gap-1 text-sm">
@@ -108,13 +108,13 @@
           </div>
           <UCollapsible v-model:open="metadataOpen" class="flex flex-col gap-2">
             <UButton color="neutral" variant="ghost" class="-mx-2.5 w-fit" :label="t('admin.requestCapture.metadata')" :trailing-icon="metadataOpen ? 'i-lucide-chevron-up' : 'i-lucide-chevron-down'" />
-            <template #content><pre class="max-h-64 overflow-auto whitespace-pre-wrap break-all rounded-md bg-elevated p-3 text-xs text-default">{{ metadata }}</pre></template>
+            <template #content><pre class="max-h-64 overflow-auto whitespace-pre-wrap wrap-anywhere rounded-md bg-elevated p-3 text-xs text-default">{{ metadata }}</pre></template>
           </UCollapsible>
           <UTabs :model-value="stage" :items="stageItems" :content="false" variant="pill" size="sm" class="w-fit max-w-full" @update:model-value="selectStage(String($event))" />
           <USelect v-if="stageParts.length" :model-value="part?.name" :items="partItems" class="w-full max-w-xl" :aria-label="t('admin.requestCapture.segment')" @update:model-value="selectPart(String($event))" />
           <p v-else class="text-sm text-muted">{{ t('admin.requestCapture.noPart') }}</p>
           <p v-if="part?.omitted" class="text-sm text-warning">{{ t('admin.requestCapture.omitted') }}: {{ part.omitted }}</p>
-          <pre v-if="part" class="max-h-144 overflow-auto whitespace-pre-wrap break-all rounded-lg bg-elevated p-4 text-xs leading-5 text-default ring ring-inset ring-default">{{ content }}</pre>
+          <pre v-if="part" class="max-h-144 overflow-auto whitespace-pre-wrap wrap-anywhere rounded-lg bg-elevated p-4 text-xs leading-5 text-default ring ring-inset ring-default">{{ content }}</pre>
           <div v-if="part" class="flex gap-1.5">
             <UButton color="neutral" variant="outline" :label="t('admin.requestCapture.firstSegment')" :disabled="contentOffset === 0 || contentLoading" @click="readContent(0)" />
             <UButton color="neutral" variant="outline" trailing-icon="i-lucide-chevron-right" :label="t('admin.requestCapture.nextSegment')" :disabled="!contentMore || contentLoading" :loading="contentLoading" @click="readContent(nextOffset)" />
@@ -170,8 +170,8 @@
         <UFormField :label="t('admin.requestCapture.target')" :help="t('admin.requestCapture.targetHint')" required>
           <div class="flex items-center gap-1.5">
             <USelect v-model="targetID" :items="targetItems" :placeholder="t('admin.requestCapture.selectTarget')" :loading="searching" class="min-w-0 flex-1" :aria-label="t('admin.requestCapture.target')" />
-            <UButton type="button" icon="i-lucide-chevron-left" color="neutral" variant="outline" :aria-label="t('admin.requestCapture.previous')" :disabled="targetPage <= 1 || searching" @click="loadTargets(targetPage - 1)" />
-            <UButton type="button" icon="i-lucide-chevron-right" color="neutral" variant="outline" :aria-label="t('admin.requestCapture.next')" :disabled="!targetMore || searching" @click="loadTargets(targetPage + 1)" />
+            <UButton type="button" icon="i-lucide-chevron-left" color="neutral" variant="outline" class="min-h-11 sm:min-h-9" :aria-label="t('admin.requestCapture.previous')" :disabled="targetPage <= 1 || searching" @click="loadTargets(targetPage - 1)" />
+            <UButton type="button" icon="i-lucide-chevron-right" color="neutral" variant="outline" class="min-h-11 sm:min-h-9" :aria-label="t('admin.requestCapture.next')" :disabled="!targetMore || searching" @click="loadTargets(targetPage + 1)" />
           </div>
         </UFormField>
         <USwitch v-model="saveMedia" :label="t('admin.requestCapture.saveMedia')" />
@@ -280,7 +280,10 @@ const columnMenu = computed<DropdownMenuItem[]>(() => taskColumns.value.filter(c
 function taskStatusColor(status: string) { return status === 'running' ? 'success' as const : /fail|error/.test(status) ? 'error' as const : 'neutral' as const }
 function openCreate() { error.value = ''; createOpen.value = true }
 let poll: ReturnType<typeof setInterval> | undefined, debounce: ReturnType<typeof setTimeout> | undefined
-let searchAbort: AbortController | undefined, disposed = false, detailVersion = 0, contentVersion = 0
+let searchAbort: AbortController | undefined, disposed = false, polling = false, detailVersion = 0, contentVersion = 0
+function assignIfChanged<T>(target: { value: T }, next: T) {
+  if (JSON.stringify(target.value) !== JSON.stringify(next)) target.value = next
+}
 function captureOutcome(record: CaptureRecord) {
   if (record.status >= 400) return t('admin.requestCapture.requestFailed')
   if (record.client_outcome === 'failed' || (!record.client_outcome && record.error_code === 'basispoints_stream_incomplete')) return t('admin.requestCapture.streamFailed')
@@ -301,20 +304,54 @@ async function loadTargets(page = 1) {
     targetPage.value = page; targetMore.value = page * 20 < result.total
   } catch (err) { if (!controller.signal.aborted) report(err) } finally { if (searchAbort === controller) searching.value = false }
 }
-async function loadRecords() { if (!selectedTask.value) return; const id = selectedTask.value.id; try { const result = await api.listRecords(id, recordPage.value, requestID.value, !isDiagnostic(selectedTask.value)); if (!disposed && selectedTask.value?.id === id) { records.value = result.items; recordMore.value = result.has_more } } catch (err) { report(err) } }
-async function refresh() { if (loading.value || disposed || !configLoaded.value || captureConfig.value.storage_ready === false || tab.value !== 'tasks') return; loading.value = true; try { const result = await api.listTasks(taskPage.value); if (disposed) return; tasks.value = result.items; stats.value = result.stats; taskMore.value = result.has_more; if (selectedTask.value) { selectedTask.value = result.items.find(item => item.id === selectedTask.value?.id) || selectedTask.value; await loadRecords() } } catch (err) { report(err) } finally { loading.value = false } }
+async function loadRecords(silent = false) { if (!selectedTask.value) return; if (!silent) error.value = ''; const id = selectedTask.value.id; try { const result = await api.listRecords(id, recordPage.value, requestID.value, !isDiagnostic(selectedTask.value)); if (!disposed && selectedTask.value?.id === id) { assignIfChanged(records, result.items); if (recordMore.value !== result.has_more) recordMore.value = result.has_more } } catch (err) { if (!silent) report(err) } }
+async function refresh(silent = false) {
+  if (loading.value || (silent && polling) || disposed || !configLoaded.value || captureConfig.value.storage_ready === false || tab.value !== 'tasks') return
+  if (silent) polling = true; else { loading.value = true; error.value = '' }
+  try {
+    const result = await api.listTasks(taskPage.value)
+    if (disposed) return
+    assignIfChanged(tasks, result.items)
+    assignIfChanged(stats, result.stats)
+    if (taskMore.value !== result.has_more) taskMore.value = result.has_more
+    if (selectedTask.value) {
+      const matched = result.items.find(item => item.id === selectedTask.value?.id) || selectedTask.value
+      assignIfChanged(selectedTask, matched)
+      await loadRecords(silent)
+    }
+  } catch (err) { if (!silent) report(err) }
+  finally { if (silent) polling = false; else loading.value = false }
+}
 async function action(fn: () => Promise<void>) { busy.value = true; error.value = ''; try { await fn(); await refresh() } catch (err) { report(err) } finally { busy.value = false } }
 async function create() { if (!targetID.value || !validDuration.value) return; await action(async () => { const task = await api.createTask({ target_type: targetType.value, target_id: targetID.value, duration_minutes: duration.value, save_media: saveMedia.value }); taskPage.value = 1; createOpen.value = false; tab.value = 'tasks'; selectTask(task) }) }
 async function stop(task: CaptureTask) { await action(() => api.stopTask(task.id)) }
 async function remove(task: CaptureTask) { if (!(await confirm(t('admin.requestCapture.deleteConfirm')))) return; await action(async () => { await api.deleteTask(task.id); if (selectedTask.value?.id === task.id) { selectedTask.value = undefined; detail.value = undefined; records.value = []; detailVersion++; contentVersion++ } }) }
 async function download(task: string, record?: string) { await action(() => api.exportCapture(task, record, () => stepUp.run(api.authorizeSensitiveRead))) }
-function changeTaskPage(delta: number) { taskPage.value += delta; void refresh() }
+function changeTaskPage(delta: number) { taskPage.value += delta; void refresh(false) }
 function selectTask(task: CaptureTask) { selectedTask.value = task; recordPage.value = 1; records.value = []; detail.value = undefined; detailVersion++; contentVersion++; void loadRecords() }
 async function viewRecord(record: CaptureRecord) { const version = ++detailVersion; try { const result = await api.getRecord(record.task_id, record.id); if (version !== detailVersion || disposed) return; detail.value = result; metadataOpen.value = false; selectStage(stages[0]) } catch (err) { report(err) } }
 function selectStage(value: string) { stage.value = value; part.value = stageParts.value[0]; content.value = ''; contentMore.value = false; contentVersion++; if (part.value && part.value.bytes > 0) void readContent(0) }
 function selectPart(name: string) { part.value = stageParts.value.find(item => item.name === name); content.value = ''; contentVersion++; if (part.value && part.value.bytes > 0) void readContent(0) }
 async function readContent(offset: number) { if (!detail.value || !part.value || stepUp.visible.value) return; const version = ++contentVersion; const task = detail.value.task_id, record = detail.value.id, name = part.value.name; contentLoading.value = true; try { const result = await stepUp.run(() => api.getContent(task, record, name, offset)); if (version !== contentVersion || disposed) return; content.value = result.text; contentOffset.value = offset; nextOffset.value = result.next_offset; contentMore.value = result.has_more } catch (err) { report(err) } finally { if (version === contentVersion) contentLoading.value = false } }
 watch([targetType, search], () => { targetID.value = 0; clearTimeout(debounce); debounce = setTimeout(() => { void loadTargets(1) }, 250) })
-onMounted(() => { void api.getConfig().then(value=>{if(disposed)return;captureConfig.value=value;diagnosticUserIDsText.value=(value.diagnostic_user_ids || []).join(', ');configLoaded.value=true;if(value.storage_ready !== false)void refresh()}).catch(report); void loadTargets(); poll = setInterval(() => { now.value = Date.now(); if(configLoaded.value && captureConfig.value.storage_ready !== false)void refresh() }, 3000) })
+onMounted(() => {
+  void api.getConfig().then(value => {
+    if (disposed) return
+    captureConfig.value = value
+    diagnosticUserIDsText.value = (value.diagnostic_user_ids || []).join(', ')
+    configLoaded.value = true
+    if (value.storage_ready !== false) void refresh(false)
+  }).catch(report)
+  void loadTargets()
+  poll = setInterval(() => {
+    if (document.visibilityState !== 'visible') return
+    if (tasks.value.some(item => item.status === 'running' && !isDiagnostic(item) && item.expires_at)) {
+      now.value = Date.now()
+    }
+    if (configLoaded.value && captureConfig.value.storage_ready !== false && !loading.value && !polling) {
+      void refresh(true)
+    }
+  }, 3000)
+})
 onUnmounted(() => { disposed = true; stepUp.onCancel(); clearInterval(poll); clearTimeout(debounce); searchAbort?.abort(); detailVersion++; contentVersion++ })
 </script>

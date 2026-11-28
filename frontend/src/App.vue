@@ -40,7 +40,7 @@ const PREFERS_REDUCED_MOTION =
   typeof window !== 'undefined' && typeof window.matchMedia === 'function'
     ? window.matchMedia('(prefers-reduced-motion: reduce)').matches
     : false
-const SHELL_TRANSITION_MS = PREFERS_REDUCED_MOTION ? 0 : { enter: 150, leave: 80 }
+const SHELL_TRANSITION_MS = PREFERS_REDUCED_MOTION ? { enter: 120, leave: 120 } : { enter: 150, leave: 80 }
 const subscriptionStore = useSubscriptionStore()
 const announcementStore = useAnnouncementStore()
 const ticketStore = useTicketNotificationStore()

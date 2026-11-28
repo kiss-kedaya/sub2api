@@ -589,23 +589,23 @@ function cancelDelete() {
 </script>
 
 <template>
-  <div class="rounded-lg bg-white p-6 shadow-xs ring-1 ring-gray-200 dark:bg-dark-800 dark:ring-dark-700">
+  <section class="card p-6">
     <div class="mb-4 flex flex-wrap items-start justify-between gap-3 sm:gap-4">
       <div>
-        <h3 class="text-sm font-bold text-gray-900 dark:text-white">{{ t('admin.ops.alertRules.title') }}</h3>
-        <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.ops.alertRules.description') }}</p>
+        <h3 class="text-sm font-bold text-highlighted">{{ t('admin.ops.alertRules.title') }}</h3>
+        <p class="mt-1 text-xs text-muted">{{ t('admin.ops.alertRules.description') }}</p>
       </div>
 
       <div class="flex items-center gap-2">
-        <button class="btn btn-sm btn-primary" :disabled="loading" @click="openCreate">
+        <button class="btn btn-sm btn-primary min-h-11 sm:min-h-0" :disabled="loading" @click="openCreate">
           {{ t('admin.ops.alertRules.create') }}
         </button>
         <button
-          class="flex items-center gap-1.5 rounded-lg bg-gray-100 px-3 py-1.5 text-xs font-bold text-gray-700 transition-colors hover:bg-gray-200 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-dark-700 dark:text-gray-300 dark:hover:bg-dark-600"
+          class="btn btn-sm btn-secondary min-h-11 sm:min-h-0"
           :disabled="loading"
           @click="load"
         >
-          <svg class="h-3.5 w-3.5" :class="{ 'animate-spin': loading }" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <svg class="h-3.5 w-3.5" :class="{ 'animate-spin motion-reduce:animate-none': loading }" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
           </svg>
           {{ t('common.refresh') }}
@@ -617,15 +617,15 @@ function cancelDelete() {
       <div
         v-for="item in quickRules"
         :key="item.rule.id"
-        class="rounded-md border border-gray-200 bg-gray-50/70 p-4 dark:border-dark-700 dark:bg-dark-800/40"
+        class="rounded-xl border border-default bg-muted p-4"
       >
         <div class="flex items-start justify-between gap-3">
           <div class="min-w-0">
-            <p class="text-xs font-bold text-gray-900 dark:text-white">{{ item.title }}</p>
-            <p class="mt-0.5 text-[11px] leading-relaxed text-gray-500 dark:text-gray-400">{{ item.hint }}</p>
+            <p class="text-xs font-bold text-highlighted">{{ item.title }}</p>
+            <p class="mt-0.5 text-[11px] leading-relaxed text-muted">{{ item.hint }}</p>
           </div>
           <span
-            class="shrink-0 rounded-md bg-white px-2 py-1 font-mono text-[11px] font-bold text-gray-700 ring-1 ring-gray-200 dark:bg-dark-700 dark:text-gray-200 dark:ring-dark-600"
+            class="shrink-0 rounded-md bg-default px-2 py-1 font-mono text-[11px] font-bold tabular-nums text-default ring-1 ring-default"
           >
             {{ item.rule.operator }} {{ item.rule.threshold }}{{ item.unit }}
           </span>
@@ -635,11 +635,11 @@ function cancelDelete() {
             v-for="preset in item.presets"
             :key="preset"
             type="button"
-            class="rounded-lg px-2.5 py-1 text-xs font-semibold transition-colors"
+            class="min-h-11 sm:min-h-8 rounded-lg px-2.5 py-1 text-xs font-semibold tabular-nums transition-[color,background-color,transform] duration-150 active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
             :class="
               Number(item.rule.threshold) === preset
-                ? 'bg-primary-600 text-white shadow-xs'
-                : 'bg-white text-gray-600 ring-1 ring-gray-200 hover:bg-gray-100 dark:bg-dark-700 dark:text-gray-300 dark:ring-dark-600 dark:hover:bg-dark-600'
+                ? 'bg-primary text-inverted'
+                : 'bg-default text-muted ring-1 ring-default [@media(hover:hover)_and_(pointer:fine)]:hover:bg-elevated [@media(hover:hover)_and_(pointer:fine)]:hover:text-highlighted'
             "
             @click="item.rule.threshold = preset"
           >
@@ -651,11 +651,11 @@ function cancelDelete() {
               type="number"
               min="0"
               step="0.1"
-              class="input w-24 text-sm"
+              class="input w-24 text-sm tabular-nums"
             />
             <button
               type="button"
-              class="btn btn-sm btn-primary"
+              class="btn btn-sm btn-primary min-h-11 sm:min-h-0"
               :disabled="quickSavingId === item.rule.id"
               @click="saveQuickThreshold(item.rule)"
             >
@@ -666,91 +666,91 @@ function cancelDelete() {
       </div>
     </div>
 
-    <div v-if="loading" class="py-10 text-center text-sm text-gray-500 dark:text-gray-400">
+    <div v-if="loading" class="py-10 text-center text-sm text-muted">
       {{ t('admin.ops.alertRules.loading') }}
     </div>
 
-    <div v-else-if="sortedRules.length === 0" class="rounded-xl border border-dashed border-gray-200 p-8 text-center text-sm text-gray-500 dark:border-dark-700 dark:text-gray-400">
+    <div v-else-if="sortedRules.length === 0" class="rounded-xl border border-dashed border-default p-8 text-center text-sm text-muted">
       {{ t('admin.ops.alertRules.empty') }}
     </div>
 
-    <div v-else class="max-h-[520px] overflow-hidden rounded-xl border border-gray-200 dark:border-dark-700">
-      <div class="max-h-[520px] overflow-y-auto">
-        <div v-if="!isDesktopViewport" class="divide-y divide-gray-100 dark:divide-dark-800">
+    <div v-else class="max-h-[520px] overflow-hidden rounded-xl border border-default">
+      <div class="max-h-[520px] overflow-y-auto overscroll-contain">
+        <div v-if="!isDesktopViewport" class="divide-y divide-muted">
           <div v-for="row in sortedRules" :key="row.id" class="space-y-2 p-4">
             <div class="flex items-start justify-between gap-2">
               <div class="min-w-0">
-                <div class="text-xs font-bold text-gray-900 dark:text-white">{{ row.name }}</div>
-                <div v-if="row.description" class="mt-0.5 line-clamp-2 text-[11px] text-gray-500 dark:text-gray-400">
+                <div class="wrap-anywhere text-xs font-bold text-highlighted">{{ row.name }}</div>
+                <div v-if="row.description" class="mt-0.5 line-clamp-2 text-[11px] text-muted">
                   {{ row.description }}
                 </div>
               </div>
-              <span class="shrink-0 text-xs font-bold text-gray-700 dark:text-gray-200">{{ row.severity }}</span>
+              <span class="shrink-0 text-xs font-bold text-default">{{ row.severity }}</span>
             </div>
-            <div class="text-xs text-gray-700 dark:text-gray-200">
+            <div class="text-xs text-default">
               <span class="font-mono">{{ row.metric_type }}</span>
-              <span class="mx-1 text-gray-400">{{ row.operator }}</span>
-              <span class="font-mono">{{ row.threshold }}</span>
+              <span class="mx-1 text-dimmed">{{ row.operator }}</span>
+              <span class="font-mono tabular-nums">{{ row.threshold }}</span>
             </div>
             <div class="flex items-center justify-between gap-2">
-              <span class="text-xs text-gray-700 dark:text-gray-200">
+              <span class="text-xs text-default">
                 {{ row.enabled ? t('common.enabled') : t('common.disabled') }}
               </span>
               <div class="flex items-center gap-2">
-                <button class="btn btn-sm btn-secondary" @click="openEdit(row)">{{ t('common.edit') }}</button>
-                <button class="btn btn-sm btn-danger" @click="requestDelete(row)">{{ t('common.delete') }}</button>
+                <button class="btn btn-sm btn-secondary min-h-11 sm:min-h-0" @click="openEdit(row)">{{ t('common.edit') }}</button>
+                <button class="btn btn-sm btn-danger min-h-11 sm:min-h-0" @click="requestDelete(row)">{{ t('common.delete') }}</button>
               </div>
             </div>
-            <div v-if="row.updated_at" class="text-[10px] text-gray-400">
+            <div v-if="row.updated_at" class="tabular-nums text-[10px] text-dimmed">
               {{ formatDateTime(row.updated_at) }}
             </div>
           </div>
         </div>
-        <table v-else class="min-w-full divide-y divide-gray-200 dark:divide-dark-700">
-          <thead class="sticky top-0 z-10 bg-gray-50 dark:bg-dark-900">
+        <table v-else class="min-w-full divide-y divide-default">
+          <thead class="sticky top-0 z-10 bg-muted">
             <tr>
-              <th class="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400">
+              <th class="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-wider text-muted">
                 {{ t('admin.ops.alertRules.table.name') }}
               </th>
-              <th class="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400">
+              <th class="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-wider text-muted">
                 {{ t('admin.ops.alertRules.table.metric') }}
               </th>
-              <th class="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400">
+              <th class="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-wider text-muted">
                 {{ t('admin.ops.alertRules.table.severity') }}
               </th>
-              <th class="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400">
+              <th class="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-wider text-muted">
                 {{ t('admin.ops.alertRules.table.enabled') }}
               </th>
-              <th class="px-4 py-3 text-right text-[11px] font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400">
+              <th class="px-4 py-3 text-right text-[11px] font-bold uppercase tracking-wider text-muted">
                 {{ t('admin.ops.alertRules.table.actions') }}
               </th>
             </tr>
           </thead>
-          <tbody class="divide-y divide-gray-200 bg-white dark:divide-dark-700 dark:bg-dark-800">
-            <tr v-for="row in sortedRules" :key="row.id" class="hover:bg-gray-50 dark:hover:bg-dark-700/50">
+          <tbody class="divide-y divide-default bg-default">
+            <tr v-for="row in sortedRules" :key="row.id" class="transition-colors duration-150 [@media(hover:hover)_and_(pointer:fine)]:hover:bg-elevated/50">
               <td class="px-4 py-3">
-                <div class="text-xs font-bold text-gray-900 dark:text-white">{{ row.name }}</div>
-                <div v-if="row.description" class="mt-0.5 line-clamp-2 text-[11px] text-gray-500 dark:text-gray-400">
+                <div class="wrap-anywhere text-xs font-bold text-highlighted">{{ row.name }}</div>
+                <div v-if="row.description" class="mt-0.5 line-clamp-2 text-[11px] text-muted">
                   {{ row.description }}
                 </div>
-                <div v-if="row.updated_at" class="mt-1 text-[10px] text-gray-400">
+                <div v-if="row.updated_at" class="mt-1 tabular-nums text-[10px] text-dimmed">
                   {{ formatDateTime(row.updated_at) }}
                 </div>
               </td>
-              <td class="whitespace-nowrap px-4 py-3 text-xs text-gray-700 dark:text-gray-200">
+              <td class="whitespace-nowrap px-4 py-3 text-xs text-default">
                 <span class="font-mono">{{ row.metric_type }}</span>
-                <span class="mx-1 text-gray-400">{{ row.operator }}</span>
-                <span class="font-mono">{{ row.threshold }}</span>
+                <span class="mx-1 text-dimmed">{{ row.operator }}</span>
+                <span class="font-mono tabular-nums">{{ row.threshold }}</span>
               </td>
-              <td class="whitespace-nowrap px-4 py-3 text-xs font-bold text-gray-700 dark:text-gray-200">
+              <td class="whitespace-nowrap px-4 py-3 text-xs font-bold text-default">
                 {{ row.severity }}
               </td>
-              <td class="whitespace-nowrap px-4 py-3 text-xs text-gray-700 dark:text-gray-200">
+              <td class="whitespace-nowrap px-4 py-3 text-xs text-default">
                 {{ row.enabled ? t('common.enabled') : t('common.disabled') }}
               </td>
               <td class="whitespace-nowrap px-4 py-3 text-right text-xs">
-                <button class="btn btn-sm btn-secondary" @click="openEdit(row)">{{ t('common.edit') }}</button>
-                <button class="ml-2 btn btn-sm btn-danger" @click="requestDelete(row)">{{ t('common.delete') }}</button>
+                <button class="btn btn-sm btn-secondary min-h-11 sm:min-h-0" @click="openEdit(row)">{{ t('common.edit') }}</button>
+                <button class="ml-2 btn btn-sm btn-danger min-h-11 sm:min-h-0" @click="requestDelete(row)">{{ t('common.delete') }}</button>
               </td>
             </tr>
           </tbody>
@@ -786,7 +786,7 @@ function cancelDelete() {
           <div>
             <label class="input-label">{{ t('admin.ops.alertRules.form.metric') }}</label>
             <Select v-model="draft!.metric_type" :options="metricOptions" />
-            <div v-if="selectedMetricDefinition" class="mt-1 space-y-0.5 text-xs text-gray-500 dark:text-gray-400">
+            <div v-if="selectedMetricDefinition" class="mt-1 space-y-0.5 text-xs text-muted">
               <p>{{ selectedMetricDefinition.description }}</p>
               <p>
                 {{
@@ -817,14 +817,14 @@ function cancelDelete() {
               :placeholder="t('admin.ops.alertRules.form.groupPlaceholder')"
               :error="isGroupMetricSelected && !draftGroupId"
             />
-            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+            <p class="mt-1 text-xs text-muted">
               {{ isGroupMetricSelected ? t('admin.ops.alertRules.hints.groupRequired') : t('admin.ops.alertRules.hints.groupOptional') }}
             </p>
           </div>
 
           <div>
             <label class="input-label">{{ t('admin.ops.alertRules.form.threshold') }}</label>
-            <input v-model.number="draft!.threshold" class="input" type="number" />
+            <input v-model.number="draft!.threshold" class="input tabular-nums" type="number" />
           </div>
 
           <div>
@@ -839,32 +839,32 @@ function cancelDelete() {
 
           <div>
             <label class="input-label">{{ t('admin.ops.alertRules.form.sustained') }}</label>
-            <input v-model.number="draft!.sustained_minutes" class="input" type="number" min="1" max="1440" />
+            <input v-model.number="draft!.sustained_minutes" class="input tabular-nums" type="number" min="1" max="1440" />
           </div>
 
           <div>
             <label class="input-label">{{ t('admin.ops.alertRules.form.cooldown') }}</label>
-            <input v-model.number="draft!.cooldown_minutes" class="input" type="number" min="0" max="1440" />
+            <input v-model.number="draft!.cooldown_minutes" class="input tabular-nums" type="number" min="0" max="1440" />
           </div>
 
-          <div class="flex items-center justify-between rounded-xl bg-gray-50 px-4 py-3 dark:bg-dark-800/50 md:col-span-2">
-            <span class="text-xs font-bold text-gray-700 dark:text-gray-200">{{ t('admin.ops.alertRules.form.enabled') }}</span>
-            <input v-model="draft!.enabled" type="checkbox" class="h-4 w-4 rounded-sm border-gray-300 text-primary-600 focus:ring-primary-500" />
+          <div class="flex items-center justify-between rounded-xl border border-default bg-muted px-4 py-3 md:col-span-2">
+            <span class="text-xs font-bold text-default">{{ t('admin.ops.alertRules.form.enabled') }}</span>
+            <UCheckbox v-model="draft!.enabled" />
           </div>
 
-          <div class="flex items-center justify-between rounded-xl bg-gray-50 px-4 py-3 dark:bg-dark-800/50 md:col-span-2">
-            <span class="text-xs font-bold text-gray-700 dark:text-gray-200">{{ t('admin.ops.alertRules.form.notifyEmail') }}</span>
-            <input v-model="draft!.notify_email" type="checkbox" class="h-4 w-4 rounded-sm border-gray-300 text-primary-600 focus:ring-primary-500" />
+          <div class="flex items-center justify-between rounded-xl border border-default bg-muted px-4 py-3 md:col-span-2">
+            <span class="text-xs font-bold text-default">{{ t('admin.ops.alertRules.form.notifyEmail') }}</span>
+            <UCheckbox v-model="draft!.notify_email" />
           </div>
         </div>
       </div>
 
       <template #footer>
         <div class="flex items-center justify-end gap-2">
-          <button class="btn btn-secondary" :disabled="saving" @click="showEditor = false">
+          <button class="btn btn-secondary min-h-11 sm:min-h-0" :disabled="saving" @click="showEditor = false">
             {{ t('common.cancel') }}
           </button>
-          <button class="btn btn-primary" :disabled="saving" @click="save">
+          <button class="btn btn-primary min-h-11 sm:min-h-0" :disabled="saving" @click="save">
             {{ saving ? t('common.saving') : t('common.save') }}
           </button>
         </div>
@@ -880,5 +880,5 @@ function cancelDelete() {
       @confirm="confirmDelete"
       @cancel="cancelDelete"
     />
-  </div>
+  </section>
 </template>

@@ -1,21 +1,21 @@
 <template>
-  <component :is="isPopup ? 'div' : AppLayout" :class="isPopup ? 'min-h-screen bg-muted dark:bg-dark-900' : ''">
+  <component :is="isPopup ? 'div' : AppLayout" :class="isPopup ? 'min-h-dvh bg-muted dark:bg-(--app-page-bg)' : ''">
     <div class="mx-auto max-w-lg space-y-6 py-8" :class="isPopup ? 'px-4' : ''">
       <UserPageHeader v-if="!isPopup" flush :title="t('nav.buySubscription')" />
       <div v-if="loading" class="flex items-center justify-center py-20">
-        <UIcon name="i-lucide-loader-circle" class="size-8 animate-spin text-muted" />
+        <UIcon name="i-lucide-loader-circle" class="size-8 animate-spin text-muted motion-reduce:animate-none" />
       </div>
-      <div v-else-if="initError" class="rounded-lg bg-default shadow-xs ring ring-default dark:shadow-none p-8 text-center">
+      <div v-else-if="initError" class="rounded-lg bg-default p-8 text-center shadow-(--app-shadow-card) ring ring-default">
         <div class="mx-auto mb-4 flex size-14 items-center justify-center rounded-lg bg-error/10">
           <UIcon name="i-lucide-circle-alert" class="size-7 text-error" />
         </div>
         <h2 class="text-base font-semibold text-highlighted">{{ t('payment.stripeLoadFailed') }}</h2>
-        <p class="mt-2 text-sm text-muted">{{ initError }}</p>
-        <button class="btn btn-primary mt-6" @click="router.push('/purchase')">{{ t('payment.result.backToRecharge') }}</button>
+        <p class="mt-2 wrap-anywhere text-sm text-muted">{{ initError }}</p>
+        <button type="button" class="btn btn-primary mt-6 min-h-11 transition-[transform,color,background-color,border-color] duration-150 ease-[var(--ease-out)] active:scale-[0.97] motion-reduce:transition-none motion-reduce:active:scale-100 sm:min-h-0" @click="router.push('/purchase')">{{ t('payment.result.backToRecharge') }}</button>
       </div>
       <template v-else>
         <!-- 金额头部 -->
-        <div v-if="order" class="overflow-hidden rounded-lg bg-default shadow-xs ring ring-default dark:shadow-none">
+        <div v-if="order" class="overflow-hidden rounded-lg bg-default shadow-(--app-shadow-card) ring ring-default">
           <div class="px-6 py-6 text-center">
             <p class="text-sm font-medium text-muted">{{ t('payment.actualPay') }}</p>
             <p class="mt-1 text-3xl font-semibold tabular-nums text-highlighted">{{ formatGatewayAmount(order.pay_amount) }}</p>
@@ -24,7 +24,7 @@
 
         <!-- 微信二维码展示 -->
         <template v-if="wechatQrUrl">
-          <div class="rounded-lg bg-default shadow-xs ring ring-default dark:shadow-none p-6">
+          <div class="rounded-lg bg-default p-6 shadow-(--app-shadow-card) ring ring-default">
             <div class="flex flex-col items-center space-y-4">
               <p class="text-base font-semibold text-highlighted">{{ t('payment.qr.scanWxpay') }}</p>
               <div class="relative rounded-lg border-2 border-[#2BB741] bg-green-50 p-4 dark:border-[#2BB741]/70 dark:bg-green-950/20">
@@ -38,16 +38,16 @@
               <p class="text-center text-sm text-muted">{{ t('payment.qr.scanWxpayHint') }}</p>
             </div>
           </div>
-          <div class="rounded-lg bg-default shadow-xs ring ring-default dark:shadow-none p-4 text-center">
+          <div class="rounded-lg bg-default p-4 text-center shadow-(--app-shadow-card) ring ring-default">
             <p class="text-sm text-muted">{{ t('payment.qr.waitingPayment') }}</p>
           </div>
         </template>
 
         <!-- 支付宝跳转状态 -->
         <template v-else-if="redirecting">
-          <div class="rounded-lg bg-default shadow-xs ring ring-default dark:shadow-none p-6">
+          <div class="rounded-lg bg-default p-6 shadow-(--app-shadow-card) ring ring-default">
             <div class="flex flex-col items-center space-y-4 py-4">
-              <div class="h-10 w-10 animate-spin rounded-full border-4 border-[#00AEEF] border-t-transparent"></div>
+              <div class="h-10 w-10 animate-spin rounded-full border-4 border-[#00AEEF] border-t-transparent motion-reduce:animate-none"></div>
               <p class="text-sm text-muted">{{ t('payment.qr.payInNewWindowHint') }}</p>
             </div>
           </div>
@@ -55,7 +55,7 @@
 
         <!-- 成功状态 -->
         <template v-else-if="stripeSuccess">
-          <div class="rounded-lg bg-default shadow-xs ring ring-default dark:shadow-none p-6 text-center">
+          <div class="rounded-lg bg-default p-6 text-center shadow-(--app-shadow-card) ring ring-default">
             <div class="flex flex-col items-center gap-3 py-4">
               <div class="flex size-14 items-center justify-center rounded-lg bg-success/10">
                 <UIcon name="i-lucide-check" class="size-7 text-success" />
@@ -68,26 +68,26 @@
 
         <!-- 无指定方式或未知方式时展示完整 Payment Element -->
         <template v-else-if="showPaymentElement">
-          <div class="rounded-lg bg-default shadow-xs ring ring-default dark:shadow-none p-6">
+          <div class="rounded-lg bg-default p-6 shadow-(--app-shadow-card) ring ring-default">
             <div id="stripe-payment-element" class="min-h-[200px]"></div>
-            <p v-if="stripeError" class="mt-4 text-sm text-red-600 dark:text-red-400">{{ stripeError }}</p>
-            <button class="btn btn-stripe mt-6 w-full py-3 text-base" :disabled="stripeSubmitting || !stripeReady" @click="handleGenericPay">
+            <p v-if="stripeError" class="mt-4 wrap-anywhere text-sm text-error">{{ stripeError }}</p>
+            <button type="button" class="btn btn-stripe mt-6 w-full py-3 text-base transition-[transform,color,background-color,border-color] duration-150 ease-[var(--ease-out)] active:scale-[0.97] motion-reduce:transition-none motion-reduce:active:scale-100" :disabled="stripeSubmitting || !stripeReady" @click="handleGenericPay">
               <span v-if="stripeSubmitting" class="flex items-center justify-center gap-2">
-                <span class="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent"></span>
+                <span class="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent motion-reduce:animate-none"></span>
                 {{ t('common.processing') }}
               </span>
               <span v-else>{{ t('payment.stripePay') }}</span>
             </button>
           </div>
           <div class="text-center">
-            <button class="btn btn-secondary" @click="router.push('/purchase')">{{ t('payment.result.backToRecharge') }}</button>
+            <button type="button" class="btn btn-secondary min-h-11 transition-[transform,color,background-color,border-color] duration-150 ease-[var(--ease-out)] active:scale-[0.97] motion-reduce:transition-none motion-reduce:active:scale-100 sm:min-h-0" @click="router.push('/purchase')">{{ t('payment.result.backToRecharge') }}</button>
           </div>
         </template>
 
         <!-- 错误状态 -->
-        <div v-if="stripeError && !showPaymentElement" class="rounded-lg bg-default p-4 shadow-xs ring ring-default dark:shadow-none">
-          <p class="text-sm text-red-600 dark:text-red-400">{{ stripeError }}</p>
-          <button class="btn btn-secondary mt-3 w-full" @click="router.push('/purchase')">{{ t('payment.result.backToRecharge') }}</button>
+        <div v-if="stripeError && !showPaymentElement" class="rounded-lg bg-default p-4 shadow-(--app-shadow-card) ring ring-default">
+          <p class="wrap-anywhere text-sm text-error">{{ stripeError }}</p>
+          <button type="button" class="btn btn-secondary mt-3 min-h-11 w-full transition-[transform,color,background-color,border-color] duration-150 ease-[var(--ease-out)] active:scale-[0.97] motion-reduce:transition-none motion-reduce:active:scale-100 sm:min-h-0" @click="router.push('/purchase')">{{ t('payment.result.backToRecharge') }}</button>
         </div>
       </template>
     </div>
@@ -283,17 +283,32 @@ async function handleGenericPay() {
 
 let pollTimer: ReturnType<typeof setInterval> | null = null
 
+function stopPolling() {
+  if (pollTimer) {
+    clearInterval(pollTimer)
+    pollTimer = null
+  }
+}
+
 function startPolling() {
   const orderId = Number(route.query.order_id)
   if (!orderId) return
+  stopPolling()
+  let pollInFlight = false
   pollTimer = setInterval(async () => {
-    const o = await paymentStore.pollOrderStatus(orderId)
-    if (!o) return
-    if (o.status === 'COMPLETED' || o.status === 'PAID') {
-      if (pollTimer) { clearInterval(pollTimer); pollTimer = null }
-      stripeSuccess.value = true
-      wechatQrUrl.value = ''
-      scheduleClose()
+    if (pollInFlight) return
+    pollInFlight = true
+    try {
+      const o = await paymentStore.pollOrderStatus(orderId)
+      if (!o || !pollTimer) return
+      if (o.status === 'COMPLETED' || o.status === 'PAID') {
+        stopPolling()
+        stripeSuccess.value = true
+        wechatQrUrl.value = ''
+        scheduleClose()
+      }
+    } finally {
+      pollInFlight = false
     }
   }, 3000)
 }
@@ -309,7 +324,10 @@ function scheduleClose() {
 }
 
 onUnmounted(() => {
-  if (redirectTimer) clearTimeout(redirectTimer)
-  if (pollTimer) clearInterval(pollTimer)
+  if (redirectTimer) {
+    clearTimeout(redirectTimer)
+    redirectTimer = null
+  }
+  stopPolling()
 })
 </script>

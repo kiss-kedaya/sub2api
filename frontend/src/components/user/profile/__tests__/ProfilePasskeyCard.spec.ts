@@ -45,7 +45,10 @@ async function mountCard(credentials?: (typeof savedCredential)[]) {
   isSupported.mockReturnValue(true)
   totpStatus.mockResolvedValue({ enabled: false, feature_enabled: true })
   if (credentials) list.mockResolvedValue(credentials)
-  const wrapper = mount(ProfilePasskeyCard, { props: { enabled: true } })
+  const wrapper = mount(ProfilePasskeyCard, {
+    props: { enabled: true },
+    global: { stubs: { teleport: true } }
+  })
   await flushPromises()
   return wrapper
 }

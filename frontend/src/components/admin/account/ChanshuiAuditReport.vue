@@ -2,29 +2,29 @@
   <section class="space-y-3 p-4" data-testid="chanshui-audit-report">
     <div class="flex flex-wrap items-center justify-between gap-3 rounded-lg bg-primary-50 p-3 dark:bg-primary-900/20">
       <div>
-        <div class="text-xs text-gray-500">{{ t('admin.scheduledTests.auditID') }}</div>
-        <div class="break-all font-mono text-xs">{{ report.audit_id || '—' }}</div>
-        <div v-if="report.model" class="mt-1 text-xs text-gray-500">{{ report.model }}</div>
+        <div class="text-xs text-muted">{{ t('admin.scheduledTests.auditID') }}</div>
+        <div class="wrap-anywhere font-mono text-xs">{{ report.audit_id || '—' }}</div>
+        <div v-if="report.model" class="mt-1 text-xs text-muted">{{ report.model }}</div>
       </div>
       <div class="text-right">
-        <div class="text-xs text-gray-500">{{ t('admin.scheduledTests.auditTotal') }}</div>
-        <div class="text-2xl font-semibold" data-testid="audit-total">{{ totalScore }} / {{ totalMax }}</div>
+        <div class="text-xs text-muted">{{ t('admin.scheduledTests.auditTotal') }}</div>
+        <div class="text-2xl font-semibold tabular-nums" data-testid="audit-total">{{ totalScore }} / {{ totalMax }}</div>
       </div>
     </div>
     <p v-if="incomplete" class="rounded-lg bg-amber-50 p-3 text-xs text-amber-800 dark:bg-amber-900/20 dark:text-amber-300" role="status">
       {{ t('admin.scheduledTests.auditIncomplete') }}
     </p>
-    <p v-if="report.decision" class="rounded-lg border border-gray-200 p-3 text-sm dark:border-dark-600" data-testid="audit-decision">{{ report.decision.reason }}</p>
-    <p class="text-xs text-gray-500">{{ t('admin.scheduledTests.auditPolicyHint') }}</p>
-    <details v-for="section in visibleSections" :key="section" class="rounded-lg border border-gray-200 p-3 dark:border-dark-600">
+    <p v-if="report.decision" class="rounded-lg border border-default p-3 text-sm" data-testid="audit-decision">{{ report.decision.reason }}</p>
+    <p class="text-xs text-muted">{{ t('admin.scheduledTests.auditPolicyHint') }}</p>
+    <details v-for="section in visibleSections" :key="section" class="rounded-lg border border-default p-3">
       <summary class="cursor-pointer text-sm font-medium">
         {{ t(`admin.scheduledTests.sections.${section}`) }}
-        <span v-if="sectionScore(section) !== null" class="ml-2 text-xs text-gray-500">{{ sectionScore(section) }}</span>
+        <span v-if="sectionScore(section) !== null" class="ml-2 text-xs tabular-nums text-muted">{{ sectionScore(section) }}</span>
       </summary>
-      <p class="mt-2 whitespace-pre-wrap wrap-break-word text-sm text-gray-700 dark:text-gray-300">{{ sectionSummary(section) }}</p>
+      <p class="mt-2 whitespace-pre-wrap wrap-break-word text-sm text-toned">{{ sectionSummary(section) }}</p>
       <details v-if="verdict[section] != null" class="mt-2">
-        <summary class="cursor-pointer text-xs text-gray-500">{{ t('admin.scheduledTests.auditEvidence') }}</summary>
-        <pre class="mt-2 max-h-60 overflow-auto whitespace-pre-wrap wrap-break-word rounded-sm bg-gray-950 p-3 text-xs text-gray-200">{{ JSON.stringify(verdict[section], null, 2) }}</pre>
+        <summary class="cursor-pointer text-xs text-muted">{{ t('admin.scheduledTests.auditEvidence') }}</summary>
+        <pre class="mt-2 max-h-60 overflow-auto whitespace-pre-wrap wrap-break-word rounded-sm bg-neutral-950 p-3 text-xs text-neutral-200">{{ JSON.stringify(verdict[section], null, 2) }}</pre>
       </details>
     </details>
   </section>
