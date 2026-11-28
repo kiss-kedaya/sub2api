@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"path"
 	"strings"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
@@ -232,7 +233,7 @@ func apiKeyAuthWithSubscription(apiKeyService *service.APIKeyService, subscripti
 
 		// 账号级信息面（/v1/sub2api/account）暴露所属账号的钱包余额、全部订阅与全账号当日消耗，
 		// 配额已耗尽的 Key 不得继续读取全账号财务概览（仍可访问 /v1/sub2api/key 与 /v1/usage 查看自身状态）。
-		if strings.TrimRight(c.Request.URL.Path, "/") == "/v1/sub2api/account" &&
+		if (c.FullPath() == "/v1/sub2api/account" || path.Clean(c.Request.URL.Path) == "/v1/sub2api/account") &&
 			(apiKey.Status == service.StatusAPIKeyQuotaExhausted || apiKey.IsQuotaExhausted()) {
 			abortWithAPIKeyQuotaError(c)
 			return

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -746,7 +747,7 @@ func (h *AuthHandler) Login2FA(c *gin.Context) {
 
 	if session.PendingOAuthBind != nil {
 		var finalized bool
-		user, finalized = h.finalizePendingOAuthBindOn2FAComplete(c, session, user)
+		user, finalized = h.finalizePendingOAuthBindOn2FAComplete(c, req.TempToken, session, user)
 		if !finalized {
 			return
 		}
@@ -778,14 +779,28 @@ func (h *AuthHandler) validatePendingOAuthBindSession(c *gin.Context, bind *serv
 }
 
 // finalizePendingOAuthBindOn2FAComplete 仅在全部必需 2FA 因子均已验证通过后调用，
-// 负责执行待定 OAuth 身份绑定、首次绑定默认配置发放、钉钉同步与消费 pending 浏览器会话。
+// 在单个事务内原子消费 pending 浏览器会话并执行待定 OAuth 身份绑定、首次绑定默认配置发放与钉钉同步。
 func (h *AuthHandler) finalizePendingOAuthBindOn2FAComplete(
 	c *gin.Context,
+	tempToken string,
 	session *service.TotpLoginSession,
 	user *service.User,
 ) (*service.User, bool) {
 	if session == nil || session.PendingOAuthBind == nil || user == nil {
 		return user, true
+	}
+	cleanupOnTerminalErr := func(err error) {
+		if errors.Is(err, service.ErrPendingAuthSessionConsumed) ||
+			errors.Is(err, service.ErrPendingAuthSessionExpired) ||
+			errors.Is(err, service.ErrPendingAuthSessionNotFound) ||
+			infraerrors.Code(err) == http.StatusConflict {
+			if tempToken != "" && h.totpService != nil {
+				_ = h.totpService.DeleteLoginSession(c.Request.Context(), tempToken)
+			}
+			secureCookie := h.isRequestHTTPS(c)
+			clearOAuthPendingSessionCookie(c, secureCookie)
+			clearOAuthPendingBrowserCookie(c, secureCookie)
+		}
 	}
 	pendingSvc, err := h.pendingIdentityService()
 	if err != nil {
@@ -798,6 +813,7 @@ func (h *AuthHandler) finalizePendingOAuthBindOn2FAComplete(
 		session.PendingOAuthBind.BrowserSessionKey,
 	)
 	if err != nil {
+		cleanupOnTerminalErr(err)
 		response.ErrorFrom(c, err)
 		return nil, false
 	}
@@ -806,29 +822,22 @@ func (h *AuthHandler) finalizePendingOAuthBindOn2FAComplete(
 		response.ErrorFrom(c, err)
 		return nil, false
 	}
-	if err := applyPendingOAuthBinding(
+	if err := applyPendingOAuthBindingAndConsumeSession(
 		c.Request.Context(),
 		h.entClient(),
 		h.authService,
 		h.userService,
 		pendingSession,
 		decision,
-		&user.ID,
+		user.ID,
 		true,
 		true,
 	); err != nil {
-		response.ErrorFrom(c, infraerrors.InternalServer("PENDING_AUTH_BIND_APPLY_FAILED", "failed to bind pending oauth identity").WithCause(err))
+		cleanupOnTerminalErr(err)
+		respondPendingOAuthBindingApplyError(c, err)
 		return nil, false
 	}
 	h.maybeSyncDingTalkAfterLogin(c.Request.Context(), pendingSession, user.ID)
-	if _, err := pendingSvc.ConsumeBrowserSession(
-		c.Request.Context(),
-		pendingSession.SessionToken,
-		pendingSession.BrowserSessionKey,
-	); err != nil {
-		response.ErrorFrom(c, err)
-		return nil, false
-	}
 
 	secureCookie := h.isRequestHTTPS(c)
 	clearOAuthPendingSessionCookie(c, secureCookie)
@@ -939,7 +948,7 @@ func (h *AuthHandler) Login2FAPasskeyFinish(c *gin.Context) {
 	}
 	if session.PendingOAuthBind != nil {
 		var finalized bool
-		user, finalized = h.finalizePendingOAuthBindOn2FAComplete(c, session, user)
+		user, finalized = h.finalizePendingOAuthBindOn2FAComplete(c, req.TempToken, session, user)
 		if !finalized {
 			return
 		}

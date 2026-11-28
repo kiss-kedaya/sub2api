@@ -203,7 +203,7 @@
                 type="button"
                 data-testid="dingtalk-bind-login-submit"
                 class="btn btn-primary w-full"
-                :disabled="isSubmitting || !bindLoginEmail.trim() || !bindLoginPassword || (bindTurnstileEnabled && !bindCaptchaToken)"
+                :disabled="isSubmitting || !bindLoginEmail.trim() || !bindLoginPassword || (bindTurnstileReady && !bindCaptchaToken)"
                 @click="handleBindLogin"
               >
                 {{ isSubmitting ? t('common.processing') : t('auth.oauthFlow.logInAndBind') }}
@@ -356,13 +356,16 @@ const bindAliyunCaptchaPrefix = ref('')
 const bindAliyunCaptchaRegion = ref('cn')
 const bindCaptchaToken = ref('')
 const bindTencentRandstr = ref('')
+const bindTurnstileReady = computed(
+  () => bindTurnstileEnabled.value && Boolean(bindTurnstileSiteKey.value)
+)
 const bindActionCaptchaEnabled = computed(
   () =>
     (bindTencentCaptchaEnabled.value && Boolean(bindTencentCaptchaAppId.value)) ||
     (bindAliyunCaptchaEnabled.value && Boolean(bindAliyunCaptchaSceneId.value) && Boolean(bindAliyunCaptchaPrefix.value))
 )
 const bindCaptchaEnabled = computed(
-  () => (bindTurnstileEnabled.value && Boolean(bindTurnstileSiteKey.value)) || bindActionCaptchaEnabled.value
+  () => bindTurnstileReady.value || bindActionCaptchaEnabled.value
 )
 const providerName = t('auth.dingtalkProviderName')
 
@@ -833,7 +836,7 @@ async function handleBindLogin() {
   const password = bindLoginPassword.value
   if (!email || !password) return
 
-  if (bindTurnstileEnabled.value && !bindCaptchaToken.value) {
+  if (bindTurnstileReady.value && !bindCaptchaToken.value) {
     accountActionError.value = t('auth.completeVerification')
     return
   }
@@ -849,7 +852,7 @@ async function handleBindLogin() {
     const { data } = await apiClient.post<DingTalkPendingActionResponse>('/auth/oauth/pending/bind-login', {
       email,
       password,
-      ...((bindTurnstileEnabled.value || bindAliyunCaptchaEnabled.value) && bindCaptchaToken.value
+      ...((bindTurnstileReady.value || bindAliyunCaptchaEnabled.value) && bindCaptchaToken.value
         ? { turnstile_token: bindCaptchaToken.value }
         : {}),
       ...(bindTencentCaptchaEnabled.value && bindCaptchaToken.value

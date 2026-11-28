@@ -242,11 +242,12 @@ type track1RefreshCacheSpy struct {
 	RefreshTokenCache
 	revokedAllUsers []int64
 	revokedBefore   map[int64]time.Time
+	deleteErr       error
 }
 
 func (s *track1RefreshCacheSpy) DeleteUserRefreshTokens(_ context.Context, userID int64) error {
 	s.revokedAllUsers = append(s.revokedAllUsers, userID)
-	return nil
+	return s.deleteErr
 }
 
 func (s *track1RefreshCacheSpy) RevokeAccessTokensBefore(_ context.Context, userID int64, before time.Time, _ time.Duration) error {
@@ -539,4 +540,11 @@ func TestPersonalAPIKeyRevokedOnAllSecurityEvents(t *testing.T) {
 	require.NoError(t, totpSvc.RevokeTwoFactorGrantsForUser(ctx, user.ID))
 	require.Len(t, revoker.revokedUserIDs, 4)
 	require.Contains(t, totpCache.revokedUserIDs, user.ID)
+
+	// 5. RevokeAllUserTokens STILL revokes uak_ even when Redis session deletion fails!
+	refreshSpy.deleteErr = errors.New("redis unavailable")
+	err = authSvc.RevokeAllUserTokens(ctx, user.ID)
+	require.Error(t, err)
+	require.Len(t, revoker.revokedUserIDs, 5)
+	require.Equal(t, int64(42), revoker.revokedUserIDs[4])
 }

@@ -1290,15 +1290,6 @@ func (h *AuthHandler) PrepareOAuthBindAccessTokenCookie(c *gin.Context) {
 	c.Writer.WriteHeaderNow()
 }
 
-func (h *AuthHandler) resolveOAuthBindTargetUserID(c *gin.Context) (*int64, error) {
-	meta, err := h.resolveOAuthBindTarget(c)
-	if err != nil || meta == nil || meta.UserID <= 0 {
-		return nil, err
-	}
-	id := meta.UserID
-	return &id, nil
-}
-
 func (h *AuthHandler) resolveOAuthBindTarget(c *gin.Context) (*oauthBindTargetMeta, error) {
 	if subject, ok := servermiddleware.GetAuthSubjectFromContext(c); ok && subject.UserID > 0 {
 		if h != nil && h.userService != nil {

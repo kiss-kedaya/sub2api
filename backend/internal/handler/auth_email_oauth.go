@@ -308,6 +308,9 @@ func (h *AuthHandler) emailOAuthCallbackWithProfile(
 		return
 	}
 	if err := h.ensureBackendModeAllowsUser(c.Request.Context(), user); err != nil {
+		if tokenPair != nil {
+			_ = h.authService.RevokeRefreshToken(c.Request.Context(), tokenPair.RefreshToken)
+		}
 		redirectOAuthError(c, frontendCallback, "login_blocked", infraerrors.Reason(err), infraerrors.Message(err))
 		return
 	}

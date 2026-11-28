@@ -2635,6 +2635,9 @@ func (s *AuthService) RevokeAllUserTokens(ctx context.Context, userID int64) err
 		return fmt.Errorf("get user: %w", err)
 	}
 
+	// 个人接口密钥（uak_）吊销独立于 Redis，即使 Redis 会话吊销失败也要确保立即作废。
+	s.RevokePersonalAPIKeyQuietly(ctx, userID, "revoke all tokens")
+
 	if err := s.RevokeAllUserSessions(ctx, userID); err != nil {
 		logger.LegacyPrintf("service.auth", "[Auth] Failed to revoke refresh sessions after token invalidation for user %d: %v", userID, err)
 		return fmt.Errorf("revoke user sessions: %w", err)
@@ -2646,8 +2649,6 @@ func (s *AuthService) RevokeAllUserTokens(ctx context.Context, userID int64) err
 		logger.LegacyPrintf("service.auth", "[Auth] Failed to revoke access tokens for user %d: %v", userID, err)
 		return fmt.Errorf("revoke access tokens: %w", err)
 	}
-	// 撤销全部会话（含强制下线、解绑登录方式等应急操作）时同步吊销个人接口密钥（uak_）。
-	s.RevokePersonalAPIKeyQuietly(ctx, userID, "revoke all tokens")
 	return nil
 }
 

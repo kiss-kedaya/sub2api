@@ -7,8 +7,10 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
@@ -1012,28 +1014,124 @@ func ValidateOIDCOutboundURL(ctx context.Context, raw string) (string, error) {
 	return urlvalidator.ValidateOutboundURL(ctx, raw, oidcOutboundPolicy())
 }
 
-// NewOIDCOutboundHTTPClient 构造带安全拨号（防 DNS rebinding）与重定向守卫的 OIDC 出站 HTTP 客户端。
+var (
+	oidcSafeTransportOnce sync.Once
+	oidcSafeTransport     http.RoundTripper
+)
+
+func getOIDCOutboundTransport(policy urlvalidator.OutboundPolicy) http.RoundTripper {
+	if policy.AllowPrivate {
+		// 测试模式允许私网目标时关闭长连接，避免短命 httptest.Server 泄漏空闲连接/goroutine。
+		client := urlvalidator.NewSafeHTTPClient(policy, urlvalidator.HTTPClientOptions{})
+		if tr, ok := client.Transport.(*http.Transport); ok {
+			tr.DisableKeepAlives = true
+		}
+		return client.Transport
+	}
+	oidcSafeTransportOnce.Do(func() {
+		client := urlvalidator.NewSafeHTTPClient(urlvalidator.OutboundPolicy{}, urlvalidator.HTTPClientOptions{
+			MaxIdleConns:        32,
+			MaxIdleConnsPerHost: 8,
+		})
+		oidcSafeTransport = client.Transport
+	})
+	return oidcSafeTransport
+}
+
+func sameURLOrigin(a, b *url.URL) bool {
+	if a == nil || b == nil {
+		return false
+	}
+	schemeA := strings.ToLower(strings.TrimSpace(a.Scheme))
+	schemeB := strings.ToLower(strings.TrimSpace(b.Scheme))
+	if schemeA == "" || schemeA != schemeB {
+		return false
+	}
+	hostA := strings.ToLower(strings.TrimSpace(a.Hostname()))
+	hostB := strings.ToLower(strings.TrimSpace(b.Hostname()))
+	if hostA == "" || hostA != hostB {
+		return false
+	}
+	portA := effectiveURLPort(schemeA, a.Port())
+	portB := effectiveURLPort(schemeB, b.Port())
+	return portA == portB
+}
+
+func effectiveURLPort(scheme, port string) string {
+	if port != "" {
+		return port
+	}
+	switch scheme {
+	case "https":
+		return "443"
+	case "http":
+		return "80"
+	default:
+		return ""
+	}
+}
+
+// NewOIDCOutboundHTTPClient 构造带安全拨号（防 DNS rebinding）与重定向守卫的 OIDC 出站 HTTP 客户端
+// （适用于不含敏感凭据的 Discovery / JWKS GET 请求）。
 func NewOIDCOutboundHTTPClient(timeout time.Duration) *http.Client {
 	policy := oidcOutboundPolicy()
-	client := urlvalidator.NewSafeHTTPClient(policy, urlvalidator.HTTPClientOptions{
-		Timeout: timeout,
-	})
-	client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
-		if len(via) >= oidcMaxRedirects {
-			return urlvalidator.ErrOutboundTargetNotAllowed
-		}
-		if req == nil || req.URL == nil {
-			return urlvalidator.ErrOutboundTargetNotAllowed
-		}
-		if policy.AllowPrivate {
+	return &http.Client{
+		Transport: getOIDCOutboundTransport(policy),
+		Timeout:   timeout,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= oidcMaxRedirects {
+				return urlvalidator.ErrOutboundTargetNotAllowed
+			}
+			if req == nil || req.URL == nil {
+				return urlvalidator.ErrOutboundTargetNotAllowed
+			}
+			if policy.AllowPrivate {
+				return nil
+			}
+			if _, err := urlvalidator.ValidateOutboundURL(req.Context(), req.URL.String(), policy); err != nil {
+				return err
+			}
 			return nil
-		}
-		if _, err := urlvalidator.ValidateOutboundURL(req.Context(), req.URL.String(), policy); err != nil {
-			return err
-		}
-		return nil
+		},
 	}
-	return client
+}
+
+// NewOIDCNoRedirectOutboundHTTPClient 构造禁止任何 3xx 重定向的 OIDC 安全出站客户端，
+// 用于携带 client_secret / authorization code 的 Token 交换 POST 请求，防止 307/308 重放泄露凭据。
+func NewOIDCNoRedirectOutboundHTTPClient(timeout time.Duration) *http.Client {
+	policy := oidcOutboundPolicy()
+	return &http.Client{
+		Transport: getOIDCOutboundTransport(policy),
+		Timeout:   timeout,
+		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+			return urlvalidator.ErrOutboundTargetNotAllowed
+		},
+	}
+}
+
+// NewOIDCSameOriginOutboundHTTPClient 构造仅允许同源重定向的 OIDC 安全出站客户端，
+// 用于携带 Bearer access_token 的 UserInfo GET 请求，防止跨源重定向泄露令牌。
+func NewOIDCSameOriginOutboundHTTPClient(timeout time.Duration) *http.Client {
+	policy := oidcOutboundPolicy()
+	return &http.Client{
+		Transport: getOIDCOutboundTransport(policy),
+		Timeout:   timeout,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) == 0 || len(via) >= oidcMaxRedirects || req == nil || req.URL == nil {
+				return urlvalidator.ErrOutboundTargetNotAllowed
+			}
+			if !sameURLOrigin(via[0].URL, req.URL) {
+				return urlvalidator.ErrOutboundTargetNotAllowed
+			}
+			if policy.AllowPrivate {
+				return nil
+			}
+			if _, err := urlvalidator.ValidateOutboundURL(req.Context(), req.URL.String(), policy); err != nil {
+				return err
+			}
+			return nil
+		},
+	}
 }
 
 // ReadOIDCResponseBody 带严格字节上限读取 OIDC 响应体。

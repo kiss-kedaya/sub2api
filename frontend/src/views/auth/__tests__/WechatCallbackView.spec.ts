@@ -3,9 +3,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import WechatCallbackView from '@/views/auth/WechatCallbackView.vue'
 
 const {
+  exchangeOAuthLoginCodeMock,
   exchangePendingOAuthCompletionMock,
   completeWeChatOAuthRegistrationMock,
   login2FAMock,
+  login2FAPasskeyFinishMock,
+  acceptLoginChallengeMock,
   apiClientPostMock,
   sendVerifyCodeMock,
   sendPendingOAuthVerifyCodeMock,
@@ -23,9 +26,12 @@ const {
   locationState,
   appStoreState,
 } = vi.hoisted(() => ({
+  exchangeOAuthLoginCodeMock: vi.fn(),
   exchangePendingOAuthCompletionMock: vi.fn(),
   completeWeChatOAuthRegistrationMock: vi.fn(),
   login2FAMock: vi.fn(),
+  login2FAPasskeyFinishMock: vi.fn(),
+  acceptLoginChallengeMock: vi.fn(),
   apiClientPostMock: vi.fn(),
   sendVerifyCodeMock: vi.fn(),
   sendPendingOAuthVerifyCodeMock: vi.fn(),
@@ -139,9 +145,11 @@ vi.mock('@/api/auth', async () => {
   const actual = await vi.importActual<typeof import('@/api/auth')>('@/api/auth')
   return {
     ...actual,
+    exchangeOAuthLoginCode: (...args: any[]) => exchangeOAuthLoginCodeMock(...args),
     exchangePendingOAuthCompletion: (...args: any[]) => exchangePendingOAuthCompletionMock(...args),
     completeWeChatOAuthRegistration: (...args: any[]) => completeWeChatOAuthRegistrationMock(...args),
     login2FA: (...args: any[]) => login2FAMock(...args),
+    login2FAPasskeyFinish: (...args: any[]) => login2FAPasskeyFinishMock(...args),
     sendVerifyCode: (...args: any[]) => sendVerifyCodeMock(...args),
     sendPendingOAuthVerifyCode: (...args: any[]) => sendPendingOAuthVerifyCodeMock(...args),
     getPublicSettings: (...args: any[]) => getPublicSettingsMock(...args),
@@ -150,11 +158,21 @@ vi.mock('@/api/auth', async () => {
   }
 })
 
+vi.mock('@/api/passkey', () => ({
+  passkeyAPI: {
+    isSupported: () => true,
+    acceptLoginChallenge: (...args: any[]) => acceptLoginChallengeMock(...args),
+  },
+}))
+
 describe('WechatCallbackView', () => {
   beforeEach(() => {
+    exchangeOAuthLoginCodeMock.mockReset()
     exchangePendingOAuthCompletionMock.mockReset()
     completeWeChatOAuthRegistrationMock.mockReset()
     login2FAMock.mockReset()
+    login2FAPasskeyFinishMock.mockReset()
+    acceptLoginChallengeMock.mockReset()
     apiClientPostMock.mockReset()
     sendVerifyCodeMock.mockReset()
     sendPendingOAuthVerifyCodeMock.mockReset()
@@ -1087,5 +1105,89 @@ describe('WechatCallbackView', () => {
     expect(replaceMock.mock.calls[0]?.[0]).toContain('wechat_bind_existing%3D1')
     expect(replaceMock.mock.calls[0]?.[0]).toContain('mode%3Dmp')
     expect(replaceMock.mock.calls[0]?.[0]).toContain('email=resume%40example.com')
+  })
+
+  it('exchanges one-time fragment code for token pair without pending exchange', async () => {
+    locationState.current.hash = '#code=wx-one-time-code&redirect=%2Fsettings'
+    exchangeOAuthLoginCodeMock.mockResolvedValue({
+      access_token: 'wx-code-access',
+      refresh_token: 'wx-code-refresh',
+      expires_in: 3600,
+      redirect: '/settings',
+    })
+    setTokenMock.mockResolvedValue({})
+
+    mount(WechatCallbackView, {
+      global: {
+        stubs: {
+          AuthLayout: { template: '<div><slot /></div>' },
+          Icon: true,
+          RouterLink: { template: '<a><slot /></a>' },
+          transition: false,
+        },
+      },
+    })
+    await flushPromises()
+
+    expect(exchangeOAuthLoginCodeMock).toHaveBeenCalledWith('wx-one-time-code')
+    expect(exchangePendingOAuthCompletionMock).not.toHaveBeenCalled()
+    expect(setTokenMock).toHaveBeenCalledWith('wx-code-access')
+    expect(replaceMock).toHaveBeenCalledWith('/settings')
+  })
+
+  it('progresses from TOTP to passkey during dual-factor 2FA challenge', async () => {
+    const pkOptions = { publicKey: { challenge: 'wx-dual-chal' } }
+    exchangePendingOAuthCompletionMock.mockResolvedValue({
+      requires_2fa: true,
+      temp_token: 'wx-dual-temp',
+      user_email_masked: 'w***x@example.com',
+      required_factors: ['totp', 'passkey'],
+      passed_factors: [],
+      next_factor: 'totp',
+      redirect: '/dashboard',
+    })
+    login2FAMock.mockResolvedValue({
+      requires_2fa: true,
+      temp_token: 'wx-dual-temp',
+      user_email_masked: 'w***x@example.com',
+      required_factors: ['totp', 'passkey'],
+      passed_factors: ['totp'],
+      next_factor: 'passkey',
+      passkey_session_token: 'wx-dual-pk-sess',
+      passkey_options: pkOptions,
+    })
+    acceptLoginChallengeMock.mockResolvedValue({ id: 'wx-dual-cred', type: 'public-key' })
+    login2FAPasskeyFinishMock.mockResolvedValue({ access_token: 'wx-dual-token' })
+    setTokenMock.mockResolvedValue({})
+
+    const wrapper = mount(WechatCallbackView, {
+      global: {
+        stubs: {
+          AuthLayout: { template: '<div><slot /></div>' },
+          Icon: true,
+          RouterLink: { template: '<a><slot /></a>' },
+          transition: false,
+        },
+      },
+    })
+    await flushPromises()
+
+    await wrapper.get('[data-testid="wechat-bind-login-totp"]').setValue('123456')
+    await wrapper.get('[data-testid="wechat-bind-login-totp-submit"]').trigger('click')
+    await flushPromises()
+
+    expect(setTokenMock).not.toHaveBeenCalled()
+    expect(wrapper.find('[data-testid="login-passkey-pane"]').exists()).toBe(true)
+
+    await wrapper.get('[data-testid="passkey-login-verify"]').trigger('click')
+    await flushPromises()
+
+    expect(login2FAPasskeyFinishMock).toHaveBeenCalledWith({
+      temp_token: 'wx-dual-temp',
+      session_token: 'wx-dual-pk-sess',
+      credential: { id: 'wx-dual-cred', type: 'public-key' },
+    })
+    expect(setTokenMock).toHaveBeenCalledWith('wx-dual-token')
+    expect(replaceMock).toHaveBeenCalledWith('/dashboard')
   })
 })

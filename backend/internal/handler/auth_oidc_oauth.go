@@ -778,7 +778,7 @@ func oidcExchangeCode(
 		httpReq.SetBasicAuth(cfg.ClientID, cfg.ClientSecret)
 	}
 
-	resp, err := service.NewOIDCOutboundHTTPClient(30 * time.Second).Do(httpReq)
+	resp, err := service.NewOIDCNoRedirectOutboundHTTPClient(30 * time.Second).Do(httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("request token: %w", err)
 	}
@@ -888,7 +888,7 @@ func oidcFetchUserInfo(
 	httpReq.Header.Set("Accept", "application/json")
 	httpReq.Header.Set("Authorization", authorization)
 
-	resp, err := service.NewOIDCOutboundHTTPClient(30 * time.Second).Do(httpReq)
+	resp, err := service.NewOIDCSameOriginOutboundHTTPClient(30 * time.Second).Do(httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("request userinfo: %w", err)
 	}
@@ -1338,6 +1338,13 @@ func (h *AuthHandler) tryOIDCVerifiedEmailFastPath(
 				provider = "oidc"
 			}
 			h.redirectEmailOAuthPending2FAChallenge(c, user, provider, input, frontendCallback, redirectTo)
+			return true
+		}
+		if errors.Is(err, service.ErrTwoFactorPolicyUnavailable) {
+			secureCookie := h.isRequestHTTPS(c)
+			clearOAuthPendingSessionCookie(c, secureCookie)
+			clearOAuthPendingBrowserCookie(c, secureCookie)
+			redirectOAuthError(c, frontendCallback, "two_factor_unavailable", "two-factor verification is unavailable", "")
 			return true
 		}
 		log.Printf("[OIDC OAuth] verified-email fast path skipped: reason=%s", infraerrors.Reason(err))

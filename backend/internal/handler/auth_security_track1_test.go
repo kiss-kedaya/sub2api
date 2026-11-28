@@ -14,9 +14,11 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	dbent "github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/ent/authidentity"
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	servermiddleware "github.com/Wei-Shaw/sub2api/internal/server/middleware"
@@ -1043,4 +1045,430 @@ func (c *track1PasswordResetEmailCacheStub) DeletePasswordResetToken(_ context.C
 
 func (c *track1PasswordResetEmailCacheStub) DeletePasswordResetCooldown(context.Context, string) error {
 	return nil
+}
+
+// Regression: 63-bit resolvedTokenVersion (> 2^53) MUST survive PendingAuthSession.LocalFlowState
+// JSON/JSONB round-trip without float64 precision loss, so real users can complete OAuth bind_current_user,
+// while a changed TokenVersion (e.g. after password change) still rejects with 401 TOKEN_REVOKED.
+func TestOAuthBindCurrentUserPreserves63BitTokenVersionThroughJSONRoundTrip(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx := context.Background()
+
+	refreshCache := &track1StatefulRefreshCache{}
+	totpCache := &track1StatefulTotpCache{}
+	handler, client := newOAuthPendingFlowTestHandlerWithDependencies(t, oauthPendingFlowTestHandlerOptions{
+		refreshTokenCache: refreshCache,
+		totpCache:         totpCache,
+	})
+	t.Cleanup(func() { _ = client.Close() })
+
+	// Realistic 63-bit TokenVersion that loses low bits if decoded through JSON float64!
+	const highBitTokenVersion int64 = 5834190237451829341
+	require.NotEqual(t, highBitTokenVersion, int64(float64(highBitTokenVersion)), "test precondition: value must lose precision in float64")
+
+	userEntity, err := client.User.Create().
+		SetEmail("highbit-bind@example.com").
+		SetUsername("highbit").
+		SetPasswordHash("pw-hash").
+		SetRole(service.RoleUser).
+		SetStatus(service.StatusActive).
+		Save(ctx)
+	require.NoError(t, err)
+
+	// Override userService with a repo that returns the exact 63-bit TokenVersionResolved.
+	currentTokenVersion := highBitTokenVersion
+	baseRepo := handler.userService
+	_ = baseRepo
+	versionRepo := &track1HighBitTokenVersionUserRepo{
+		client:  client,
+		version: &currentTokenVersion,
+	}
+	handler.userService = service.NewUserService(versionRepo, nil, nil, nil)
+
+	// Create pending bind_current_user session via real createOAuthPendingSession -> SQLite JSON round-trip.
+	createRec := httptest.NewRecorder()
+	createCtx, _ := gin.CreateTestContext(createRec)
+	createCtx.Request = httptest.NewRequest(http.MethodGet, "/api/v1/auth/oauth/github/callback", nil)
+
+	uid := userEntity.ID
+	err = handler.createOAuthPendingSession(createCtx, oauthPendingSessionPayload{
+		Intent:                 oauthIntentBindCurrentUser,
+		Identity:               service.PendingAuthIdentityKey{ProviderType: "github", ProviderKey: "github", ProviderSubject: "gh-highbit-1"},
+		TargetUserID:           &uid,
+		BindTokenIssuedAt:      time.Now().UTC().Unix(),
+		BindTokenVersion:       highBitTokenVersion,
+		HasBindTokenVersion:    true,
+		ResolvedEmail:          userEntity.Email,
+		RedirectTo:             "/profile",
+		BrowserSessionKey:      "highbit-browser-1",
+		UpstreamIdentityClaims: map[string]any{"email": userEntity.Email},
+		CompletionResponse:     map[string]any{"provider": "github", "binding": true, "redirect": "/profile"},
+	})
+	require.NoError(t, err)
+	sessCookie := findCookie(createRec.Result().Cookies(), oauthPendingSessionCookieName)
+	require.NotNil(t, sessCookie)
+
+	// 1. Legitimate non-revoked user with 63-bit TokenVersion MUST succeed (200 OK) and bind auth_identity.
+	exRec := httptest.NewRecorder()
+	exCtx, _ := gin.CreateTestContext(exRec)
+	exReq := httptest.NewRequest(http.MethodPost, "/api/v1/auth/oauth/pending/exchange", nil)
+	exReq.AddCookie(sessCookie)
+	exReq.AddCookie(&http.Cookie{Name: oauthPendingBrowserCookieName, Value: encodeCookieValue("highbit-browser-1")})
+	exCtx.Request = exReq
+
+	handler.ExchangePendingOAuthCompletion(exCtx)
+	require.Equal(t, http.StatusOK, exRec.Code, exRec.Body.String())
+
+	boundCount, err := client.AuthIdentity.Query().Where(authidentity.UserIDEQ(userEntity.ID)).Count(ctx)
+	require.NoError(t, err)
+	require.Equal(t, 1, boundCount)
+
+	// 2. If TokenVersion changes (password changed by even 1 bit!) while bind is in-flight, MUST fail with 401 TOKEN_REVOKED.
+	createRec2 := httptest.NewRecorder()
+	createCtx2, _ := gin.CreateTestContext(createRec2)
+	createCtx2.Request = httptest.NewRequest(http.MethodGet, "/api/v1/auth/oauth/google/callback", nil)
+
+	err = handler.createOAuthPendingSession(createCtx2, oauthPendingSessionPayload{
+		Intent:                 oauthIntentBindCurrentUser,
+		Identity:               service.PendingAuthIdentityKey{ProviderType: "google", ProviderKey: "google", ProviderSubject: "gg-highbit-2"},
+		TargetUserID:           &uid,
+		BindTokenIssuedAt:      time.Now().UTC().Unix(),
+		BindTokenVersion:       highBitTokenVersion,
+		HasBindTokenVersion:    true,
+		ResolvedEmail:          userEntity.Email,
+		RedirectTo:             "/profile",
+		BrowserSessionKey:      "highbit-browser-2",
+		UpstreamIdentityClaims: map[string]any{"email": userEntity.Email},
+		CompletionResponse:     map[string]any{"provider": "google", "binding": true, "redirect": "/profile"},
+	})
+	require.NoError(t, err)
+	sessCookie2 := findCookie(createRec2.Result().Cookies(), oauthPendingSessionCookieName)
+	require.NotNil(t, sessCookie2)
+
+	// Flip lowest bit (would be invisible in float64!) to prove exact 64-bit mismatch detection.
+	currentTokenVersion = highBitTokenVersion ^ 1
+
+	exRec2 := httptest.NewRecorder()
+	exCtx2, _ := gin.CreateTestContext(exRec2)
+	exReq2 := httptest.NewRequest(http.MethodPost, "/api/v1/auth/oauth/pending/exchange", nil)
+	exReq2.AddCookie(sessCookie2)
+	exReq2.AddCookie(&http.Cookie{Name: oauthPendingBrowserCookieName, Value: encodeCookieValue("highbit-browser-2")})
+	exCtx2.Request = exReq2
+
+	handler.ExchangePendingOAuthCompletion(exCtx2)
+	require.Equal(t, http.StatusUnauthorized, exRec2.Code, exRec2.Body.String())
+	require.Contains(t, exRec2.Body.String(), "TOKEN_REVOKED")
+}
+
+type track1HighBitTokenVersionUserRepo struct {
+	service.UserRepository
+	client  *dbent.Client
+	version *int64
+}
+
+func (r *track1HighBitTokenVersionUserRepo) GetUserAvatar(context.Context, int64) (*service.UserAvatar, error) {
+	return nil, nil
+}
+
+func (r *track1HighBitTokenVersionUserRepo) GetByID(ctx context.Context, id int64) (*service.User, error) {
+	u, err := r.client.User.Get(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	return &service.User{
+		ID:                   u.ID,
+		Email:                u.Email,
+		Username:             u.Username,
+		PasswordHash:         u.PasswordHash,
+		Role:                 u.Role,
+		Status:               u.Status,
+		TokenVersion:         *r.version,
+		TokenVersionResolved: true,
+	}, nil
+}
+
+// Regression: Login2FA rejects Passkey-only sessions immediately (400), and replaying a consumed
+// PendingOAuthBind session via a second temp_token fails with 4xx (not 500) and cleans up temp_token.
+func TestLogin2FARejectsPasskeyOnlySessionAndAtomicPendingBindConsume(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx := context.Background()
+
+	totpSecret := "JBSWY3DPEHPK3PXP"
+	refreshCache := &track1StatefulRefreshCache{}
+	totpCache := &track1StatefulTotpCache{}
+	handler, client := newOAuthPendingFlowTestHandlerWithDependencies(t, oauthPendingFlowTestHandlerOptions{
+		refreshTokenCache: refreshCache,
+		totpCache:         totpCache,
+		settingValues: map[string]string{
+			service.SettingKeyTotpEnabled: "true",
+		},
+	})
+	t.Cleanup(func() { _ = client.Close() })
+
+	userEntity, err := client.User.Create().
+		SetEmail("atomic-2fa@example.com").
+		SetUsername("atomic-2fa").
+		SetPasswordHash("hash").
+		SetRole(service.RoleUser).
+		SetStatus(service.StatusActive).
+		SetTotpEnabled(true).
+		SetTotpSecretEncrypted(totpSecret).
+		Save(ctx)
+	require.NoError(t, err)
+
+	// 1. Passkey-only temp_token (for a user without TOTP) submitted to POST /auth/login/2fa MUST NOT issue tokens.
+	pkOnlyUser, err := client.User.Create().
+		SetEmail("atomic-pk-only@example.com").
+		SetUsername("atomic-pk-only").
+		SetPasswordHash("hash").
+		SetRole(service.RoleUser).
+		SetStatus(service.StatusActive).
+		SetTotpEnabled(false).
+		Save(ctx)
+	require.NoError(t, err)
+	pkOnlyTemp, err := handler.totpService.CreateLoginSessionForFactors(ctx, pkOnlyUser.ID, pkOnlyUser.Email, []service.Factor{service.FactorPasskey}, nil)
+	require.NoError(t, err)
+
+	rec1 := httptest.NewRecorder()
+	ctx1, _ := gin.CreateTestContext(rec1)
+	req1 := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login/2fa",
+		strings.NewReader(`{"temp_token":"`+pkOnlyTemp+`","totp_code":"123456"}`))
+	req1.Header.Set("Content-Type", "application/json")
+	ctx1.Request = req1
+	handler.Login2FA(ctx1)
+	require.Equal(t, http.StatusBadRequest, rec1.Code, rec1.Body.String())
+	require.NotContains(t, rec1.Body.String(), "access_token")
+
+	// 2. Two temp_tokens pointing to the SAME PendingOAuthBind session: only the first wins;
+	// the second sees 409 PENDING_AUTH_SESSION_CONSUMED (not 500!) and its temp_token is cleaned up.
+	uid := userEntity.ID
+	pendingSess, err := client.PendingAuthSession.Create().
+		SetSessionToken("atomic-pending-tok").
+		SetIntent(oauthIntentLogin).
+		SetProviderType("github").
+		SetProviderKey("github").
+		SetProviderSubject("gh-atomic-sub").
+		SetTargetUserID(uid).
+		SetResolvedEmail(userEntity.Email).
+		SetBrowserSessionKey("atomic-browser-key").
+		SetLocalFlowState(map[string]any{
+			oauthCompletionResponseKey:       map[string]any{"provider": "github", "redirect": "/dashboard"},
+			oauthPendingBindAfter2FAStateKey: true,
+		}).
+		SetExpiresAt(time.Now().UTC().Add(10 * time.Minute)).
+		Save(ctx)
+	require.NoError(t, err)
+
+	pendingRef := &service.PendingOAuthBindLoginSession{
+		PendingSessionToken: pendingSess.SessionToken,
+		BrowserSessionKey:   pendingSess.BrowserSessionKey,
+	}
+	t1, err := handler.totpService.CreateLoginSessionForFactors(ctx, userEntity.ID, userEntity.Email, []service.Factor{service.FactorTOTP}, nil, pendingRef)
+	require.NoError(t, err)
+	t2, err := handler.totpService.CreateLoginSessionForFactors(ctx, userEntity.ID, userEntity.Email, []service.Factor{service.FactorTOTP}, nil, pendingRef)
+	require.NoError(t, err)
+
+	code1, err := totp.GenerateCode(totpSecret, time.Now())
+	require.NoError(t, err)
+	recA := httptest.NewRecorder()
+	ctxA, _ := gin.CreateTestContext(recA)
+	reqA := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login/2fa",
+		strings.NewReader(`{"temp_token":"`+t1+`","totp_code":"`+code1+`"}`))
+	reqA.Header.Set("Content-Type", "application/json")
+	ctxA.Request = reqA
+	handler.Login2FA(ctxA)
+	require.Equal(t, http.StatusOK, recA.Code, recA.Body.String())
+
+	// Second attempt using t2 with a valid TOTP code in next window/fresh counter must fail with 401 PENDING_AUTH_SESSION_CONSUMED, not 500.
+	code2, err := totp.GenerateCode(totpSecret, time.Now().Add(30*time.Second))
+	require.NoError(t, err)
+	recB := httptest.NewRecorder()
+	ctxB, _ := gin.CreateTestContext(recB)
+	reqB := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login/2fa",
+		strings.NewReader(`{"temp_token":"`+t2+`","totp_code":"`+code2+`"}`))
+	reqB.Header.Set("Content-Type", "application/json")
+	ctxB.Request = reqB
+	handler.Login2FA(ctxB)
+	require.Equal(t, http.StatusUnauthorized, recB.Code, recB.Body.String())
+	require.Contains(t, recB.Body.String(), "PENDING_AUTH_SESSION_CONSUMED")
+}
+
+// Regression: PendingBindAfter2FA session when user disables 2FA before /oauth/pending/exchange
+// MUST bind the identity atomically, consume the session, issue tokens, and reject replay.
+func TestPendingBindAfter2FACompletesWhen2FADisabledBeforeExchange(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx := context.Background()
+
+	handler, client := newOAuthPendingFlowTestHandlerWithDependencies(t, oauthPendingFlowTestHandlerOptions{
+		refreshTokenCache: &track1StatefulRefreshCache{},
+		totpCache:         &track1StatefulTotpCache{},
+		settingValues: map[string]string{
+			service.SettingKeyTotpEnabled: "true",
+		},
+	})
+	t.Cleanup(func() { _ = client.Close() })
+
+	userEntity, err := client.User.Create().
+		SetEmail("disabled-2fa-race@example.com").
+		SetUsername("race-user").
+		SetPasswordHash("hash").
+		SetRole(service.RoleUser).
+		SetStatus(service.StatusActive).
+		SetTotpEnabled(false). // 2FA disabled before exchange
+		Save(ctx)
+	require.NoError(t, err)
+
+	sess, err := client.PendingAuthSession.Create().
+		SetSessionToken("race-bind-tok").
+		SetIntent(oauthIntentLogin).
+		SetProviderType("google").
+		SetProviderKey("google").
+		SetProviderSubject("gg-race-sub").
+		SetTargetUserID(userEntity.ID).
+		SetResolvedEmail(userEntity.Email).
+		SetBrowserSessionKey("race-browser-key").
+		SetLocalFlowState(map[string]any{
+			oauthCompletionResponseKey:       map[string]any{"provider": "google", "redirect": "/dashboard"},
+			oauthPendingBindAfter2FAStateKey: true,
+		}).
+		SetExpiresAt(time.Now().UTC().Add(10 * time.Minute)).
+		Save(ctx)
+	require.NoError(t, err)
+
+	rec1 := httptest.NewRecorder()
+	ctx1, _ := gin.CreateTestContext(rec1)
+	req1 := httptest.NewRequest(http.MethodPost, "/api/v1/auth/oauth/pending/exchange", nil)
+	req1.AddCookie(&http.Cookie{Name: oauthPendingSessionCookieName, Value: encodeCookieValue(sess.SessionToken)})
+	req1.AddCookie(&http.Cookie{Name: oauthPendingBrowserCookieName, Value: encodeCookieValue(sess.BrowserSessionKey)})
+	ctx1.Request = req1
+
+	handler.ExchangePendingOAuthCompletion(ctx1)
+	require.Equal(t, http.StatusOK, rec1.Code, rec1.Body.String())
+	require.Contains(t, rec1.Body.String(), "access_token")
+
+	boundCount, err := client.AuthIdentity.Query().
+		Where(
+			authidentity.UserIDEQ(userEntity.ID),
+			authidentity.ProviderTypeEQ("google"),
+		).Count(ctx)
+	require.NoError(t, err)
+	require.Equal(t, 1, boundCount, "google identity must be bound when 2FA was disabled before exchange")
+
+	// Replay MUST be rejected as consumed.
+	rec2 := httptest.NewRecorder()
+	ctx2, _ := gin.CreateTestContext(rec2)
+	req2 := httptest.NewRequest(http.MethodPost, "/api/v1/auth/oauth/pending/exchange", nil)
+	req2.AddCookie(&http.Cookie{Name: oauthPendingSessionCookieName, Value: encodeCookieValue(sess.SessionToken)})
+	req2.AddCookie(&http.Cookie{Name: oauthPendingBrowserCookieName, Value: encodeCookieValue(sess.BrowserSessionKey)})
+	ctx2.Request = req2
+
+	handler.ExchangePendingOAuthCompletion(ctx2)
+	require.Equal(t, http.StatusUnauthorized, rec2.Code, rec2.Body.String())
+	require.Contains(t, rec2.Body.String(), "PENDING_AUTH_SESSION_CONSUMED")
+}
+
+// Regression: tryOIDCVerifiedEmailFastPath MUST fail-closed on ErrTwoFactorPolicyUnavailable
+// instead of returning false and falling back to the choice flow.
+func TestOIDCVerifiedEmailFastPathFailsClosedOn2FAPolicyError(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx := context.Background()
+
+	handler, client := newOAuthPendingFlowTestHandlerWithDependencies(t, oauthPendingFlowTestHandlerOptions{
+		refreshTokenCache: &track1StatefulRefreshCache{},
+		totpCache:         &track1StatefulTotpCache{},
+	})
+	t.Cleanup(func() { _ = client.Close() })
+
+	_, err := client.User.Create().
+		SetEmail("oidc-failclosed@example.com").
+		SetUsername("oidc-fc").
+		SetPasswordHash("hash").
+		SetRole(service.RoleUser).
+		SetStatus(service.StatusActive).
+		Save(ctx)
+	require.NoError(t, err)
+
+	handler.authService.SetLoginTwoFactorPolicy(track1Failing2FAPolicy{})
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/v1/auth/oauth/oidc/callback", nil)
+
+	handled := handler.tryOIDCVerifiedEmailFastPath(
+		c,
+		"/auth/oidc/callback",
+		"/dashboard",
+		service.PendingAuthIdentityKey{ProviderType: "oidc", ProviderKey: "oidc", ProviderSubject: "oidc-sub-fc"},
+		"oidc-failclosed@example.com",
+		"oidc-fc",
+		map[string]any{"email": "oidc-failclosed@example.com"},
+	)
+	require.True(t, handled, "ErrTwoFactorPolicyUnavailable must fail closed and not fall back to choice flow")
+	require.Equal(t, http.StatusFound, rec.Code)
+	require.Contains(t, rec.Header().Get("Location"), "error=two_factor_unavailable")
+}
+
+type track1Failing2FAPolicy struct{}
+
+func (track1Failing2FAPolicy) LoginRequiredFactors(context.Context, *service.User) ([]service.Factor, error) {
+	return nil, service.ErrTwoFactorPolicyUnavailable
+}
+
+// Regression: oidcExchangeCode MUST reject 307/308 redirects (preventing client_secret exfiltration),
+// and oidcFetchUserInfo MUST reject cross-origin redirects (preventing Bearer token exfiltration)
+// while still allowing same-origin redirects.
+func TestOIDCExchangeAndUserInfoRejectCredentialLeakingRedirects(t *testing.T) {
+	ctx := context.Background()
+	t.Cleanup(service.SetAdminOutboundAllowPrivateForTest(true))
+
+	var attackerHits atomic.Int32
+	attacker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attackerHits.Add(1)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"access_token":"stolen"}`))
+	}))
+	defer attacker.Close()
+
+	var idpURL string
+	idp := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/token":
+			http.Redirect(w, r, attacker.URL+"/steal-token", http.StatusTemporaryRedirect)
+		case "/userinfo-cross":
+			http.Redirect(w, r, attacker.URL+"/steal-userinfo", http.StatusFound)
+		case "/userinfo-same":
+			http.Redirect(w, r, idpURL+"/userinfo-ok", http.StatusFound)
+		case "/userinfo-ok":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"sub":"u-1","email":"ok@example.com"}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	idpURL = idp.URL
+	defer idp.Close()
+
+	// 1. 307 redirect on TokenURL MUST be rejected without sending client_secret to attacker!
+	_, err := oidcExchangeCode(ctx, config.OIDCConnectConfig{
+		TokenURL:        idp.URL + "/token",
+		ClientID:        "cid",
+		ClientSecret:    "super-secret-value",
+		TokenAuthMethod: "client_secret_post",
+	}, "auth-code", "https://app.example/cb", "")
+	require.Error(t, err)
+	require.Zero(t, attackerHits.Load(), "307 redirect must never replay client_secret to redirect target")
+
+	// 2. Cross-origin 302 redirect on UserInfoURL MUST be rejected without sending Bearer token to attacker!
+	_, err = oidcFetchUserInfo(ctx, config.OIDCConnectConfig{
+		UserInfoURL: idp.URL + "/userinfo-cross",
+	}, &oidcTokenResponse{AccessToken: "secret-bearer-token"})
+	require.Error(t, err)
+	require.Zero(t, attackerHits.Load(), "cross-origin redirect must never forward Bearer token to another host")
+
+	// 3. Same-origin 302 redirect on UserInfoURL remains allowed.
+	claims, err := oidcFetchUserInfo(ctx, config.OIDCConnectConfig{
+		UserInfoURL: idp.URL + "/userinfo-same",
+	}, &oidcTokenResponse{AccessToken: "valid-token"})
+	require.NoError(t, err)
+	require.Equal(t, "ok@example.com", claims.Email)
 }
