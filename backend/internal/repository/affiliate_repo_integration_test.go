@@ -477,3 +477,109 @@ func TestAffiliateRepository_ListUsersWithCustomSettings(t *testing.T) {
 
 	require.GreaterOrEqual(t, total, int64(2), "total must include at least our 2 custom rows")
 }
+
+func TestAffiliateRepository_FrozenRefundNeverResurrectsAndPartialRefundsAreCumulative(t *testing.T) {
+	ctx := context.Background()
+	tx := testEntTx(t)
+	txCtx := dbent.NewTxContext(ctx, tx)
+	client := tx.Client()
+
+	inviter := mustCreateUser(t, client, &service.User{
+		Email:        fmt.Sprintf("affiliate-frozen-inviter-%d@example.com", time.Now().UnixNano()),
+		PasswordHash: "hash",
+		Role:         service.RoleUser,
+		Status:       service.StatusActive,
+		Concurrency:  5,
+	})
+	invitee := mustCreateUser(t, client, &service.User{
+		Email:        fmt.Sprintf("affiliate-frozen-invitee-%d@example.com", time.Now().UnixNano()+1),
+		PasswordHash: "hash",
+		Role:         service.RoleUser,
+		Status:       service.StatusActive,
+		Concurrency:  5,
+	})
+
+	repo := NewAffiliateRepository(client, integrationDB)
+	_, err := repo.EnsureUserAffiliate(txCtx, inviter.ID)
+	require.NoError(t, err)
+	_, err = repo.EnsureUserAffiliate(txCtx, invitee.ID)
+	require.NoError(t, err)
+	_, err = repo.BindInviter(txCtx, invitee.ID, inviter.ID, "")
+	require.NoError(t, err)
+
+	insertOrder := func(suffix string) int64 {
+		rows, qErr := client.QueryContext(txCtx, `
+INSERT INTO payment_orders(user_id, amount, pay_amount, out_trade_no, expires_at)
+VALUES ($1, 100, 100, $2, NOW() + interval '1 hour') RETURNING id`,
+			invitee.ID, fmt.Sprintf("aff-frozen-%s-%d", suffix, time.Now().UnixNano()))
+		require.NoError(t, qErr)
+		require.True(t, rows.Next())
+		var id int64
+		require.NoError(t, rows.Scan(&id))
+		require.NoError(t, rows.Close())
+		return id
+	}
+
+	reverser := repo.(interface {
+		ReverseQuotaForOrder(context.Context, int64, float64) (float64, error)
+	})
+
+	// Case A: Full refund of frozen accrual -> fast-forward past frozen_until -> thaw adds 0.
+	orderA := insertOrder("full")
+	applied, err := repo.AccrueQuota(txCtx, inviter.ID, invitee.ID, 10.0, 24, &orderA)
+	require.NoError(t, err)
+	require.True(t, applied)
+
+	revA, err := reverser.ReverseQuotaForOrder(txCtx, orderA, 1.0)
+	require.NoError(t, err)
+	require.InDelta(t, 10.0, revA, 1e-9)
+
+	// Even if we force frozen_until into the past (simulating legacy pre-fix rows),
+	// thawing must still add 0 resurrected quota.
+	_, err = client.ExecContext(txCtx,
+		`UPDATE user_affiliate_ledger SET frozen_until = NOW() - interval '1 hour' WHERE source_order_id = $1 AND action = 'accrue'`,
+		orderA)
+	require.NoError(t, err)
+
+	thawedA, err := repo.ThawFrozenQuota(txCtx, inviter.ID)
+	require.NoError(t, err)
+	require.Zero(t, thawedA)
+	require.InDelta(t, 0.0, querySingleFloat(t, txCtx, client,
+		"SELECT aff_quota::double precision FROM user_affiliates WHERE user_id = $1", inviter.ID), 1e-9)
+	require.InDelta(t, 0.0, querySingleFloat(t, txCtx, client,
+		"SELECT aff_frozen_quota::double precision FROM user_affiliates WHERE user_id = $1", inviter.ID), 1e-9)
+
+	// Case B: Two partial refunds on the same frozen order reverse the exact cumulative amount.
+	orderB := insertOrder("partial")
+	applied, err = repo.AccrueQuota(txCtx, inviter.ID, invitee.ID, 10.0, 24, &orderB)
+	require.NoError(t, err)
+	require.True(t, applied)
+
+	revB1, err := reverser.ReverseQuotaForOrder(txCtx, orderB, 0.3)
+	require.NoError(t, err)
+	require.InDelta(t, 3.0, revB1, 1e-9)
+
+	// Replaying the same cumulative ratio is idempotent.
+	revB1Dup, err := reverser.ReverseQuotaForOrder(txCtx, orderB, 0.3)
+	require.NoError(t, err)
+	require.Zero(t, revB1Dup)
+
+	// Second partial refund raises cumulative refunded share to 0.7 -> delta 4.0.
+	revB2, err := reverser.ReverseQuotaForOrder(txCtx, orderB, 0.7)
+	require.NoError(t, err)
+	require.InDelta(t, 4.0, revB2, 1e-9)
+
+	// Fast-forward past frozen_until -> only the remaining 3.0 thaws into aff_quota.
+	_, err = client.ExecContext(txCtx,
+		`UPDATE user_affiliate_ledger SET frozen_until = NOW() - interval '1 hour' WHERE source_order_id = $1 AND action = 'accrue'`,
+		orderB)
+	require.NoError(t, err)
+
+	thawedB, err := repo.ThawFrozenQuota(txCtx, inviter.ID)
+	require.NoError(t, err)
+	require.InDelta(t, 3.0, thawedB, 1e-9)
+	require.InDelta(t, 3.0, querySingleFloat(t, txCtx, client,
+		"SELECT aff_quota::double precision FROM user_affiliates WHERE user_id = $1", inviter.ID), 1e-9)
+	require.InDelta(t, 0.0, querySingleFloat(t, txCtx, client,
+		"SELECT aff_frozen_quota::double precision FROM user_affiliates WHERE user_id = $1", inviter.ID), 1e-9)
+}

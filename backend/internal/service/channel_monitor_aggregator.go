@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 )
 
 // 渠道监控聚合层：把 latest + availability 拼成 admin/user 视图所需的 summary / detail。
@@ -56,9 +57,30 @@ func (s *ChannelMonitorService) BatchMonitorStatusSummary(
 //	1 次批量 7d availability；
 //	1 次批量 timeline（主模型最近 N 条）。
 func (s *ChannelMonitorService) ListUserView(ctx context.Context) ([]*UserMonitorView, error) {
+	return s.ListUserViewForGroups(ctx, nil, true)
+}
+
+// ListUserViewForGroups lists enabled monitors visible within the caller's
+// allowed group scope. When unrestricted is false, monitors whose trimmed
+// GroupName is empty or not in allowedGroupNames are excluded (fail-closed)
+// before running any latest/availability/timeline queries.
+func (s *ChannelMonitorService) ListUserViewForGroups(
+	ctx context.Context,
+	allowedGroupNames map[string]struct{},
+	unrestricted bool,
+) ([]*UserMonitorView, error) {
 	monitors, err := s.repo.ListEnabled(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("list enabled monitors: %w", err)
+	}
+	if !unrestricted {
+		filtered := make([]*ChannelMonitor, 0, len(monitors))
+		for _, m := range monitors {
+			if monitorGroupAllowed(m.GroupName, allowedGroupNames) {
+				filtered = append(filtered, m)
+			}
+		}
+		monitors = filtered
 	}
 	if len(monitors) == 0 {
 		return []*UserMonitorView{}, nil
@@ -75,6 +97,15 @@ func (s *ChannelMonitorService) ListUserView(ctx context.Context) ([]*UserMonito
 		views = append(views, buildUserViewFromSummary(m, summaries[m.ID], primaryLatest, timelineMap[m.ID]))
 	}
 	return views, nil
+}
+
+func monitorGroupAllowed(groupName string, allowedGroupNames map[string]struct{}) bool {
+	trimmed := strings.TrimSpace(groupName)
+	if trimmed == "" || len(allowedGroupNames) == 0 {
+		return false
+	}
+	_, ok := allowedGroupNames[trimmed]
+	return ok
 }
 
 // collectMonitorIndexes 把 monitors 列表按 ID 展开为聚合查询所需的三个索引结构。
@@ -130,11 +161,27 @@ func pickLatest(rows []*ChannelMonitorLatest, model string) *ChannelMonitorLates
 // GetUserDetail 用户只读视图：单个监控详情（每个模型 7d/15d/30d 可用率与平均延迟）。
 // 不暴露 api_key。
 func (s *ChannelMonitorService) GetUserDetail(ctx context.Context, id int64) (*UserMonitorDetail, error) {
+	return s.GetUserDetailForGroups(ctx, id, nil, true)
+}
+
+// GetUserDetailForGroups returns a single enabled monitor's detail only when
+// the caller is unrestricted or the monitor's GroupName is in allowedGroupNames.
+// Monitors outside scope fail closed with ErrChannelMonitorNotFound so callers
+// cannot probe hidden group monitor IDs.
+func (s *ChannelMonitorService) GetUserDetailForGroups(
+	ctx context.Context,
+	id int64,
+	allowedGroupNames map[string]struct{},
+	unrestricted bool,
+) (*UserMonitorDetail, error) {
 	m, err := s.repo.GetByID(ctx, id)
 	if err != nil {
 		return nil, err
 	}
 	if !m.Enabled {
+		return nil, ErrChannelMonitorNotFound
+	}
+	if !unrestricted && !monitorGroupAllowed(m.GroupName, allowedGroupNames) {
 		return nil, ErrChannelMonitorNotFound
 	}
 

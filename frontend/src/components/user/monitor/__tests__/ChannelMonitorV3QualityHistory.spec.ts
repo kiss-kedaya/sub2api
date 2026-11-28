@@ -29,7 +29,6 @@ function event(id: number, status: 'success' | 'degraded'): MonitorQualityEvent 
   return {
     id,
     group_id: 43,
-    account_id: 7,
     model_id: 'claude-sonnet-5',
     status,
     error_message: status === 'degraded' ? 'feet do not plausibly contact crank pedals' : '',

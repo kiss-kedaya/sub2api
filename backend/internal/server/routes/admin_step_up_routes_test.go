@@ -228,6 +228,25 @@ func sensitiveStepUpRoutes() []stepUpRouteCase {
 		{http.MethodGet, "/api/v1/admin/backups/s3-config", "admin"},
 		{http.MethodGet, "/api/v1/admin/backups/1/download-url", "admin"},
 		{http.MethodGet, "/api/v1/admin/debug-dumps/1", "admin"},
+		// 风控审计 / 提示词审计 / 渠道监控与模板 / 渠道定价运维 / 安全处罚写操作
+		{http.MethodPut, "/api/v1/admin/risk-control/config", "admin"},
+		{http.MethodPost, "/api/v1/admin/risk-control/users/1/unban", "admin"},
+		{http.MethodDelete, "/api/v1/admin/risk-control/hashes", "admin"},
+		{http.MethodPut, "/api/v1/admin/prompt-audit/config", "admin"},
+		{http.MethodPost, "/api/v1/admin/prompt-audit/endpoints/probe", "admin"},
+		{http.MethodDelete, "/api/v1/admin/prompt-audit/events/1", "admin"},
+		{http.MethodPost, "/api/v1/admin/prompt-audit/events/delete-by-filter", "admin"},
+		{http.MethodPost, "/api/v1/admin/channel-monitors", "admin"},
+		{http.MethodPut, "/api/v1/admin/channel-monitors/1", "admin"},
+		{http.MethodDelete, "/api/v1/admin/channel-monitors/1", "admin"},
+		{http.MethodPost, "/api/v1/admin/channel-monitors/1/run", "admin"},
+		{http.MethodPost, "/api/v1/admin/channel-monitor-templates", "admin"},
+		{http.MethodPut, "/api/v1/admin/channel-monitor-templates/1", "admin"},
+		{http.MethodDelete, "/api/v1/admin/channel-monitor-templates/1", "admin"},
+		{http.MethodPost, "/api/v1/admin/channel-monitor-templates/1/apply", "admin"},
+		{http.MethodPost, "/api/v1/admin/channels", "admin"},
+		{http.MethodPut, "/api/v1/admin/channels/1", "admin"},
+		{http.MethodDelete, "/api/v1/admin/channels/1", "admin"},
 	}
 }
 
@@ -533,6 +552,46 @@ func TestSensitiveAdminRoutesAllowedAfterStepUpGrant(t *testing.T) {
 				"跳过 2FA 必须显式回传 %s", middleware.StepUpSkippedHeader)
 			require.Equal(t, "240", w.Header().Get(middleware.StepUpRemainingHeader),
 				"必须回传真实剩余秒数（桩里是 4 分钟）")
+		})
+	}
+}
+
+// TestPrimaryAdminOnlyStepUpRoutesEnforceStepUp verifies step-up enforcement on
+// routes that additionally check primary-admin identity inside the handler.
+func TestPrimaryAdminOnlyStepUpRoutesEnforceStepUp(t *testing.T) {
+	cases := []struct {
+		method string
+		path   string
+	}{
+		{http.MethodPost, "/api/v1/admin/channels/1/operations"},
+		{http.MethodPut, "/api/v1/admin/security-penalties/config"},
+		{http.MethodPost, "/api/v1/admin/security-penalties/1/release"},
+	}
+	noGrantRouter := buildAdminRouteProbeRouter(t, realStepUpWithGrant(t, false), service.AuditAuthMethodJWT)
+	machineRouter := buildAdminRouteProbeRouter(t, realStepUpWithGrant(t, true), service.AuditAuthMethodAdminAPIKey)
+	grantRouter := buildAdminRouteProbeRouter(t, realStepUpWithGrant(t, true), service.AuditAuthMethodJWT)
+
+	for _, tc := range cases {
+		t.Run(tc.method+" "+tc.path, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			noGrantRouter.ServeHTTP(w, httptest.NewRequest(tc.method, tc.path, nil))
+			require.Equal(t, http.StatusForbidden, w.Code, w.Body.String())
+			var body stepUpErrorBody
+			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+			require.Equal(t, "STEP_UP_REQUIRED", body.Code)
+
+			wMachine := httptest.NewRecorder()
+			machineRouter.ServeHTTP(wMachine, httptest.NewRequest(tc.method, tc.path, nil))
+			require.Equal(t, http.StatusForbidden, wMachine.Code, wMachine.Body.String())
+			var machineBody stepUpErrorBody
+			require.NoError(t, json.Unmarshal(wMachine.Body.Bytes(), &machineBody))
+			require.Equal(t, "STEP_UP_ADMIN_API_KEY_FORBIDDEN", machineBody.Code)
+
+			wGrant := httptest.NewRecorder()
+			grantRouter.ServeHTTP(wGrant, httptest.NewRequest(tc.method, tc.path, nil))
+			require.NotContains(t, wGrant.Body.String(), "STEP_UP_REQUIRED")
+			require.Equal(t, "1", wGrant.Header().Get(middleware.StepUpSkippedHeader))
+			require.Equal(t, "240", wGrant.Header().Get(middleware.StepUpRemainingHeader))
 		})
 	}
 }

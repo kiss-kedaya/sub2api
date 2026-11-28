@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -382,6 +383,12 @@ func (m *ConfigManager) buildNextStorage(current storageConfig, req UpdateConfig
 			}
 			stored.TokenCiphertext = ciphertext
 		case hadOld:
+			if strings.TrimSpace(old.TokenCiphertext) != "" && !sameEndpointOrigin(old.BaseURL, stored.BaseURL) {
+				return storageConfig{}, infraerrors.BadRequest(
+					"prompt_audit_token_required_on_base_url_change",
+					"修改审计节点 Base URL 主机时不能复用已保存的 Token，请清空或重新填写 Token",
+				)
+			}
 			stored.TokenCiphertext = old.TokenCiphertext
 		}
 		next.Endpoints = append(next.Endpoints, stored)
@@ -396,6 +403,42 @@ func (m *ConfigManager) buildNextStorage(current storageConfig, req UpdateConfig
 		return storageConfig{}, err
 	}
 	return next, nil
+}
+
+func sameEndpointOrigin(rawA, rawB string) bool {
+	uA, errA := url.Parse(strings.TrimSpace(rawA))
+	uB, errB := url.Parse(strings.TrimSpace(rawB))
+	if errA != nil || errB != nil || uA == nil || uB == nil {
+		return false
+	}
+	if uA.User != nil || uB.User != nil {
+		return false
+	}
+	schemeA := strings.ToLower(strings.TrimSpace(uA.Scheme))
+	schemeB := strings.ToLower(strings.TrimSpace(uB.Scheme))
+	hostA := strings.TrimSuffix(strings.ToLower(strings.TrimSpace(uA.Hostname())), ".")
+	hostB := strings.TrimSuffix(strings.ToLower(strings.TrimSpace(uB.Hostname())), ".")
+	if schemeA == "" || schemeB == "" || hostA == "" || hostB == "" {
+		return false
+	}
+	if schemeA != schemeB || hostA != hostB {
+		return false
+	}
+	return effectiveEndpointPort(schemeA, uA.Port()) == effectiveEndpointPort(schemeB, uB.Port())
+}
+
+func effectiveEndpointPort(scheme, port string) string {
+	if port != "" {
+		return port
+	}
+	switch scheme {
+	case "http":
+		return "80"
+	case "https":
+		return "443"
+	default:
+		return ""
+	}
 }
 
 func (m *ConfigManager) RuntimeState() (expected int64, active int64, loadedAt *time.Time, loadError string) {

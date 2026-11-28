@@ -89,6 +89,11 @@ const (
 	// target account's security, so it needs the operator's own recent 2FA and
 	// can never be driven by a machine credential.
 	ReasonAccountSecurityReset Reason = "account_security_factor_reset"
+	ReasonModerationWrite      Reason = "content_moderation_config_and_credentials_writes"
+	ReasonPromptAuditWrite     Reason = "prompt_audit_config_and_credentials_writes"
+	ReasonChannelMonitorWrite  Reason = "channel_monitor_config_and_credentials_writes"
+	ReasonChannelPricingWrite  Reason = "channel_pricing_and_operations_writes"
+	ReasonSecurityPenaltyWrite Reason = "security_penalty_policy_and_release_writes"
 
 	// secret_free reasons
 	ReasonUsageAnalytics           Reason = "usage_analytics_no_secrets"
@@ -199,7 +204,11 @@ const (
 	ResourceRevenueOperations Resource = "revenue_operations"
 	// ResourceAccountSecurity 覆盖「降低目标账号安全强度」的管理动作：
 	// 目前只有破玻璃重置 2FA。它与资金、上行凭证无关，单独成族便于按资源检索审计。
-	ResourceAccountSecurity Resource = "account_security"
+	ResourceAccountSecurity   Resource = "account_security"
+	ResourceModeration        Resource = "content_moderation"
+	ResourcePromptAudit       Resource = "prompt_audit"
+	ResourceChannelMonitors   Resource = "channel_monitors"
+	ResourceSecurityPenalties Resource = "security_penalties"
 )
 
 // Resolved is the classification of one route.
@@ -487,6 +496,15 @@ var sensitiveMutatingResources = []prefixRule{
 	{prefix: "/api/v1/admin/credential-guard", methods: mutatingMethods(), res: Resolved{ClassStepUpRequired, ReasonCredentialGuard, ResourceCredentialGuard, "mutating:credential-guard"}},
 	{prefix: "/api/v1/admin/excel-grants", methods: mutatingMethods(), res: Resolved{ClassStepUpRequired, ReasonExcelGrantSecrets, ResourceExcelGrants, "mutating:excel-grants"}},
 	{prefix: "/api/v1/admin/system/mihomo", methods: mutatingMethods(), res: Resolved{ClassStepUpRequired, ReasonMihomoConfig, ResourceMihomo, "mutating:system.mihomo"}},
+	// 风控审计 / 提示词审计 / 渠道监控与模板 / 渠道定价运维 / 安全处罚写操作：
+	// 这些入口持有外部审计/探测 API Key 或控制计费渠道与风控处罚策略，必须要求 step-up 2FA；
+	// 只读 GET 仍走各自 secretFreeFamilies，不打断页面首屏加载。
+	{prefix: "/api/v1/admin/risk-control", methods: mutatingMethods(), res: Resolved{ClassStepUpRequired, ReasonModerationWrite, ResourceModeration, "mutating:risk-control"}},
+	{prefix: "/api/v1/admin/prompt-audit", methods: mutatingMethods(), res: Resolved{ClassStepUpRequired, ReasonPromptAuditWrite, ResourcePromptAudit, "mutating:prompt-audit"}},
+	{prefix: "/api/v1/admin/channel-monitors", methods: mutatingMethods(), res: Resolved{ClassStepUpRequired, ReasonChannelMonitorWrite, ResourceChannelMonitors, "mutating:channel-monitors"}},
+	{prefix: "/api/v1/admin/channel-monitor-templates", methods: mutatingMethods(), res: Resolved{ClassStepUpRequired, ReasonChannelMonitorWrite, ResourceChannelMonitors, "mutating:channel-monitor-templates"}},
+	{prefix: "/api/v1/admin/channels", methods: mutatingMethods(), res: Resolved{ClassStepUpRequired, ReasonChannelPricingWrite, ResourceChannels, "mutating:channels"}},
+	{prefix: "/api/v1/admin/security-penalties", methods: mutatingMethods(), res: Resolved{ClassStepUpRequired, ReasonSecurityPenaltyWrite, ResourceSecurityPenalties, "mutating:security-penalties"}},
 }
 
 // secretFreeFamilies cover every remaining route. A route that matches none of

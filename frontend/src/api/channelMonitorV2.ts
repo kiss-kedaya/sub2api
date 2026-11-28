@@ -294,7 +294,6 @@ export interface MonitorQualityEvent {
   }
   id: number
   group_id: number
-  account_id: number
   model_id: string
   status: 'success' | 'degraded'
   error_message: string

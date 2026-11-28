@@ -1,33 +1,76 @@
 package handler
 
 import (
+	"context"
+	"net/http"
+	"strings"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/domain"
 	"github.com/Wei-Shaw/sub2api/internal/handler/admin"
 	"github.com/Wei-Shaw/sub2api/internal/handler/dto"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
+	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 
 	"github.com/gin-gonic/gin"
 )
 
+type channelMonitorUserGroupAuthorizer interface {
+	GetAvailableGroups(ctx context.Context, userID int64) ([]service.Group, error)
+}
+
 // ChannelMonitorUserHandler 渠道监控用户只读 handler。
 type ChannelMonitorUserHandler struct {
 	monitorService *service.ChannelMonitorService
 	settingService *service.SettingService
+	apiKeyService  channelMonitorUserGroupAuthorizer
 }
 
 // NewChannelMonitorUserHandler 创建 handler。
 // settingService 用于每次请求前读取功能开关；关闭时 List/GetStatus 直接返回空/404。
+// apiKeyService 用于读取当前用户可见的分组列表（非主管理员一律 fail-closed 按可见分组过滤）。
 func NewChannelMonitorUserHandler(
 	monitorService *service.ChannelMonitorService,
 	settingService *service.SettingService,
+	apiKeyService *service.APIKeyService,
 ) *ChannelMonitorUserHandler {
+	var authorizer channelMonitorUserGroupAuthorizer
+	if apiKeyService != nil {
+		authorizer = apiKeyService
+	}
 	return &ChannelMonitorUserHandler{
 		monitorService: monitorService,
 		settingService: settingService,
+		apiKeyService:  authorizer,
 	}
+}
+
+func (h *ChannelMonitorUserHandler) resolveAllowedGroups(c *gin.Context) (map[string]struct{}, bool, bool) {
+	if middleware.IsPrimaryAdmin(c) {
+		return nil, true, true
+	}
+	subject, ok := middleware.GetAuthSubjectFromContext(c)
+	if !ok || subject.UserID <= 0 {
+		response.Unauthorized(c, "user not found in context")
+		return nil, false, false
+	}
+	if h.apiKeyService == nil {
+		response.Error(c, http.StatusInternalServerError, "channel monitor group authorization unavailable")
+		return nil, false, false
+	}
+	groups, err := h.apiKeyService.GetAvailableGroups(c.Request.Context(), subject.UserID)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return nil, false, false
+	}
+	allowed := make(map[string]struct{}, len(groups))
+	for i := range groups {
+		if name := strings.TrimSpace(groups[i].Name); name != "" {
+			allowed[name] = struct{}{}
+		}
+	}
+	return allowed, false, true
 }
 
 // featureEnabled 返回当前渠道监控功能是否开启。
@@ -162,7 +205,11 @@ func (h *ChannelMonitorUserHandler) List(c *gin.Context) {
 		response.Success(c, gin.H{"items": []channelMonitorUserListItem{}})
 		return
 	}
-	views, err := h.monitorService.ListUserView(c.Request.Context())
+	allowedGroups, unrestricted, ok := h.resolveAllowedGroups(c)
+	if !ok {
+		return
+	}
+	views, err := h.monitorService.ListUserViewForGroups(c.Request.Context(), allowedGroups, unrestricted)
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
@@ -181,12 +228,16 @@ func (h *ChannelMonitorUserHandler) GetStatus(c *gin.Context) {
 		response.ErrorFrom(c, service.ErrChannelMonitorNotFound)
 		return
 	}
+	allowedGroups, unrestricted, ok := h.resolveAllowedGroups(c)
+	if !ok {
+		return
+	}
 	// 复用 admin.ParseChannelMonitorID 保持错误码与日志一致。
 	id, ok := admin.ParseChannelMonitorID(c)
 	if !ok {
 		return
 	}
-	detail, err := h.monitorService.GetUserDetail(c.Request.Context(), id)
+	detail, err := h.monitorService.GetUserDetailForGroups(c.Request.Context(), id, allowedGroups, unrestricted)
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return

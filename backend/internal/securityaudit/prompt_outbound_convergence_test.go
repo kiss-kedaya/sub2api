@@ -42,18 +42,37 @@ func TestPromptProbeRejectsPrivateLiteralEvenWithWhitespace(t *testing.T) {
 	}
 }
 
-func TestPromptProbeAllowsPrivateEndpointWithExplicitSwitch(t *testing.T) {
+func TestPromptProbeCannotElevateAllowPrivateBeyondSavedConfig(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{"data":[{"id":"` + DefaultGuardModel + `"}]}`))
 	}))
 	defer server.Close()
 	allowPrivate := true
 
-	result := newProbeTestService().Probe(context.Background(), ProbeRequest{
+	// Saved config has AllowPrivateEndpoints=false: per-request true MUST NOT elevate.
+	denied := newProbeTestService().Probe(context.Background(), ProbeRequest{
 		Endpoint:              probeEndpoint(server.URL, "temporary-token"),
 		AllowPrivateEndpoints: &allowPrivate,
 	})
-	require.True(t, result.OK, result.Message)
+	require.False(t, denied.OK)
+	require.Equal(t, "endpoint_unsafe", denied.ErrorCode)
+	require.False(t, denied.Retryable)
+
+	// Saved config has AllowPrivateEndpoints=true: probe succeeds with saved policy.
+	allowed := newProbeTestServiceWithAllowPrivate(true).Probe(context.Background(), ProbeRequest{
+		Endpoint:              probeEndpoint(server.URL, "temporary-token"),
+		AllowPrivateEndpoints: &allowPrivate,
+	})
+	require.True(t, allowed.OK, allowed.Message)
+
+	// Per-request AllowPrivateEndpoints=false may still narrow saved policy to deny private targets.
+	disallowPrivate := false
+	narrowed := newProbeTestServiceWithAllowPrivate(true).Probe(context.Background(), ProbeRequest{
+		Endpoint:              probeEndpoint(server.URL, "temporary-token"),
+		AllowPrivateEndpoints: &disallowPrivate,
+	})
+	require.False(t, narrowed.OK)
+	require.Equal(t, "endpoint_unsafe", narrowed.ErrorCode)
 }
 
 // 保存配置时：未打开开关不得写入私网字面量；打开开关后才允许。

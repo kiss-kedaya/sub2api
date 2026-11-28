@@ -3,10 +3,108 @@ package service
 import (
 	"encoding/json"
 	"math"
+	"regexp"
 	"strings"
 
 	"github.com/Wei-Shaw/sub2api/internal/chanshui"
 )
+
+const maxPublicQualityErrorRunes = 240
+
+var (
+	publicQualityIPv4Pattern       = regexp.MustCompile(`\b\d{1,3}(?:\.\d{1,3}){3}\b`)
+	publicQualityHTTPStatusPattern = regexp.MustCompile(`\bhttp[/ ]?[45]\d\d\b`)
+	publicQualityEOFPattern        = regexp.MustCompile(`\beof\b`)
+)
+
+var publicQualitySensitiveSubstrings = []string{
+	"://",
+	"::",
+	"authorization",
+	"bearer ",
+	"api_key",
+	"apikey",
+	"x-api-key",
+	"access_token",
+	"refresh_token",
+	"session_token",
+	"password",
+	"secret",
+	"cookie",
+	"account_id",
+	"account=",
+	"account #",
+	"plan_id",
+	"group_id",
+	"dial tcp",
+	"dial udp",
+	"connection refused",
+	"no such host",
+	"lookup ",
+	"tls:",
+	"x509:",
+	"context deadline",
+	"i/o timeout",
+	"status code",
+	"upstream",
+	"sql:",
+	"postgres",
+	"pgconn",
+	"redis",
+	"panic",
+	"goroutine",
+	"base_url",
+	"endpoint",
+	"request_id",
+	"trace_id",
+	"localhost",
+	".internal",
+	".local",
+	"cloudflare",
+	"safeline",
+	"nginx",
+	"proxy",
+}
+
+// SanitizePublicQualityErrorMessage ensures end-user quality events never leak
+// internal upstream errors, URLs, IP addresses, account IDs, or credentials.
+// Benign short plain-language degradation verdicts are preserved only for
+// degraded events; non-degraded statuses always return an empty string.
+func SanitizePublicQualityErrorMessage(status, raw string) string {
+	if status != "degraded" || strings.TrimSpace(raw) == "" {
+		return ""
+	}
+	for _, r := range raw {
+		if (r < 0x20 && r != '\n' && r != '\r' && r != '\t') || r == 0x7f {
+			return ""
+		}
+	}
+	cleaned := strings.Join(strings.Fields(raw), " ")
+	if cleaned == "" || len([]rune(cleaned)) > maxPublicQualityErrorRunes {
+		return ""
+	}
+	if chanshui.LooksLikeKey(cleaned) {
+		return ""
+	}
+	if strings.ContainsAny(cleaned, "{}<>\\") {
+		return ""
+	}
+	if strings.HasPrefix(cleaned, "/") || strings.Contains(cleaned, " /") {
+		return ""
+	}
+	lower := strings.ToLower(cleaned)
+	for _, token := range publicQualitySensitiveSubstrings {
+		if strings.Contains(lower, token) {
+			return ""
+		}
+	}
+	if publicQualityIPv4Pattern.MatchString(lower) ||
+		publicQualityHTTPStatusPattern.MatchString(lower) ||
+		publicQualityEOFPattern.MatchString(lower) {
+		return ""
+	}
+	return cleaned
+}
 
 // The public channel page receives only these fields, never raw probes,
 // request/response text, audit URLs, remote audit IDs or arbitrary reasons.
@@ -49,8 +147,12 @@ func publicAuditScore(value any) *float64 {
 // PopulateGroupQualityAudit derives the historical method from the RESULT,
 // not the current plan, which may have switched providers since this run.
 func PopulateGroupQualityAudit(event *GroupQualityEvent, raw string) {
+	if event == nil {
+		return
+	}
 	event.QualityProvider = QualityProviderPelican
 	if event.Status != "audit_pass" && event.Status != "audit_fail" {
+		event.ErrorMessage = SanitizePublicQualityErrorMessage(event.Status, event.ErrorMessage)
 		return
 	}
 	event.QualityProvider = QualityProviderChanshui

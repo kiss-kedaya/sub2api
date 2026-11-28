@@ -541,3 +541,80 @@ func TestConfigLoadedIsLoggedOnlyWhenSomethingChanged(t *testing.T) {
 	require.NoError(t, manager.Reload(context.Background()))
 	require.Equal(t, 4, loadedCount(), "recovering from a failed reload must be visible")
 }
+
+func TestPromptAuditBuildNextStorageRefusesTokenReuseOnOriginChange(t *testing.T) {
+	manager := &ConfigManager{encryptor: prefixEncryptor{}, encryptionKeyConfigured: true}
+	current := DefaultStorageConfig()
+	current.Endpoints = []StorageEndpoint{{
+		ID:              "guard-1",
+		Name:            "Guard",
+		Protocol:        "openai_compatible",
+		BaseURL:         "https://guard.example.com/v1",
+		Model:           DefaultGuardModel,
+		TokenCiphertext: "enc:stored-guard-secret",
+		TimeoutMS:       1000,
+		InputLimit:      1000,
+		Enabled:         true,
+	}}
+	baseReq := func(ep UpdateEndpoint) UpdateConfigRequest {
+		return UpdateConfigRequest{
+			ExpectedConfigVersion: current.ConfigVersion,
+			Strategy:              "priority",
+			WorkerCount:           1,
+			QueueCapacity:         10,
+			Scanners:              []string{"PII"},
+			AllGroups:             true,
+			Endpoints:             []UpdateEndpoint{ep},
+		}
+	}
+
+	t.Run("same origin path change preserves stored token", func(t *testing.T) {
+		next, err := manager.buildNextStorage(current, baseReq(UpdateEndpoint{
+			ID: "guard-1", Name: "Guard", Protocol: "openai_compatible",
+			BaseURL: "https://guard.example.com:443/api/v2", Model: DefaultGuardModel,
+			TimeoutMS: 1000, InputLimit: 1000, Enabled: true,
+		}), 1)
+		require.NoError(t, err)
+		require.Equal(t, "enc:stored-guard-secret", next.Endpoints[0].TokenCiphertext)
+	})
+
+	t.Run("different host without new token or clear_token is rejected", func(t *testing.T) {
+		_, err := manager.buildNextStorage(current, baseReq(UpdateEndpoint{
+			ID: "guard-1", Name: "Guard", Protocol: "openai_compatible",
+			BaseURL: "https://attacker.example.com/v1", Model: DefaultGuardModel,
+			TimeoutMS: 1000, InputLimit: 1000, Enabled: true,
+		}), 1)
+		require.Error(t, err)
+		require.Equal(t, "prompt_audit_token_required_on_base_url_change", infraerrors.Reason(err))
+	})
+
+	t.Run("different port without new token is rejected", func(t *testing.T) {
+		_, err := manager.buildNextStorage(current, baseReq(UpdateEndpoint{
+			ID: "guard-1", Name: "Guard", Protocol: "openai_compatible",
+			BaseURL: "https://guard.example.com:8443/v1", Model: DefaultGuardModel,
+			TimeoutMS: 1000, InputLimit: 1000, Enabled: true,
+		}), 1)
+		require.Error(t, err)
+		require.Equal(t, "prompt_audit_token_required_on_base_url_change", infraerrors.Reason(err))
+	})
+
+	t.Run("different host with clear_token clears secret and succeeds", func(t *testing.T) {
+		next, err := manager.buildNextStorage(current, baseReq(UpdateEndpoint{
+			ID: "guard-1", Name: "Guard", Protocol: "openai_compatible",
+			BaseURL: "https://new-guard.example.com/v1", Model: DefaultGuardModel,
+			ClearToken: true, TimeoutMS: 1000, InputLimit: 1000, Enabled: true,
+		}), 1)
+		require.NoError(t, err)
+		require.Empty(t, next.Endpoints[0].TokenCiphertext)
+	})
+
+	t.Run("different host with explicit new token replaces secret", func(t *testing.T) {
+		next, err := manager.buildNextStorage(current, baseReq(UpdateEndpoint{
+			ID: "guard-1", Name: "Guard", Protocol: "openai_compatible",
+			BaseURL: "https://new-guard.example.com/v1", Model: DefaultGuardModel,
+			Token: "fresh-token", TimeoutMS: 1000, InputLimit: 1000, Enabled: true,
+		}), 1)
+		require.NoError(t, err)
+		require.Equal(t, "enc:fresh-token", next.Endpoints[0].TokenCiphertext)
+	})
+}

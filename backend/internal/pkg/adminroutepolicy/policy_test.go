@@ -578,3 +578,46 @@ func TestMaskedReadExactEntriesShape(t *testing.T) {
 		}
 	}
 }
+
+// 风控审计 / 提示词审计 / 渠道监控与模板 / 渠道定价 / 安全处罚的写操作全部要求 step-up 2FA，
+// 防止通过修改外部探测/审计地址偷取已存储的 API Key 或未过 2FA 篡改风控/定价策略；
+// 只读 GET 保持 secret_free，避免页面加载弹 TOTP。
+func TestSixHardenedAdminRouteFamiliesRequireStepUpForMutationsOnly(t *testing.T) {
+	families := []struct {
+		prefix   string
+		readPath string
+	}{
+		{"/api/v1/admin/risk-control", "/api/v1/admin/risk-control/config"},
+		{"/api/v1/admin/prompt-audit", "/api/v1/admin/prompt-audit/config"},
+		{"/api/v1/admin/channel-monitors", "/api/v1/admin/channel-monitors"},
+		{"/api/v1/admin/channel-monitor-templates", "/api/v1/admin/channel-monitor-templates"},
+		{"/api/v1/admin/channels", "/api/v1/admin/channels"},
+		{"/api/v1/admin/security-penalties", "/api/v1/admin/security-penalties/config"},
+	}
+	for _, f := range families {
+		for _, method := range []string{"POST", "PUT", "PATCH", "DELETE"} {
+			for _, path := range []string{f.prefix, f.prefix + "/1"} {
+				resolved, ok := Resolve(method, path)
+				if !ok {
+					t.Fatalf("%s %s 未归类", method, path)
+				}
+				if resolved.Class != ClassStepUpRequired {
+					t.Fatalf("%s %s 必须要求 step-up，实际 %s/%s", method, path, resolved.Class, resolved.Reason)
+				}
+				if resolved.Resource == ResourceNone {
+					t.Fatalf("%s %s 必须标注敏感资源", method, path)
+				}
+				if IsMachineAllowlisted(method, path) {
+					t.Fatalf("%s %s 不得进入机器白名单", method, path)
+				}
+			}
+		}
+		read, ok := Resolve("GET", f.readPath)
+		if !ok || read.Class != ClassSecretFree {
+			t.Fatalf("GET %s 应保持 secret_free，实际 %+v ok=%v", f.readPath, read, ok)
+		}
+		if IsStepUpRequired("GET", f.readPath) {
+			t.Fatalf("GET %s 不应要求 step-up", f.readPath)
+		}
+	}
+}

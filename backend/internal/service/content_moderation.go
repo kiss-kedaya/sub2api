@@ -25,6 +25,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/servertiming"
 	"github.com/Wei-Shaw/sub2api/internal/util/logredact"
+	"github.com/Wei-Shaw/sub2api/internal/util/urlvalidator"
 )
 
 const (
@@ -630,7 +631,6 @@ func NewContentModerationService(
 		proxyRepo:            proxyRepo,
 		authCacheInvalidator: authCacheInvalidator,
 		emailService:         emailService,
-		httpClient:           servertiming.InstrumentClient(nil),
 		workerCount:          maxContentModerationWorkerCount,
 		asyncQueue:           make(chan contentModerationTask, maxContentModerationQueueSize),
 		keyHealth:            make(map[string]*contentModerationKeyHealth),
@@ -780,6 +780,7 @@ func (s *ContentModerationService) TestAPIKeys(ctx context.Context, input TestCo
 	if input.Thresholds != nil {
 		cfg.Thresholds = mergeContentModerationThresholds(moderationEngineDefaults(engine).Thresholds, *input.Thresholds)
 	}
+	savedBaseURL := strings.TrimSpace(cfg.BaseURL)
 	keys := normalizeModerationAPIKeys(input.APIKeys)
 	configured := false
 	if len(keys) == 0 {
@@ -788,6 +789,12 @@ func (s *ContentModerationService) TestAPIKeys(ctx context.Context, input TestCo
 	}
 	if strings.TrimSpace(input.BaseURL) != "" {
 		cfg.BaseURL = input.BaseURL
+	}
+	if configured && len(keys) > 0 && strings.TrimSpace(input.BaseURL) != "" && !sameURLOrigin(savedBaseURL, cfg.BaseURL) {
+		return nil, infraerrors.BadRequest(
+			"CONTENT_MODERATION_API_KEY_REQUIRED_ON_BASE_URL_CHANGE",
+			"测试新的审计 Base URL 主机时不能复用已保存的 API Key，请显式传入待测试的 API Key",
+		)
 	}
 	if strings.TrimSpace(input.Model) != "" {
 		cfg.Model = input.Model
@@ -1743,8 +1750,10 @@ func (s *ContentModerationService) validateConfig(ctx context.Context, cfg *Cont
 	default:
 		return infraerrors.BadRequest("INVALID_CONTENT_MODERATION_MODE", "内容审计模式无效")
 	}
-	if _, err := url.ParseRequestURI(cfg.BaseURL); err != nil {
-		return infraerrors.BadRequest("INVALID_CONTENT_MODERATION_BASE_URL", "审计 Base URL 无效")
+	if _, err := urlvalidator.ValidateHTTPURL(cfg.BaseURL, true, urlvalidator.ValidationOptions{
+		AllowPrivate: adminOutboundAllowPrivateForTest.Load(),
+	}); err != nil {
+		return infraerrors.BadRequest("INVALID_CONTENT_MODERATION_BASE_URL", "审计 Base URL 无效或指向禁止访问的内网地址")
 	}
 	if cfg.ProxyID != nil && s.proxyRepo != nil {
 		if _, err := s.proxyRepo.GetByID(ctx, *cfg.ProxyID); err != nil {
@@ -1884,19 +1893,48 @@ type moderationProxyURLCacheEntry struct {
 
 const contentModerationProxyURLCacheTTL = time.Minute
 
+var (
+	contentModerationSafeClientOnce sync.Once
+	contentModerationSafeClient     *http.Client
+)
+
+func defaultContentModerationSafeHTTPClient() *http.Client {
+	if adminOutboundAllowPrivateForTest.Load() {
+		return servertiming.InstrumentClient(urlvalidator.NewSafeHTTPClient(urlvalidator.OutboundPolicy{
+			AllowInsecureHTTP: true,
+			AllowPrivate:      true,
+		}, urlvalidator.HTTPClientOptions{
+			Timeout:             35 * time.Second,
+			MaxIdleConns:        64,
+			MaxIdleConnsPerHost: 16,
+		}))
+	}
+	contentModerationSafeClientOnce.Do(func() {
+		contentModerationSafeClient = servertiming.InstrumentClient(urlvalidator.NewSafeHTTPClient(urlvalidator.OutboundPolicy{
+			AllowInsecureHTTP: true,
+			AllowPrivate:      false,
+		}, urlvalidator.HTTPClientOptions{
+			Timeout:             35 * time.Second,
+			MaxIdleConns:        64,
+			MaxIdleConnsPerHost: 16,
+		}))
+	})
+	return contentModerationSafeClient
+}
+
 // moderationHTTPClient 返回本次审计调用应使用的 HTTP 客户端。
-// 未配置代理时沿用默认客户端；配置了代理时通过共享客户端池构建，
-// 代理解析/构建失败直接返回错误，绝不回退直连（避免 IP 关联风险）。
+// 未配置代理时使用带拨号期 IP 校验与重定向守卫的安全客户端（防 DNS rebinding 与
+// 3xx 跳内网）；配置了代理时复用代理连接池并附加重定向守卫，代理解析失败绝不回退直连。
 func (s *ContentModerationService) moderationHTTPClient(ctx context.Context, cfg *ContentModerationConfig) (*http.Client, error) {
 	if cfg == nil || cfg.ProxyID == nil {
 		// 管理面测试入口注入的安全客户端优先：它带拨号期 IP 校验与重定向守卫。
 		if injected := adminOutboundHTTPClientFromContext(ctx); injected != nil {
 			return injected, nil
 		}
-		if s.httpClient == nil {
-			return http.DefaultClient, nil
+		if s.httpClient != nil {
+			return s.httpClient, nil
 		}
-		return s.httpClient, nil
+		return defaultContentModerationSafeHTTPClient(), nil
 	}
 	proxyURL, err := s.resolveModerationProxyURL(ctx, *cfg.ProxyID)
 	if err != nil {
@@ -1906,7 +1944,13 @@ func (s *ContentModerationService) moderationHTTPClient(ctx context.Context, cfg
 	if err != nil {
 		return nil, fmt.Errorf("build moderation proxy client: %w", err)
 	}
-	return client, nil
+	// Shallow-copy the pooled proxy client so we attach a redirect guard without mutating shared state.
+	safeProxyClient := *client
+	safeProxyClient.CheckRedirect = urlvalidator.NewRedirectGuard(urlvalidator.OutboundPolicy{
+		AllowInsecureHTTP: true,
+		AllowPrivate:      adminOutboundAllowPrivateForTest.Load(),
+	})
+	return &safeProxyClient, nil
 }
 
 func (s *ContentModerationService) resolveModerationProxyURL(ctx context.Context, proxyID int64) (string, error) {

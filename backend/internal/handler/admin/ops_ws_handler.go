@@ -315,7 +315,7 @@ func closeWS(conn *websocket.Conn, code int, reason string) {
 // QPSWSHandler handles realtime QPS push via WebSocket.
 // GET /api/v1/admin/ops/ws/qps
 func (h *OpsHandler) QPSWSHandler(c *gin.Context) {
-	clientIP := requestClientIP(c.Request)
+	clientIP := opsWSClientIP(c)
 
 	if h == nil || h.opsService == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "ops service not initialized"})
@@ -584,63 +584,15 @@ func isAllowedOpsWSOrigin(r *http.Request) bool {
 	return originHost == reqHost
 }
 
-func shouldTrustOpsWSProxyHeaders(r *http.Request) bool {
-	if r == nil {
-		return false
-	}
-	if !opsWSProxyConfig.TrustProxy {
-		return false
-	}
-	peerIP, ok := requestPeerIP(r)
-	if !ok {
-		return false
-	}
-	return isAddrInTrustedProxies(peerIP, opsWSProxyConfig.TrustedProxies)
-}
-
-func requestPeerIP(r *http.Request) (netip.Addr, bool) {
-	if r == nil {
-		return netip.Addr{}, false
-	}
-	host, _, err := net.SplitHostPort(strings.TrimSpace(r.RemoteAddr))
-	if err != nil {
-		host = strings.TrimSpace(r.RemoteAddr)
-	}
-	host = strings.TrimPrefix(host, "[")
-	host = strings.TrimSuffix(host, "]")
-	if host == "" {
-		return netip.Addr{}, false
-	}
-	addr, err := netip.ParseAddr(host)
-	if err != nil {
-		return netip.Addr{}, false
-	}
-	return addr.Unmap(), true
-}
-
-func requestClientIP(r *http.Request) string {
-	if r == nil {
+// opsWSClientIP resolves the authoritative client IP for WebSocket per-IP
+// connection limiting via middleware.SecurityClientIP, which enforces the
+// server's trusted proxy configuration and walks X-Forwarded-For right-to-left
+// instead of trusting client-controlled left-most entries.
+func opsWSClientIP(c *gin.Context) string {
+	if c == nil {
 		return ""
 	}
-
-	trustProxyHeaders := shouldTrustOpsWSProxyHeaders(r)
-	if trustProxyHeaders {
-		xff := strings.TrimSpace(r.Header.Get("X-Forwarded-For"))
-		if xff != "" {
-			// Use the left-most entry (original client). If multiple proxies add values, they are comma-separated.
-			xff = strings.TrimSpace(strings.Split(xff, ",")[0])
-			xff = strings.TrimPrefix(xff, "[")
-			xff = strings.TrimSuffix(xff, "]")
-			if addr, err := netip.ParseAddr(xff); err == nil && addr.IsValid() {
-				return addr.Unmap().String()
-			}
-		}
-	}
-
-	if peer, ok := requestPeerIP(r); ok && peer.IsValid() {
-		return peer.String()
-	}
-	return ""
+	return servermiddleware.SecurityClientIP(c)
 }
 
 func isAddrInTrustedProxies(addr netip.Addr, trusted []netip.Prefix) bool {

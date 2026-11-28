@@ -9,7 +9,9 @@ import (
 	"testing"
 	"time"
 
+	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/typesafe"
+	"github.com/Wei-Shaw/sub2api/internal/util/urlvalidator"
 	"github.com/stretchr/testify/require"
 )
 
@@ -200,4 +202,113 @@ func TestContentModerationEngineRuntimeSwitchKeepsInFlightSnapshot(t *testing.T)
 	require.NoError(t, err)
 	require.Equal(t, "typesafe", status.Engine)
 	require.Equal(t, scopedModerationKeyHash("typesafe-key", "typesafe"), status.APIKeyStatuses[0].KeyHash)
+}
+
+func TestContentModerationOriginChangeRefusesStoredKeyReuse(t *testing.T) {
+	newRepo := func() *contentModerationTestSettingRepo {
+		return &contentModerationTestSettingRepo{values: map[string]string{
+			SettingKeyContentModerationConfig: `{"enabled":true,"mode":"pre_block","api_keys":["stored-openai-secret"],"base_url":"https://openai.example/v1","model":"omni"}`,
+		}}
+	}
+
+	t.Run("same origin path update keeps stored keys", func(t *testing.T) {
+		repo := newRepo()
+		s := &ContentModerationService{settingRepo: repo}
+		base := "https://openai.example:443/v2"
+		view, err := s.UpdateConfig(context.Background(), UpdateContentModerationConfigInput{BaseURL: &base})
+		require.NoError(t, err)
+		require.Equal(t, base, view.BaseURL)
+		require.Equal(t, 1, view.APIKeyCount)
+	})
+
+	t.Run("different host without replacing or clearing keys is rejected", func(t *testing.T) {
+		repo := newRepo()
+		s := &ContentModerationService{settingRepo: repo}
+		base := "https://attacker.example/v1"
+		_, err := s.UpdateConfig(context.Background(), UpdateContentModerationConfigInput{BaseURL: &base})
+		require.Error(t, err)
+		require.Equal(t, "CONTENT_MODERATION_API_KEY_REQUIRED_ON_BASE_URL_CHANGE", infraerrors.Reason(err))
+	})
+
+	t.Run("different host with append mode still rejects retaining old keys", func(t *testing.T) {
+		repo := newRepo()
+		s := &ContentModerationService{settingRepo: repo}
+		base := "https://attacker.example/v1"
+		keys := []string{"decoy-key"}
+		_, err := s.UpdateConfig(context.Background(), UpdateContentModerationConfigInput{
+			BaseURL: &base,
+			APIKeys: &keys,
+		})
+		require.Error(t, err)
+		require.Equal(t, "CONTENT_MODERATION_API_KEY_REQUIRED_ON_BASE_URL_CHANGE", infraerrors.Reason(err))
+	})
+
+	t.Run("different host with replace mode succeeds and drops old keys", func(t *testing.T) {
+		repo := newRepo()
+		s := &ContentModerationService{settingRepo: repo}
+		base := "https://new-moderator.example/v1"
+		keys := []string{"fresh-key"}
+		mode := contentModerationAPIKeysModeReplace
+		view, err := s.UpdateConfig(context.Background(), UpdateContentModerationConfigInput{
+			BaseURL:     &base,
+			APIKeys:     &keys,
+			APIKeysMode: mode,
+		})
+		require.NoError(t, err)
+		require.Equal(t, base, view.BaseURL)
+		require.Equal(t, 1, view.APIKeyCount)
+		var stored ContentModerationConfig
+		require.NoError(t, json.Unmarshal([]byte(repo.values[SettingKeyContentModerationConfig]), &stored))
+		require.Equal(t, []string{"fresh-key"}, stored.APIKeys)
+	})
+
+	t.Run("different host with clear_api_key succeeds and empties keys", func(t *testing.T) {
+		repo := newRepo()
+		s := &ContentModerationService{settingRepo: repo}
+		base := "https://new-moderator.example/v1"
+		view, err := s.UpdateConfig(context.Background(), UpdateContentModerationConfigInput{
+			BaseURL:     &base,
+			ClearAPIKey: true,
+		})
+		require.NoError(t, err)
+		require.Equal(t, base, view.BaseURL)
+		require.Zero(t, view.APIKeyCount)
+	})
+
+	t.Run("TestAPIKeys rejects stored keys against a changed host", func(t *testing.T) {
+		repo := newRepo()
+		s := &ContentModerationService{settingRepo: repo}
+		_, err := s.TestAPIKeys(context.Background(), TestContentModerationAPIKeysInput{
+			BaseURL: "https://attacker.example/v1",
+			Prompt:  "hello",
+		})
+		require.Error(t, err)
+		require.Equal(t, "CONTENT_MODERATION_API_KEY_REQUIRED_ON_BASE_URL_CHANGE", infraerrors.Reason(err))
+	})
+}
+
+func TestContentModerationSafeHTTPClientBlocksPrivateTargets(t *testing.T) {
+	restore := SetAdminOutboundAllowPrivateForTest(false)
+	defer restore()
+
+	privateServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer privateServer.Close()
+
+	// validateConfig must reject loopback / metadata BaseURL literals when private targets are disallowed.
+	s := &ContentModerationService{settingRepo: &contentModerationTestSettingRepo{values: map[string]string{}}}
+	badBase := "http://169.254.169.254/latest/meta-data"
+	_, err := s.UpdateConfig(context.Background(), UpdateContentModerationConfigInput{BaseURL: &badBase})
+	require.Error(t, err)
+	require.Equal(t, "INVALID_CONTENT_MODERATION_BASE_URL", infraerrors.Reason(err))
+
+	// Default moderation HTTP client must block dialing loopback targets and reject redirects to private hosts.
+	client, err := s.moderationHTTPClient(context.Background(), &ContentModerationConfig{})
+	require.NoError(t, err)
+	resp, err := client.Get(privateServer.URL)
+	if resp != nil && resp.Body != nil {
+		_ = resp.Body.Close()
+	}
+	require.ErrorIs(t, err, urlvalidator.ErrOutboundTargetNotAllowed)
 }

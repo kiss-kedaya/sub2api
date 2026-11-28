@@ -6,14 +6,64 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/domain"
+	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"golang.org/x/sync/errgroup"
 )
+
+// ErrChannelMonitorAPIKeyRequiredOnEndpointChange is returned when updating a
+// channel monitor's endpoint to a different scheme/host/port while relying on
+// the previously stored encrypted API key. Requiring re-entry prevents stored
+// secret exfiltration to an attacker-controlled host.
+var ErrChannelMonitorAPIKeyRequiredOnEndpointChange = infraerrors.BadRequest(
+	"CHANNEL_MONITOR_API_KEY_REQUIRED_ON_ENDPOINT_CHANGE",
+	"修改探测地址主机时不能复用已保存的 API Key，请重新填写 API Key",
+)
+
+// sameURLOrigin reports whether two HTTP(S) URLs share the exact same
+// normalized origin (scheme, lowercased hostname, and effective port) and carry
+// no userinfo. Any parse failure or missing scheme/host returns false.
+func sameURLOrigin(rawA, rawB string) bool {
+	uA, errA := url.Parse(strings.TrimSpace(rawA))
+	uB, errB := url.Parse(strings.TrimSpace(rawB))
+	if errA != nil || errB != nil || uA == nil || uB == nil {
+		return false
+	}
+	if uA.User != nil || uB.User != nil {
+		return false
+	}
+	schemeA := strings.ToLower(strings.TrimSpace(uA.Scheme))
+	schemeB := strings.ToLower(strings.TrimSpace(uB.Scheme))
+	hostA := strings.TrimSuffix(strings.ToLower(strings.TrimSpace(uA.Hostname())), ".")
+	hostB := strings.TrimSuffix(strings.ToLower(strings.TrimSpace(uB.Hostname())), ".")
+	if schemeA == "" || schemeB == "" || hostA == "" || hostB == "" {
+		return false
+	}
+	if schemeA != schemeB || hostA != hostB {
+		return false
+	}
+	return effectiveURLPort(schemeA, uA.Port()) == effectiveURLPort(schemeB, uB.Port())
+}
+
+func effectiveURLPort(scheme, port string) string {
+	if port != "" {
+		return port
+	}
+	switch scheme {
+	case "http":
+		return "80"
+	case "https":
+		return "443"
+	default:
+		return ""
+	}
+}
 
 // ChannelMonitorRepository 渠道监控数据访问接口。
 // 入参/返回的指针类型均使用 service 包的 ChannelMonitor 模型，
@@ -427,13 +477,24 @@ func (s *ChannelMonitorService) validateLinkedAccount(ctx context.Context, provi
 }
 
 // Update 更新监控。APIKey 字段：nil 或空字符串 = 不修改；非空 = 加密后覆盖。
+// 当 Endpoint 的 origin（scheme/host/port）发生变化且原记录保存有 API Key 时，
+// 拒绝静默复用旧密文，强制要求重新填写 API Key 以防止存储凭据外泄。
 func (s *ChannelMonitorService) Update(ctx context.Context, id int64, p ChannelMonitorUpdateParams) (*ChannelMonitor, error) {
 	existing, err := s.repo.GetByID(ctx, id)
 	if err != nil {
 		return nil, err
 	}
+	oldEndpoint := strings.TrimSpace(existing.Endpoint)
+	hadStoredKey := s.hasStoredAPIKey(existing)
+
 	if err := applyMonitorUpdate(existing, p); err != nil {
 		return nil, err
+	}
+
+	newEndpoint := strings.TrimSpace(existing.Endpoint)
+	apiKeyProvided := p.APIKey != nil && strings.TrimSpace(*p.APIKey) != ""
+	if p.Endpoint != nil && newEndpoint != "" && !sameURLOrigin(oldEndpoint, newEndpoint) && hadStoredKey && !apiKeyProvided {
+		return nil, ErrChannelMonitorAPIKeyRequiredOnEndpointChange
 	}
 
 	newPlainAPIKey, apiKeyUpdated, err := s.applyAPIKeyUpdate(existing, p.APIKey)
@@ -544,6 +605,21 @@ func (s *ChannelMonitorService) revalidateLinkedAccount(ctx context.Context, m *
 		m.AccountID = nil
 	}
 	return nil
+}
+
+func (s *ChannelMonitorService) hasStoredAPIKey(m *ChannelMonitor) bool {
+	if m == nil || strings.TrimSpace(m.APIKey) == "" {
+		return false
+	}
+	if s.encryptor == nil {
+		return true
+	}
+	plain, err := s.encryptor.Decrypt(m.APIKey)
+	if err != nil {
+		// Fail closed if ciphertext cannot be decrypted: treat as holding a stored secret.
+		return true
+	}
+	return strings.TrimSpace(plain) != ""
 }
 
 // applyAPIKeyUpdate 处理 Update 中的 APIKey 字段：

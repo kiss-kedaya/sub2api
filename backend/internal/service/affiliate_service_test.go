@@ -196,3 +196,133 @@ func TestApplyAffiliateCodeStatsKeepsRetiredLinks(t *testing.T) {
 	require.True(t, out[1].Retired)
 	require.Equal(t, 1, out[1].InviteCount)
 }
+
+type cappedAccrualRecordingAffiliateRepo struct {
+	*paymentFulfillmentAffiliateRepoStub
+	inviterID           int64
+	cappedCalls         int
+	lastAmount          float64
+	lastCap             float64
+	legacyAccrueCalls   int
+	legacyCapQueryCalls int
+	returnApplied       float64
+	reverseCalls        int
+	lastReverseOrderID  int64
+	lastReverseRatio    float64
+	reverseReturnAmount float64
+}
+
+func (r *cappedAccrualRecordingAffiliateRepo) EnsureUserAffiliate(_ context.Context, userID int64) (*AffiliateSummary, error) {
+	if userID == r.inviterID {
+		return &AffiliateSummary{UserID: r.inviterID}, nil
+	}
+	inviterID := r.inviterID
+	return &AffiliateSummary{UserID: userID, InviterID: &inviterID}, nil
+}
+
+func (r *cappedAccrualRecordingAffiliateRepo) GetAccruedRebateFromInvitee(context.Context, int64, int64) (float64, error) {
+	r.legacyCapQueryCalls++
+	return 0, nil
+}
+
+func (r *cappedAccrualRecordingAffiliateRepo) AccrueQuota(context.Context, int64, int64, float64, int, *int64) (bool, error) {
+	r.legacyAccrueCalls++
+	return true, nil
+}
+
+func (r *cappedAccrualRecordingAffiliateRepo) AccrueQuotaWithCap(_ context.Context, _, _ int64, amount float64, _ int, _ *int64, perInviteeCap float64) (float64, error) {
+	r.cappedCalls++
+	r.lastAmount = amount
+	r.lastCap = perInviteeCap
+	return r.returnApplied, nil
+}
+
+func (r *cappedAccrualRecordingAffiliateRepo) ReverseQuotaForOrder(_ context.Context, sourceOrderID int64, ratio float64) (float64, error) {
+	r.reverseCalls++
+	r.lastReverseOrderID = sourceOrderID
+	r.lastReverseRatio = ratio
+	return r.reverseReturnAmount, nil
+}
+
+func TestAccrueInviteRebateForOrderUsesAtomicCapRepositoryMethod(t *testing.T) {
+	settingsRepo := &stubSettingsMapRepo{values: map[string]string{
+		SettingKeyAffiliateEnabled:             "true",
+		SettingKeyAffiliateRebateRate:          "20",
+		SettingKeyAffiliateRebatePerInviteeCap: "15",
+	}}
+	settingSvc := NewSettingService(settingsRepo, nil)
+	repo := &cappedAccrualRecordingAffiliateRepo{
+		paymentFulfillmentAffiliateRepoStub: &paymentFulfillmentAffiliateRepoStub{},
+		inviterID:                           7,
+		returnApplied:                       15,
+	}
+	svc := NewAffiliateService(repo, settingSvc, nil, nil)
+	orderID := int64(99)
+
+	rebate, err := svc.AccrueInviteRebateForOrder(context.Background(), 8, 100, &orderID)
+	require.NoError(t, err)
+	require.InDelta(t, 15.0, rebate, 1e-9)
+	require.Equal(t, 1, repo.cappedCalls, "must use atomic AccrueQuotaWithCap")
+	require.InDelta(t, 20.0, repo.lastAmount, 1e-9)
+	require.InDelta(t, 15.0, repo.lastCap, 1e-9)
+	require.Zero(t, repo.legacyCapQueryCalls, "must not query per-invitee cap outside tx")
+	require.Zero(t, repo.legacyAccrueCalls)
+}
+
+func TestReverseInviteRebateForOrderRunsEvenWhenAffiliateDisabled(t *testing.T) {
+	repo := &cappedAccrualRecordingAffiliateRepo{
+		paymentFulfillmentAffiliateRepoStub: &paymentFulfillmentAffiliateRepoStub{},
+		reverseReturnAmount:                 6.5,
+	}
+	// Nil settingService => IsEnabled == false; reversal must still execute.
+	svc := NewAffiliateService(repo, nil, nil, nil)
+
+	reversed, err := svc.ReverseInviteRebateForOrder(context.Background(), 42, 1.0)
+	require.NoError(t, err)
+	require.InDelta(t, 6.5, reversed, 1e-9)
+	require.Equal(t, 1, repo.reverseCalls)
+	require.Equal(t, int64(42), repo.lastReverseOrderID)
+	require.InDelta(t, 1.0, repo.lastReverseRatio, 1e-9)
+
+	// Invalid ratio (NaN / Inf / <= 0) is rejected as no-op.
+	for _, bad := range []float64{0, -0.5, math.NaN(), math.Inf(1)} {
+		got, err := svc.ReverseInviteRebateForOrder(context.Background(), 42, bad)
+		require.NoError(t, err)
+		require.Zero(t, got)
+	}
+	require.Equal(t, 1, repo.reverseCalls)
+}
+
+type stubSettingsMapRepo struct {
+	values map[string]string
+}
+
+func (r *stubSettingsMapRepo) Get(_ context.Context, key string) (*Setting, error) {
+	v, ok := r.values[key]
+	if !ok {
+		return nil, ErrSettingNotFound
+	}
+	return &Setting{Key: key, Value: v}, nil
+}
+func (r *stubSettingsMapRepo) GetValue(_ context.Context, key string) (string, error) {
+	v, ok := r.values[key]
+	if !ok {
+		return "", ErrSettingNotFound
+	}
+	return v, nil
+}
+func (r *stubSettingsMapRepo) Set(context.Context, string, string) error { return nil }
+func (r *stubSettingsMapRepo) GetMultiple(_ context.Context, keys []string) (map[string]string, error) {
+	out := make(map[string]string, len(keys))
+	for _, k := range keys {
+		if v, ok := r.values[k]; ok {
+			out[k] = v
+		}
+	}
+	return out, nil
+}
+func (r *stubSettingsMapRepo) SetMultiple(context.Context, map[string]string) error { return nil }
+func (r *stubSettingsMapRepo) GetAll(context.Context) (map[string]string, error) {
+	return r.values, nil
+}
+func (r *stubSettingsMapRepo) Delete(context.Context, string) error { return nil }
