@@ -28,19 +28,31 @@ func MarkOpenAINativeCompactionV2(c *gin.Context) {
 // NormalizeCompactionTriggerInputOrder keeps a single compaction trigger as
 // the final Responses input item, as required by the upstream v2 wire format.
 func NormalizeCompactionTriggerInputOrder(body []byte) ([]byte, bool, error) {
+	return NormalizeCompactionTriggerInputOrderCtx(nil, body)
+}
+
+// NormalizeCompactionTriggerInputOrderCtx reuses request-scoped BodyTop /
+// responsesInputIndex memos when available to avoid redundant full-body scans
+// and duplicate validJSON validation on the common no-trigger path.
+func NormalizeCompactionTriggerInputOrderCtx(c *gin.Context, body []byte) ([]byte, bool, error) {
 	if len(body) == 0 {
 		return body, false, nil
 	}
-	// Fast path: requests without a compaction trigger never change anything.
-	// Previously every Responses request paid a full encoding/json.Valid scan
-	// even when this pass was a no-op.
-	if !bytes.Contains(body, []byte("compaction_trigger")) && !bytes.Contains(body, []byte(`\u`)) {
+	top := RequestBodyTop(c, body)
+	if idx := top.cachedResponsesInput(); idx != nil && idx.usable && !idx.hasCompactionTrigger {
 		return body, false, nil
 	}
-	if !validJSON(body) && !json.Valid(body) {
+	// Fast path: requests without a compaction trigger never change anything.
+	// Every character in "compaction_trigger" is ASCII (0x5F..0x74), so only
+	// \u00XX escapes can spell it; checking \u00 avoids false triggers on CJK
+	// or punctuation \uXXXX escapes.
+	if !bytes.Contains(body, []byte("compaction_trigger")) && !bytes.Contains(body, []byte(`\u00`)) {
+		return body, false, nil
+	}
+	if !top.Valid() && !json.Valid(body) {
 		return body, false, fmt.Errorf("normalize compaction trigger input order: invalid JSON")
 	}
-	if inputStart, inputEnd, isArray, ok := locateJSONInputArraySpan(nil, body); ok {
+	if inputStart, inputEnd, isArray, ok := locateJSONInputArraySpan(c, body); ok {
 		if !isArray {
 			return body, false, nil
 		}
@@ -251,11 +263,11 @@ func HasCompactionTriggerInInputCtx(c *gin.Context, body []byte) bool {
 	if len(body) == 0 {
 		return false
 	}
-	if !bytes.Contains(body, []byte("compaction_trigger")) && !bytes.Contains(body, []byte(`\u`)) {
-		return false
-	}
 	if idx := RequestBodyTop(c, body).cachedResponsesInput(); idx != nil && idx.usable {
 		return idx.hasCompactionTrigger
+	}
+	if !bytes.Contains(body, []byte("compaction_trigger")) && !bytes.Contains(body, []byte(`\u00`)) {
+		return false
 	}
 	inputStart, inputEnd, isArray, ok := locateJSONInputArraySpan(c, body)
 	if !ok {

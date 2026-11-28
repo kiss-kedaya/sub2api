@@ -350,25 +350,146 @@ func (collector moderationTextCollector) collectContentValue(value gjson.Result,
 			return true
 		})
 	case value.IsObject():
-		typ := strings.ToLower(strings.TrimSpace(value.Get("type").String()))
-		addModerationImage(images, value.Get("image_url.url").String())
-		addModerationImage(images, value.Get("image_url").String())
-		addModerationImage(images, value.Get("url").String())
-		addModerationImageData(images, value.Get("source.media_type").String(), value.Get("source.data").String())
-		addModerationImageData(images, value.Get("source.mediaType").String(), value.Get("source.data").String())
-		addModerationImageData(images, value.Get("media_type").String(), value.Get("data").String())
-		addModerationImageData(images, value.Get("mime_type").String(), value.Get("data").String())
-		addModerationImageData(images, value.Get("mimeType").String(), value.Get("data").String())
-		addModerationImage(images, value.Get("source.data").String())
-		addModerationImage(images, value.Get("data").String())
-		addModerationImage(images, value.Get("base64").String())
+		var (
+			typ          string
+			imageURLObj  gjson.Result
+			urlVal       string
+			sourceObj    gjson.Result
+			mediaType    string
+			mimeType     string
+			mimeTypeAlt  string
+			dataVal      string
+			base64Val    string
+			textVal      gjson.Result
+			contentVal   gjson.Result
+			hasType      bool
+			hasImageURL  bool
+			hasURL       bool
+			hasSource    bool
+			hasMediaType bool
+			hasMimeType  bool
+			hasMimeAlt   bool
+			hasData      bool
+			hasBase64    bool
+			hasText      bool
+			hasContent   bool
+		)
+		value.ForEach(func(k, v gjson.Result) bool {
+			switch k.Str {
+			case "type":
+				if !hasType {
+					typ = strings.ToLower(strings.TrimSpace(v.String()))
+					hasType = true
+				}
+			case "image_url":
+				if !hasImageURL {
+					imageURLObj = v
+					hasImageURL = true
+				}
+			case "url":
+				if !hasURL {
+					urlVal = v.String()
+					hasURL = true
+				}
+			case "source":
+				if !hasSource {
+					sourceObj = v
+					hasSource = true
+				}
+			case "media_type":
+				if !hasMediaType {
+					mediaType = v.String()
+					hasMediaType = true
+				}
+			case "mime_type":
+				if !hasMimeType {
+					mimeType = v.String()
+					hasMimeType = true
+				}
+			case "mimeType":
+				if !hasMimeAlt {
+					mimeTypeAlt = v.String()
+					hasMimeAlt = true
+				}
+			case "data":
+				if !hasData {
+					dataVal = v.String()
+					hasData = true
+				}
+			case "base64":
+				if !hasBase64 {
+					base64Val = v.String()
+					hasBase64 = true
+				}
+			case "text":
+				if !hasText {
+					textVal = v
+					hasText = true
+				}
+			case "content":
+				if !hasContent {
+					contentVal = v
+					hasContent = true
+				}
+			}
+			return true
+		})
+		if hasImageURL {
+			if imageURLObj.IsObject() {
+				addModerationImage(images, imageURLObj.Get("url").String())
+			}
+			addModerationImage(images, imageURLObj.String())
+		}
+		if hasURL {
+			addModerationImage(images, urlVal)
+		}
+		if hasSource && sourceObj.IsObject() {
+			var srcMediaType, srcMediaTypeAlt, srcData string
+			var hasSrcMT, hasSrcMTAlt, hasSrcData bool
+			sourceObj.ForEach(func(sk, sv gjson.Result) bool {
+				switch sk.Str {
+				case "media_type":
+					if !hasSrcMT {
+						srcMediaType = sv.String()
+						hasSrcMT = true
+					}
+				case "mediaType":
+					if !hasSrcMTAlt {
+						srcMediaTypeAlt = sv.String()
+						hasSrcMTAlt = true
+					}
+				case "data":
+					if !hasSrcData {
+						srcData = sv.String()
+						hasSrcData = true
+					}
+				}
+				return !hasSrcMT || !hasSrcMTAlt || !hasSrcData
+			})
+			addModerationImageData(images, srcMediaType, srcData)
+			addModerationImageData(images, srcMediaTypeAlt, srcData)
+			addModerationImageData(images, mediaType, dataVal)
+			addModerationImageData(images, mimeType, dataVal)
+			addModerationImageData(images, mimeTypeAlt, dataVal)
+			addModerationImage(images, srcData)
+		} else {
+			addModerationImageData(images, mediaType, dataVal)
+			addModerationImageData(images, mimeType, dataVal)
+			addModerationImageData(images, mimeTypeAlt, dataVal)
+		}
+		if hasData {
+			addModerationImage(images, dataVal)
+		}
+		if hasBase64 {
+			addModerationImage(images, base64Val)
+		}
 		switch typ {
 		case "", "text", "input_text", "message":
-			if value.Get("text").Exists() {
-				collector.addModerationText(parts, value.Get("text").String())
+			if hasText {
+				collector.addModerationText(parts, textVal.String())
 			}
-			if value.Get("content").Exists() {
-				collector.collectContentValue(value.Get("content"), parts, images)
+			if hasContent {
+				collector.collectContentValue(contentVal, parts, images)
 			}
 		case "image_url", "input_image", "image":
 		}

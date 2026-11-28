@@ -83,8 +83,9 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		return nil, errors.New("codex_cli_only restriction: only codex official clients are allowed")
 	}
 	if account.IsCopilotSDKEnabled() {
-		model := strings.TrimSpace(gjson.GetBytes(body, "model").String())
-		stream := gjson.GetBytes(body, "stream").Bool()
+		copilotTop := RequestBodyTop(c, body)
+		model := strings.TrimSpace(copilotTop.Get("model").String())
+		stream := copilotTop.Get("stream").Bool()
 		result, err := s.forwardOpenAIPassthrough(ctx, c, account, body, body, model, false, nil, stream, startTime)
 		if result != nil {
 			SetActualOpenAIUpstreamEndpoint(c, "/v1/responses")
@@ -110,7 +111,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	responsesLite := account.IsOpenAI() && (isOpenAIResponsesLiteHeader(c.GetHeader(responsesLiteHeader)) ||
 		isOpenAIResponsesLiteWebSocketPayload(c, body))
 	if responsesLite {
-		liteBody, changed, liteErr := normalizeOpenAIResponsesLitePayloadForAccount(body, account)
+		liteBody, changed, liteErr := normalizeOpenAIResponsesLitePayloadForAccountCtx(c, body, account)
 		if liteErr != nil {
 			param := "tools"
 			var validationErr *openAIResponsesLiteValidationError
@@ -219,7 +220,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	}
 
 	originalBody = body
-	requestView = newOpenAIRequestView(body)
+	requestView = newOpenAIRequestViewCtx(c, body)
 	reqModel, reqStream, promptCacheKey := requestView.Model, requestView.Stream, requestView.PromptCacheKey
 	originalModel := reqModel
 
@@ -451,7 +452,12 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		return nil, errors.New("image generation disabled for group")
 	}
 
-	requestRoot := parseRawJSONView(body)
+	requestTop := RequestBodyTop(c, body)
+	textField := requestTop.Get("text")
+	textFormatType := ""
+	if textField.IsObject() {
+		textFormatType = strings.TrimSpace(textField.Get("format.type").String())
+	}
 	isCompactRequest := compactPath
 	requestedModel := reqModel
 	billingModel, upstreamModel := resolveOpenAIForwardMappedModels(account, requestedModel, isCompactRequest)
@@ -460,7 +466,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			upstreamModel = compactModel
 		}
 	}
-	instructions := gjson.GetBytes(body, "instructions")
+	instructions := requestTop.Get("instructions")
 	instructionsEmpty := !instructions.Exists() || instructions.Type != gjson.String || strings.TrimSpace(instructions.String()) == ""
 	if instructionsEmpty && account.UsesOpenAICodexProtocol() && !compatMessagesBridge && !nativeCNResponses &&
 		(isCompactRequest || !usesGPT62CodexCachePrefix(upstreamModel)) {
@@ -480,12 +486,12 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			logger.LegacyPrintf("service.openai_gateway", "[OpenAI] Upstream model resolved: %s -> %s (account: %s, type: %s, isCodexCLI: %v)", billingModel, upstreamModel, account.Name, account.Type, isCodexCLI)
 		}
 	}
-	if !nativeDeepSeekResponses && strings.TrimSpace(requestRoot.Get("reasoning.effort").String()) == "minimal" {
+	if !nativeDeepSeekResponses && strings.TrimSpace(requestTop.Get("reasoning.effort").String()) == "minimal" {
 		markPatchSet("reasoning.effort", "none")
 		logger.LegacyPrintf("service.openai_gateway", "[OpenAI] Normalized reasoning.effort: minimal -> none (account: %s)", account.Name)
 	}
-	if strings.TrimSpace(requestRoot.Get("text.format.type").String()) == "json_schema" ||
-		strings.TrimSpace(requestRoot.Get("response_format.type").String()) == "json_schema" {
+	if textFormatType == "json_schema" ||
+		strings.TrimSpace(requestTop.Get("response_format.type").String()) == "json_schema" {
 		decoded, decodeErr := ensureReqBody()
 		if decodeErr != nil {
 			return nil, decodeErr
@@ -579,10 +585,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		}
 		// Responses OAuth 与 Chat 兼容入口保持一致：纯文本 system 可以无损提升后删除，
 		// JSON object 模式仍需在 input 中保留 JSON 指令供上游兼容校验。
-		omitPromotedSystemMessages := !strings.EqualFold(
-			strings.TrimSpace(gjson.GetBytes(body, "text.format.type").String()),
-			"json_object",
-		)
+		omitPromotedSystemMessages := !strings.EqualFold(textFormatType, "json_object")
 		codexResult := codexTransformResult{}
 		if compatMessagesBridge {
 			codexResult = applyCodexOAuthTransformWithOptions(decoded, codexOAuthTransformOptions{
@@ -659,12 +662,12 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		}
 	}
 
-	if !nativeDeepSeekResponses && !SupportsVerbosity(upstreamModel) && requestRoot.Get("text.verbosity").Exists() {
+	if !nativeDeepSeekResponses && !SupportsVerbosity(upstreamModel) && textField.IsObject() && textField.Get("verbosity").Exists() {
 		markPatchDelete("text.verbosity")
 	}
 
 	if !isCodexCLI {
-		maxOutputTokens := requestRoot.Get("max_output_tokens")
+		maxOutputTokens := requestTop.Get("max_output_tokens")
 		if maxOutputTokens.Exists() {
 			switch account.Platform {
 			case PlatformOpenAI, PlatformDeepseek:
@@ -691,18 +694,18 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		// 仅对 OpenAI 平台归一化：Anthropic 合法使用 max_tokens，其 max_output_tokens
 		// 反向转换已在上方 switch 中处理。
 		if account.Platform == PlatformOpenAI {
-			if maxTokens := requestRoot.Get("max_tokens"); maxTokens.Exists() {
-				if !requestRoot.Get("max_output_tokens").Exists() {
+			if maxTokens := requestTop.Get("max_tokens"); maxTokens.Exists() {
+				if !maxOutputTokens.Exists() {
 					markPatchSet("max_output_tokens", maxTokens.Value())
 				}
 				markPatchDelete("max_tokens")
 			}
 		}
-		if requestRoot.Get("max_completion_tokens").Exists() && (account.Type == AccountTypeAPIKey || account.Platform != PlatformOpenAI) {
+		if requestTop.Get("max_completion_tokens").Exists() && (account.Type == AccountTypeAPIKey || account.Platform != PlatformOpenAI) {
 			markPatchDelete("max_completion_tokens")
 		}
 		for _, unsupportedField := range []string{"prompt_cache_retention", "safety_identifier", "prompt_cache_options"} {
-			if requestRoot.Get(unsupportedField).Exists() {
+			if requestTop.Get(unsupportedField).Exists() {
 				markPatchDelete(unsupportedField)
 			}
 		}
@@ -716,7 +719,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		markPatchSet("max_output_tokens", clampedCap)
 	}
 	if wsDecision.Transport != OpenAIUpstreamTransportResponsesWebsocketV2 &&
-		!account.IsOpenAIApiKey() && !nativeDeepSeekResponses && requestRoot.Get("previous_response_id").Exists() {
+		!account.IsOpenAIApiKey() && !nativeDeepSeekResponses && requestTop.Get("previous_response_id").Exists() {
 		markPatchDelete("previous_response_id")
 	}
 	if openAIRequestBodyMayContainEmptyBase64InputImage(c, body) {
@@ -811,11 +814,11 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	}
 	// Run after orphan-output filtering and all request-map rebuilds so a
 	// compaction trigger cannot remain ahead of surviving history items.
-	if normalizedBody, changed, normalizeErr := NormalizeCompactionTriggerInputOrder(body); normalizeErr != nil {
+	if normalizedBody, changed, normalizeErr := NormalizeCompactionTriggerInputOrderCtx(c, body); normalizeErr != nil {
 		return nil, fmt.Errorf("normalize compaction trigger order: %w", normalizeErr)
 	} else if changed {
 		body = normalizedBody
-		requestView = newOpenAIRequestView(body)
+		requestView = newOpenAIRequestViewCtx(c, body)
 		reqBody = nil
 	}
 	// 剥离本会话已被上游判定失效的加密项（invalid_encrypted_content lineage），
@@ -1344,9 +1347,9 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 				c, account, requestedModel, body, resp.StatusCode, upstreamMsg, respBody, compactModelFallbackRetried,
 			); retry {
 				s.appendOpenAICompactFallbackRetryOps(c, account, resp, respBody, upstreamMsg, false)
-				fromModel := strings.TrimSpace(gjson.GetBytes(body, "model").String())
+				fromModel := strings.TrimSpace(RequestBodyTop(c, body).Get("model").String())
 				body = retryBody
-				requestView = newOpenAIRequestView(body)
+				requestView = newOpenAIRequestViewCtx(c, body)
 				reqBody = nil
 				upstreamModel = fallbackModel
 				compactModelFallbackRetried = true
@@ -1749,7 +1752,7 @@ func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.
 		}
 	}
 	if c != nil && account.IsOpenAI() && (isOpenAIResponsesLiteHeader(c.GetHeader(responsesLiteHeader)) || isOpenAIResponsesLiteWebSocketPayload(c, body)) {
-		normalized, changed, normalizeErr := normalizeOpenAIResponsesLiteParallelToolCallsPayload(body)
+		normalized, changed, normalizeErr := normalizeOpenAIResponsesLiteParallelToolCallsPayloadCtx(c, body)
 		if normalizeErr != nil {
 			return nil, normalizeErr
 		}

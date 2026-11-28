@@ -138,16 +138,16 @@ func explicitGrokCacheSeed(c *gin.Context, body []byte, explicitKey string) stri
 	// explicit session still share one cache identity (model is already in the
 	// isolated seed). Message ids are rejected by the seed helper.
 	if seed == "" && len(body) > 0 {
-		seed = grokPreviousResponseSessionSeed(body)
+		seed = grokPreviousResponseSessionSeedCtx(c, body)
 	}
 	return seed
 }
 
-func grokModelFromRequestBody(body []byte) string {
+func grokModelFromRequestBodyCtx(c *gin.Context, body []byte) string {
 	if len(body) == 0 {
 		return ""
 	}
-	return strings.TrimSpace(openAIRequestPayloadView(body).Get("model").String())
+	return strings.TrimSpace(openAIRequestPayloadField(c, body, "model").String())
 }
 
 func grokRequestModelHint(c *gin.Context, bodies ...[]byte) string {
@@ -159,7 +159,7 @@ func grokRequestModelHint(c *gin.Context, bodies ...[]byte) string {
 		}
 	}
 	for _, body := range bodies {
-		if model := grokModelFromRequestBody(body); model != "" {
+		if model := grokModelFromRequestBodyCtx(c, body); model != "" {
 			return model
 		}
 	}
@@ -168,7 +168,7 @@ func grokRequestModelHint(c *gin.Context, bodies ...[]byte) string {
 	}
 	if raw, ok := c.Get(gin.BodyBytesKey); ok {
 		if body, ok := raw.([]byte); ok {
-			if model := grokModelFromRequestBody(body); model != "" {
+			if model := grokModelFromRequestBodyCtx(c, body); model != "" {
 				return model
 			}
 		}

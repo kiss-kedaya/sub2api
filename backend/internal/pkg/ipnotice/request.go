@@ -159,24 +159,22 @@ func InjectRequest(body []byte, protocol Protocol, notice string) ([]byte, error
 // hasReplayMarker reports whether body holds any of the three strings that mark a
 // gateway-written notice: the notice fence as UTF-8, the same fence as JSON escapes, or
 // a gateway notice message id. Its truth value is that of the three bytes.Contains calls
-// it stands for. Almost every request holds none of them, so what matters is how cheaply
-// "none" is proven: the message id is first looked for through its tail "_gateway_notice_",
-// which starts with an underscore, a byte that is far rarer in prose and in base64 than the
-// 'm' of "msg_" (about as common in snake_case-heavy code); bytes.Index looks for the first
-// byte of its needle with IndexByte and gives up on that when it hits too often. The tail is
-// part of the id, so a body without it cannot hold the id and the full id is only searched
-// when the tail is there.
+// it stands for. Almost every request holds none of them, so each needle is gated by a
+// rare 2-byte-pair pivot that keeps Go's SIMD bytes.Index from tripping on common '\' or
+// '_' characters in JSON/code bodies and falling back to Rabin-Karp.
 func hasReplayMarker(body []byte) bool {
-	return bytes.Contains(body, replayFence) ||
-		bytes.Contains(body, replayEscapedFence) ||
-		(bytes.Contains(body, replayNoticeIDTail) && bytes.Contains(body, replayNoticeID))
+	return (bytes.Contains(body, replayFencePivot) && bytes.Contains(body, replayFence)) ||
+		(bytes.Contains(body, replayEscapedFencePivot) && bytes.Contains(body, replayEscapedFence)) ||
+		(bytes.Contains(body, replayNoticeIDPivot) && bytes.Contains(body, replayNoticeID))
 }
 
 var (
-	replayFence        = []byte(noticeFence)
-	replayEscapedFence = []byte(`\u2063\u2063`)
-	replayNoticeID     = []byte("msg_gateway_notice_")
-	replayNoticeIDTail = []byte("_gateway_notice_")
+	replayFence             = []byte(noticeFence)
+	replayFencePivot        = []byte{0x81, 0xA3, 0xE2, 0x81}
+	replayEscapedFence      = []byte(`\u2063\u2063`)
+	replayEscapedFencePivot = []byte(`3\u20`)
+	replayNoticeID          = []byte("msg_gateway_notice_")
+	replayNoticeIDPivot     = []byte("y_not")
 )
 
 // NormalizeReplay reverses only gateway-created assistant/model notice blocks.

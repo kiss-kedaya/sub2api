@@ -18,49 +18,49 @@ func randomBase64(seed int64, rawBytes int) string {
 	return base64.StdEncoding.EncodeToString(raw)
 }
 
-func TestStripOpaqueBlobs(t *testing.T) {
+func TestInlineOpaqueBlobFolding_Boundaries(t *testing.T) {
 	long := randomBase64(7, 3000) // 4000 base64 characters
 	run := func(n int) string { return strings.Repeat("A", n) }
-	for _, tc := range []struct{ name, in, want string }{
-		{"data uri keeps its header", `{"u":"data:image/png;base64,` + long + `"}`, `{"u":"data:image/png;base64,[blob]"}`},
-		{"bare run", `{"x":"` + long + `"}`, `{"x":"[blob]"}`},
-		{"one char under the threshold stays", `{"x":"` + run(opaqueBlobMinRun-1) + `"}`, `{"x":"` + run(opaqueBlobMinRun-1) + `"}`},
-		{"exactly the threshold is folded", `{"x":"` + run(opaqueBlobMinRun) + `"}`, `{"x":"[blob]"}`},
-		{"prose with spaces stays", `{"x":"` + strings.Repeat("hello world ", 400) + `"}`, `{"x":"` + strings.Repeat("hello world ", 400) + `"}`},
-		{"escaped slashes belong to the run", `{"x":"` + strings.Repeat(`ab\/`, 400) + `"}`, `{"x":"[blob]"}`},
-		{"other escapes end the run", `{"x":"` + strings.Repeat(run(600)+`\n`, 3) + `"}`, `{"x":"` + strings.Repeat(run(600)+`\n`, 3) + `"}`},
-		{"two blobs in one string, text between stays", `{"x":"` + long + ` and ` + long + `"}`, `{"x":"[blob] and [blob]"}`},
-		{"a stringified body with escaped quotes", `{"x":"{\"u\":\"data:image/png;base64,` + long + `\"}"}`, `{"x":"{\"u\":\"data:image/png;base64,[blob]\"}"}`},
-		{"a long key is never touched", `{"` + run(2000) + `":1}`, `{"[blob]":1}`},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			got := string(stripOpaqueBlobs([]byte(tc.in)))
-			if tc.name == "a long key is never touched" {
-				// A key is a string too; folding it keeps the JSON valid, which is all that is promised.
-				require.True(t, json.Valid([]byte(got)))
-				return
-			}
-			require.Equal(t, tc.want, got)
-			require.True(t, json.Valid([]byte(got)), "the result must stay valid JSON")
-			require.Equal(t, got, string(stripOpaqueBlobs([]byte(got))), "folding is idempotent")
-		})
+	countStr := func(rawJSONString string) int {
+		var c fastTokenCounter
+		b := []byte(rawJSONString)
+		c.observeJSONString(b, 0, len(b))
+		return c.tokens()
 	}
-}
 
-func TestStripOpaqueBlobs_SafeOnOddInput(t *testing.T) {
-	long := randomBase64(8, 3000)
-	require.Equal(t, []byte(nil), stripOpaqueBlobs(nil))
-	small := []byte(`{"a":1}`)
-	require.Equal(t, small, stripOpaqueBlobs(small))
-	// Not JSON, truncated, unterminated string: never panics, never loses data it did not fold.
+	// Just under opaqueBlobMinRun stays counted as text; at/above threshold folds to ~2 tokens.
+	under := countStr(`"` + run(opaqueBlobMinRun-1) + `"`)
+	atThreshold := countStr(`"` + run(opaqueBlobMinRun) + `"`)
+	require.Greater(t, under, 200, "run just under threshold must still count as text")
+	require.Equal(t, 2, atThreshold, "run at threshold must fold inline to blob placeholder")
+
+	// Data URI keeps header (~10 tokens) and folds base64 payload.
+	dataURI := countStr(`"data:image/png;base64,` + long + `"`)
+	require.Less(t, dataURI, 20)
+
+	// Escaped slashes (\/) and \uXXXX escapes decoding to base64 bytes belong to
+	// the run; decoded newlines (\u000a) and other escapes (\n) break the run.
+	escapedSlashes := countStr(`"` + strings.Repeat(`ab\/`, 400) + `"`)
+	require.Equal(t, 2, escapedSlashes)
+	literalBlob := countStr(`"` + run(opaqueBlobMinRun) + `"`)
+	unicodeEscapedBlob := countStr(`"` + run(512) + `\u0041` + run(511) + `"`)
+	require.Equal(t, literalBlob, unicodeEscapedBlob, "\\uXXXX decoding to base64 byte must keep run open")
+	brokenRun := countStr(`"` + strings.Repeat(run(600)+`\n`, 3) + `"`)
+	require.Greater(t, brokenRun, 300)
+	unicodeNewlineSplit := countStr(`"` + run(600) + `\u000a` + run(600) + `"`)
+	require.Greater(t, unicodeNewlineSplit, 200, "\\u000a must separate runs under threshold")
+	unicodeNewlineTwoBlobs := countStr(`"` + long + `\u000a` + long + `"`)
+	require.Less(t, unicodeNewlineTwoBlobs, 10, "\\u000a separating two opaque runs folds both")
+
+	// Two blobs separated by prose fold independently while keeping prose counted.
+	twoBlobs := countStr(`"` + long + ` hello world ` + long + `"`)
+	require.Greater(t, twoBlobs, 4)
+	require.Less(t, twoBlobs, 20)
+
+	// Odd / truncated / non-JSON inputs never panic.
 	for _, in := range []string{`"` + long, `{"x":"` + long, `{"x":"` + long + `\`, strings.Repeat(`"`, 5000), strings.Repeat(`\`, 5000), long} {
-		require.NotPanics(t, func() { _ = stripOpaqueBlobs([]byte(in)) }, in[:min(len(in), 20)])
+		require.NotPanics(t, func() { _ = estimateRequestInputTokens([]byte(in)) }, in[:min(len(in), 20)])
 	}
-	require.Equal(t, `"[blob]`, string(stripOpaqueBlobs([]byte(`"`+long))), "an unterminated string still closes its run")
-	require.Equal(t, long, string(stripOpaqueBlobs([]byte(long))), "text outside any JSON string is left alone")
-	// A body with nothing to fold comes back as the same slice, no copy.
-	plain := []byte(`{"input":"` + strings.Repeat("hello world ", 300) + `"}`)
-	require.True(t, &plain[0] == &stripOpaqueBlobs(plain)[0])
 }
 
 // The bug this guards: a few screenshots in a request were counted as text, giving
@@ -90,16 +90,18 @@ func TestEstimateRequestInputTokens_BlobsAreNotText(t *testing.T) {
 			require.Equal(t, got, n)
 		})
 	}
-	t.Run("a body without blobs is estimated as before", func(t *testing.T) {
-		require.Greater(t, estimateRequestInputTokensRaw(control), 500)
-		require.Equal(t, estimateRequestInputTokensRaw(control), estimateRequestInputTokens(control))
+	t.Run("a body without blobs stays calibrated to exact tiktoken", func(t *testing.T) {
+		raw := estimateRequestInputTokensRaw(control)
+		got := estimateRequestInputTokens(control)
+		require.Greater(t, raw, 500)
+		require.InDelta(t, float64(raw), float64(got), float64(raw)*0.20, "fast=%d raw=%d", got, raw)
 	})
 	t.Run("text next to a screenshot still counts", func(t *testing.T) {
 		both := mk([]any{
 			map[string]any{"role": "user", "content": []any{map[string]any{"type": "input_text", "text": text}}},
 			map[string]any{"type": "function_call_output", "call_id": "c1", "output": image},
 		})
-		require.GreaterOrEqual(t, estimateRequestInputTokens(both), estimateRequestInputTokensRaw(control))
+		require.GreaterOrEqual(t, estimateRequestInputTokens(both), estimateRequestInputTokens(control))
 	})
 	t.Run("anthropic image block", func(t *testing.T) {
 		b, _ := json.Marshal(map[string]any{"model": "claude-sonnet-4", "max_tokens": 64, "messages": []any{map[string]any{
@@ -107,10 +109,10 @@ func TestEstimateRequestInputTokens_BlobsAreNotText(t *testing.T) {
 				map[string]any{"type": "text", "text": "describe this"},
 				map[string]any{"type": "image", "source": map[string]any{"type": "base64", "media_type": "image/png", "data": blob}},
 			}}}})
-		// The Anthropic to Responses conversion never counted image data, so this
-		// path was not inflated; folding must leave its estimate alone.
+		// Image base64 data must never inflate the fast fallback estimate.
 		require.Less(t, estimateRequestInputTokensRaw(b), 200)
-		require.Equal(t, estimateRequestInputTokensRaw(b), estimateRequestInputTokens(b))
+		require.Greater(t, estimateRequestInputTokens(b), 0)
+		require.Less(t, estimateRequestInputTokens(b), 200)
 	})
 }
 
